@@ -5,8 +5,8 @@ go 1.21
 require (
 	code.gitea.io/actions-proto-go v0.4.0
 	code.gitea.io/gitea-vet v0.2.3
-	connectrpc.com/connect v1.15.0
-	github.com/avast/retry-go/v4 v4.5.1
+	connectrpc.com/connect v1.16.2
+	github.com/avast/retry-go/v4 v4.6.0
 	github.com/docker/docker v26.1.3+incompatible
 	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-isatty v0.0.20
@@ -94,7 +94,7 @@ require (
 	golang.org/x/net v0.25.0 // indirect
 	golang.org/x/sync v0.7.0 // indirect
 	golang.org/x/sys v0.20.0 // indirect
-	golang.org/x/tools v0.18.0 // indirect
+	golang.org/x/tools v0.21.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
