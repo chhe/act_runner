@@ -368,7 +368,7 @@ func runExec(ctx context.Context, execArgs *executeArgs) func(cmd *cobra.Command
 		}
 
 		// init a cache server
-		handler, err := artifactcache.StartHandler("", "", 0, log.StandardLogger().WithField("module", "cache_request"))
+		handler, err := artifactcache.StartHandler("", "", "", 0, log.StandardLogger().WithField("module", "cache_request"))
 		if err != nil {
 			return err
 		}
