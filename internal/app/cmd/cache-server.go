@@ -50,6 +50,7 @@ func runCacheServer(ctx context.Context, configFile *string, cacheArgs *cacheSer
 
 		cacheHandler, err := artifactcache.StartHandler(
 			dir,
+			"",
 			host,
 			port,
 			log.StandardLogger().WithField("module", "cache_request"),
