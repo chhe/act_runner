@@ -58,6 +58,7 @@ func NewRunner(cfg *config.Config, reg *config.Registration, cli client.Client) 
 		} else {
 			cacheHandler, err := artifactcache.StartHandler(
 				cfg.Cache.Dir,
+				cfg.Cache.ExternalServer,
 				cfg.Cache.Host,
 				cfg.Cache.Port,
 				log.StandardLogger().WithField("module", "cache_request"),
