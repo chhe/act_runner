@@ -26,8 +26,8 @@ github.com/avast/retry-go/v4 v4.6.0/go.mod h1:gvWlPhBVsvBbLkVGDg/KwvBv0bEkCOLRRS
 github.com/bwesterb/go-ristretto v1.2.3/go.mod h1:fUIoIZaG73pV5biE2Blr2xEzDoMj7NFEuV9ekS419A0=
 github.com/cenkalti/backoff/v4 v4.2.1 h1:y4OZtCnogmCPw98Zjyt5a6+QwPLGkiQsYW5oUqylYbM=
 github.com/cenkalti/backoff/v4 v4.2.1/go.mod h1:Y3VNntkOUPxTVeUxJ/G5vcM//AlwfmyYozVcomhLiZE=
-github.com/chhe/act v0.261.2-0.20240701030154-690d8ab3c34d h1:ZnW2z2vlTUOqt0L/ByKns5ptEdHGnBh22o1mBl4Qgro=
-github.com/chhe/act v0.261.2-0.20240701030154-690d8ab3c34d/go.mod h1:fQ4NxpAcXn99kzaGdhDkzKnAFjuSYHVSMXBU+inb6Ek=
+github.com/chhe/act v0.261.2-0.20240701100420-d7098707cacb h1:CU6YOrw+SVyQg//6EDNoPRxaS+wzVUWRahAXOu9fBBA=
+github.com/chhe/act v0.261.2-0.20240701100420-d7098707cacb/go.mod h1:5xAzI5jOrIkC5l/iYL4CjZFmGE9HTMRpB5N3fd81ung=
 github.com/cloudflare/circl v1.3.3/go.mod h1:5XYMA4rFBvNIrhs50XuiBJ15vF2pZn4nnUKZrLbUZFA=
 github.com/cloudflare/circl v1.3.9 h1:QFrlgFYf2Qpi8bSpVPK1HBvWpx16v/1TZivyo7pGuBE=
 github.com/cloudflare/circl v1.3.9/go.mod h1:PDRU+oXvdD7KCtgKxW95M5Z8BpSCJXQORiZFnBQS5QU=
@@ -45,8 +45,8 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/distribution/reference v0.6.0 h1:0IXCQ5g4/QMHHkarYzh5l+u8T3t73zM5QvfrDyIgxBk=
 github.com/distribution/reference v0.6.0/go.mod h1:BbU0aIcezP1/5jX/8MP0YiH4SdvB5Y4f/wlDRiLyi3E=
-github.com/docker/cli v27.0.2+incompatible h1:IgWU3lWqAYNibtcxgl/PY4TB0eCmK1ZpNUZVJfenDQs=
-github.com/docker/cli v27.0.2+incompatible/go.mod h1:JLrzqnKDaYBop7H2jaqPtU4hHvMKP+vjCwu2uszcLI8=
+github.com/docker/cli v27.0.3+incompatible h1:usGs0/BoBW8MWxGeEtqPMkzOY56jZ6kYlSN5BLDioCQ=
+github.com/docker/cli v27.0.3+incompatible/go.mod h1:JLrzqnKDaYBop7H2jaqPtU4hHvMKP+vjCwu2uszcLI8=
 github.com/docker/docker v27.0.3+incompatible h1:aBGI9TeQ4MPlhquTQKq9XbK79rKFVwXNUAYz9aXyEBE=
 github.com/docker/docker v27.0.3+incompatible/go.mod h1:eEKB0N0r5NX/I1kEveEz05bcu8tLC/8azJZsviup8Sk=
 github.com/docker/docker-credential-helpers v0.8.2 h1:bX3YxiGzFP5sOXWc3bTPEXdEaZSeVMrFgOr3T+zrFAo=
