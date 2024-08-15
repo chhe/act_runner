@@ -26,8 +26,8 @@ github.com/avast/retry-go/v4 v4.6.0/go.mod h1:gvWlPhBVsvBbLkVGDg/KwvBv0bEkCOLRRS
 github.com/bwesterb/go-ristretto v1.2.3/go.mod h1:fUIoIZaG73pV5biE2Blr2xEzDoMj7NFEuV9ekS419A0=
 github.com/cenkalti/backoff/v4 v4.2.1 h1:y4OZtCnogmCPw98Zjyt5a6+QwPLGkiQsYW5oUqylYbM=
 github.com/cenkalti/backoff/v4 v4.2.1/go.mod h1:Y3VNntkOUPxTVeUxJ/G5vcM//AlwfmyYozVcomhLiZE=
-github.com/chhe/act v0.261.2-0.20240814021014-ad40a46e1f72 h1:HyWwxJoPX2p7oxsWpOsOPebNvsHlQc6AuTX1X6lixZY=
-github.com/chhe/act v0.261.2-0.20240814021014-ad40a46e1f72/go.mod h1:DG8R4DeVnDVjgW4NIiBTiY/vv4+oM3en67hWma6aQoY=
+github.com/chhe/act v0.261.2-0.20240815154352-0c4b3e7699a1 h1:MPWKmKlVWb3cysOQM1i8W9w/kJBzUP3VlPhVNx0igf4=
+github.com/chhe/act v0.261.2-0.20240815154352-0c4b3e7699a1/go.mod h1:yWx7nka16q6p/1mqInbW4TnU+OyhXutBBjoawZ9b6zc=
 github.com/cloudflare/circl v1.3.3/go.mod h1:5XYMA4rFBvNIrhs50XuiBJ15vF2pZn4nnUKZrLbUZFA=
 github.com/cloudflare/circl v1.3.9 h1:QFrlgFYf2Qpi8bSpVPK1HBvWpx16v/1TZivyo7pGuBE=
 github.com/cloudflare/circl v1.3.9/go.mod h1:PDRU+oXvdD7KCtgKxW95M5Z8BpSCJXQORiZFnBQS5QU=
@@ -124,8 +124,8 @@ github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWE
 github.com/mattn/go-isatty v0.0.20/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
 github.com/mattn/go-runewidth v0.0.16 h1:E5ScNMtiwvlvB5paMFdw9p4kSQzbXFikJ5SQO6TULQc=
 github.com/mattn/go-runewidth v0.0.16/go.mod h1:Jdepj2loyihRzMpdS35Xk/zdY8IAYHsh153qUoGf23w=
-github.com/moby/buildkit v0.15.1 h1:J6wrew7hphKqlq1wuu6yaUb/1Ra7gEzDAovylGztAKM=
-github.com/moby/buildkit v0.15.1/go.mod h1:Yis8ZMUJTHX9XhH9zVyK2igqSHV3sxi3UN0uztZocZk=
+github.com/moby/buildkit v0.15.2 h1:DnONr0AoceTWyv+plsQ7IhkSaj+6o0WyoaxYPyTFIxs=
+github.com/moby/buildkit v0.15.2/go.mod h1:Yis8ZMUJTHX9XhH9zVyK2igqSHV3sxi3UN0uztZocZk=
 github.com/moby/docker-image-spec v1.3.1 h1:jMKff3w6PgbfSa69GfNg+zN/XLhfXJGnEx3Nl2EsFP0=
 github.com/moby/docker-image-spec v1.3.1/go.mod h1:eKmb5VW8vQEh/BAr2yvVNvuiJuY6UIocYsFu/DxxRpo=
 github.com/moby/patternmatcher v0.6.0 h1:GmP9lR19aU5GqSSFko+5pRqHi+Ohk1O69aFiKkVGiPk=
