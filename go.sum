@@ -26,8 +26,8 @@ github.com/avast/retry-go/v4 v4.6.0/go.mod h1:gvWlPhBVsvBbLkVGDg/KwvBv0bEkCOLRRS
 github.com/bwesterb/go-ristretto v1.2.3/go.mod h1:fUIoIZaG73pV5biE2Blr2xEzDoMj7NFEuV9ekS419A0=
 github.com/cenkalti/backoff/v4 v4.2.1 h1:y4OZtCnogmCPw98Zjyt5a6+QwPLGkiQsYW5oUqylYbM=
 github.com/cenkalti/backoff/v4 v4.2.1/go.mod h1:Y3VNntkOUPxTVeUxJ/G5vcM//AlwfmyYozVcomhLiZE=
-github.com/chhe/act v0.261.2-0.20240827215629-4b2fcc6f4be9 h1:GohG0wxNeSGZidYAJejYk2QX8U3Pd2R6DG4IjX+gtDY=
-github.com/chhe/act v0.261.2-0.20240827215629-4b2fcc6f4be9/go.mod h1:CrXeAqyntQiBGy1bKl8zx+2th6krCk8Ex3QZlRljYBA=
+github.com/chhe/act v0.261.2-0.20240902020901-1bd2afa6a30d h1:czvn9QjzqNRZSgmDpj/TVoiHwj0/vpFkoxTDfNI87qQ=
+github.com/chhe/act v0.261.2-0.20240902020901-1bd2afa6a30d/go.mod h1:CrXeAqyntQiBGy1bKl8zx+2th6krCk8Ex3QZlRljYBA=
 github.com/cloudflare/circl v1.3.3/go.mod h1:5XYMA4rFBvNIrhs50XuiBJ15vF2pZn4nnUKZrLbUZFA=
 github.com/cloudflare/circl v1.3.9 h1:QFrlgFYf2Qpi8bSpVPK1HBvWpx16v/1TZivyo7pGuBE=
 github.com/cloudflare/circl v1.3.9/go.mod h1:PDRU+oXvdD7KCtgKxW95M5Z8BpSCJXQORiZFnBQS5QU=
