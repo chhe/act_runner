@@ -1,0 +1,42 @@
+name: main
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+      - name: build
+        run: make build
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+      - name: test
+        run: |
+          sed -i '/^func TestShortShaActionRejected(t \*testing.T) {$/a\   requireDocker(t)' act/runner/action_cache_test.go
+          sed -i '/^func TestJobExecutor(t \*testing.T) {$/a\   requireDocker(t)' act/runner/job_executor_test.go
+          sed -i '/^func TestRunEventHostEnvironment(t \*testing.T) {$/a\   requireDocker(t)' act/runner/runner_test.go
+          sed -i '/^func TestDryrunEvent(t \*testing.T) {$/a\   requireDocker(t)' act/runner/runner_test.go
+          make test
+
+  conventional-commits:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: checkout
+      uses: actions/checkout@v7
+
+    - name: conventional commits
+      uses: webiny/action-conventional-commits@7f91b1595ca1951cdb671ddc9f07a49081ec5b69 # v1.4.2
