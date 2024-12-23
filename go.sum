@@ -28,8 +28,8 @@ github.com/bmatcuk/doublestar/v4 v4.7.1/go.mod h1:xBQ8jztBU6kakFMg+8WGxn0c6z1fTS
 github.com/bwesterb/go-ristretto v1.2.3/go.mod h1:fUIoIZaG73pV5biE2Blr2xEzDoMj7NFEuV9ekS419A0=
 github.com/cenkalti/backoff/v4 v4.3.0 h1:MyRJ/UdXutAwSAT+s3wNd7MfTIcy71VQueUuFK343L8=
 github.com/cenkalti/backoff/v4 v4.3.0/go.mod h1:Y3VNntkOUPxTVeUxJ/G5vcM//AlwfmyYozVcomhLiZE=
-github.com/chhe/act v0.261.4-0.20241218124121-7aba4c3f6e7d h1:olzxVOvzZyJ3JW5tpOki5W3znN5MsO7JIJyEJg+ahuo=
-github.com/chhe/act v0.261.4-0.20241218124121-7aba4c3f6e7d/go.mod h1:+HsNPLPzLqASvpLaXXbgUXX2JEQnBCl8hvbHxpGlXB0=
+github.com/chhe/act v0.261.4-0.20241223134335-2a7e0a8640af h1:/WaDGQsC0VI/z9JSf1dkYmk/4G10aWKk3z2h//MaNdU=
+github.com/chhe/act v0.261.4-0.20241223134335-2a7e0a8640af/go.mod h1:W+rbGdwrnW5rWm5sIRPlya8byfZB7NkrEd7VwjIKO6I=
 github.com/cloudflare/circl v1.3.3/go.mod h1:5XYMA4rFBvNIrhs50XuiBJ15vF2pZn4nnUKZrLbUZFA=
 github.com/cloudflare/circl v1.5.0 h1:hxIWksrX6XN5a1L2TI/h53AGPhNHoUBo+TD1ms9+pys=
 github.com/cloudflare/circl v1.5.0/go.mod h1:uddAzsPgqdMAYatqJ0lsjX1oECcQLIlRpzZh3pJrofs=
