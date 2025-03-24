@@ -105,4 +105,4 @@ require (
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 )
 
-replace github.com/nektos/act => github.com/chhe/act v0.261.4-0.20250322111952-1d30149e56fb
+replace github.com/nektos/act => github.com/chhe/act v0.261.4-0.20250324114145-8b81bc5edfaa
