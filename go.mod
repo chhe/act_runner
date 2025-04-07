@@ -10,7 +10,7 @@ require (
 	github.com/docker/docker v28.0.4+incompatible
 	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-isatty v0.0.20
-	github.com/nektos/act v0.2.75 // will be replaced
+	github.com/nektos/act v0.2.76 // will be replaced
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.10.0
@@ -36,7 +36,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/cli v28.0.4+incompatible // indirect
-	github.com/docker/docker-credential-helpers v0.9.2 // indirect
+	github.com/docker/docker-credential-helpers v0.9.3 // indirect
 	github.com/docker/go-connections v0.5.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
@@ -54,7 +54,6 @@ require (
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.26.3 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
@@ -68,7 +67,7 @@ require (
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/patternmatcher v0.6.0 // indirect
 	github.com/moby/sys/sequential v0.6.0 // indirect
-	github.com/moby/sys/user v0.3.0 // indirect
+	github.com/moby/sys/user v0.4.0 // indirect
 	github.com/moby/sys/userns v0.1.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
@@ -90,19 +89,19 @@ require (
 	github.com/xeipuuv/gojsonschema v1.2.0 // indirect
 	go.etcd.io/bbolt v1.4.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
-	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.59.0 // indirect
+	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.60.0 // indirect
 	go.opentelemetry.io/otel v1.35.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.35.0 // indirect
 	go.opentelemetry.io/otel/metric v1.35.0 // indirect
 	go.opentelemetry.io/otel/trace v1.35.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.5.0 // indirect
-	golang.org/x/crypto v0.36.0 // indirect
-	golang.org/x/net v0.37.0 // indirect
-	golang.org/x/sync v0.12.0 // indirect
+	golang.org/x/crypto v0.37.0 // indirect
+	golang.org/x/net v0.38.0 // indirect
+	golang.org/x/sync v0.13.0 // indirect
 	golang.org/x/sys v0.32.0 // indirect
 	golang.org/x/tools v0.31.0 // indirect
-	google.golang.org/grpc v1.71.0 // indirect
+	google.golang.org/grpc v1.71.1 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 )
 
-replace github.com/nektos/act => github.com/chhe/act v0.261.4-0.20250326123506-6d06c867b382
+replace github.com/nektos/act => github.com/chhe/act v0.261.6-0.20250407082339-a071ef5542d0
