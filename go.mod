@@ -37,7 +37,7 @@ require (
 	github.com/cyphar/filepath-securejoin v0.4.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
-	github.com/docker/cli v28.2.2+incompatible // indirect
+	github.com/docker/cli v28.3.0+incompatible // indirect
 	github.com/docker/docker-credential-helpers v0.9.3 // indirect
 	github.com/docker/go-connections v0.5.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
@@ -107,6 +107,6 @@ require (
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 )
 
-replace github.com/nektos/act => github.com/chhe/act v0.261.6-0.20250610144334-a5783ea84a39
+replace github.com/nektos/act => github.com/chhe/act v0.261.6-0.20250625004312-db2e08d87447
 
 replace github.com/go-git/go-git/v5 => github.com/go-git/go-git/v5 v5.16.2
