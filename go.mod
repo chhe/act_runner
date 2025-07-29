@@ -107,6 +107,6 @@ require (
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 )
 
-replace github.com/nektos/act => github.com/chhe/act v0.261.6-0.20250716224412-da16d0386e62
+replace github.com/nektos/act => github.com/chhe/act v0.261.6-0.20250729093805-ca341f187de9
 
 replace github.com/go-git/go-git/v5 => github.com/go-git/go-git/v5 v5.16.2
