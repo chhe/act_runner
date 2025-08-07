@@ -27,8 +27,8 @@ github.com/bmatcuk/doublestar/v4 v4.8.1 h1:54Bopc5c2cAvhLRAzqOGCYHYyhcDHsFF4wWIR
 github.com/bmatcuk/doublestar/v4 v4.8.1/go.mod h1:xBQ8jztBU6kakFMg+8WGxn0c6z1fTSPVIjEY1Wr7jzc=
 github.com/cenkalti/backoff/v4 v4.3.0 h1:MyRJ/UdXutAwSAT+s3wNd7MfTIcy71VQueUuFK343L8=
 github.com/cenkalti/backoff/v4 v4.3.0/go.mod h1:Y3VNntkOUPxTVeUxJ/G5vcM//AlwfmyYozVcomhLiZE=
-github.com/chhe/act v0.261.6-0.20250730134329-66d468a81cf9 h1:tS9fgh7KiWKddkgDlovv1xh0PJZ22dDZVuGvWoTbfLs=
-github.com/chhe/act v0.261.6-0.20250730134329-66d468a81cf9/go.mod h1:4C3Gw0ri5pGJfzN+iGU70rFSjhqj+kP9jVmILWDQ7q4=
+github.com/chhe/act v0.261.6-0.20250807104405-ce1fc1807cb5 h1:NIY2X8aJyvkbf2iBH43wmF4dspICG9uV2rPGh8W8hoI=
+github.com/chhe/act v0.261.6-0.20250807104405-ce1fc1807cb5/go.mod h1:hTlEQfhfiYTaObOvBv34mLmBw4QQQt2JDgDR1gRWsVQ=
 github.com/cloudflare/circl v1.6.1 h1:zqIqSPIndyBh1bjLVVDHMPpVKqp8Su/V+6MeDzzQBQ0=
 github.com/cloudflare/circl v1.6.1/go.mod h1:uddAzsPgqdMAYatqJ0lsjX1oECcQLIlRpzZh3pJrofs=
 github.com/containerd/errdefs v1.0.0 h1:tg5yIfIlQIrxYtu9ajqY42W3lpS19XqdxRQeEwYG8PI=
