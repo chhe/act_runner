@@ -13,7 +13,7 @@ require (
 	github.com/nektos/act v0.2.78 // will be replaced
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.9.1
-	github.com/stretchr/testify v1.10.0
+	github.com/stretchr/testify v1.11.0
 	golang.org/x/term v0.34.0
 	golang.org/x/time v0.12.0
 	google.golang.org/protobuf v1.36.8
