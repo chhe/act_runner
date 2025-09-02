@@ -82,7 +82,7 @@ require (
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
 	github.com/skeema/knownhosts v1.3.1 // indirect
-	github.com/spf13/pflag v1.0.9 // indirect
+	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/timshannon/bolthold v0.0.0-20240314194003-30aac6950928 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
@@ -107,6 +107,6 @@ require (
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 )
 
-replace github.com/nektos/act => github.com/chhe/act v0.261.6-0.20250901164317-ca589041505e
+replace github.com/nektos/act => github.com/chhe/act v0.261.6-0.20250902194359-954bc90d1817
 
 replace github.com/go-git/go-git/v5 => github.com/go-git/go-git/v5 v5.16.2
