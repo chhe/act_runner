@@ -5,7 +5,7 @@ go 1.24.1
 require (
 	code.gitea.io/actions-proto-go v0.4.1
 	code.gitea.io/gitea-vet v0.2.3
-	connectrpc.com/connect v1.18.1
+	connectrpc.com/connect v1.19.0
 	github.com/avast/retry-go/v4 v4.6.1
 	github.com/docker/docker v28.4.0+incompatible
 	github.com/joho/godotenv v1.5.1
