@@ -108,4 +108,4 @@ require (
 
 replace github.com/nektos/act => github.com/chhe/act v0.261.6-0.20251002204336-6f86d9c75584
 
-replace github.com/go-git/go-git/v5 => github.com/go-git/go-git/v5 v5.16.2
+replace github.com/go-git/go-git/v5 => github.com/go-git/go-git/v5 v5.16.3
