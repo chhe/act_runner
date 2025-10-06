@@ -14,7 +14,7 @@ import (
 
 	runnerv1 "code.gitea.io/actions-proto-go/runner/v1"
 	"connectrpc.com/connect"
-	"github.com/avast/retry-go/v4"
+	"github.com/avast/retry-go/v5"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -278,12 +278,12 @@ func (r *Reporter) Close(lastWords string) error {
 
 	// Report the job outcome even when all log upload retry attempts have been exhausted
 	return errors.Join(
-		retry.Do(func() error {
+		retry.New(retry.Context(r.ctx)).Do(func() error {
 			return r.ReportLog(true)
-		}, retry.Context(r.ctx)),
-		retry.Do(func() error {
+		}),
+		retry.New(retry.Context(r.ctx)).Do(func() error {
 			return r.ReportState(true)
-		}, retry.Context(r.ctx)),
+		}),
 	)
 }
 
