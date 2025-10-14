@@ -6,7 +6,7 @@ require (
 	code.gitea.io/actions-proto-go v0.4.1
 	code.gitea.io/gitea-vet v0.2.3
 	connectrpc.com/connect v1.19.1
-	github.com/avast/retry-go/v4 v4.6.1
+	github.com/avast/retry-go/v4 v4.7.0
 	github.com/docker/docker v28.5.1+incompatible
 	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-isatty v0.0.20
