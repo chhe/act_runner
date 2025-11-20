@@ -1,4 +1,5 @@
-/act_runner.*
+/act_runner.exe
+/act_runner
 .env
 .runner
 coverage.txt
