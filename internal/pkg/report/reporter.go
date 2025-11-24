@@ -13,7 +13,7 @@ import (
 
 	runnerv1 "code.gitea.io/actions-proto-go/runner/v1"
 	"connectrpc.com/connect"
-	"github.com/avast/retry-go/v4"
+	"github.com/avast/retry-go/v5"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -252,12 +252,12 @@ func (r *Reporter) Close(lastWords string) error {
 	}
 	r.stateMu.Unlock()
 
-	return retry.Do(func() error {
+	return retry.New(retry.Context(r.ctx)).Do(func() error {
 		if err := r.ReportLog(true); err != nil {
 			return err
 		}
 		return r.ReportState()
-	}, retry.Context(r.ctx))
+	})
 }
 
 func (r *Reporter) ReportLog(noMore bool) error {
