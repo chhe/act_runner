@@ -10,7 +10,7 @@ require (
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-isatty v0.0.20
-	github.com/nektos/act v0.2.82 // will be replaced
+	github.com/nektos/act v0.2.83 // will be replaced
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.10.1
 	github.com/stretchr/testify v1.11.1
@@ -101,7 +101,7 @@ require (
 	golang.org/x/net v0.47.0 // indirect
 	golang.org/x/sync v0.18.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
-	golang.org/x/tools v0.37.0 // indirect
+	golang.org/x/tools v0.39.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 )
 
