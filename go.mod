@@ -12,7 +12,7 @@ require (
 	github.com/mattn/go-isatty v0.0.20
 	github.com/nektos/act v0.2.83 // will be replaced
 	github.com/sirupsen/logrus v1.9.3
-	github.com/spf13/cobra v1.10.1
+	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/term v0.37.0
 	golang.org/x/time v0.14.0
