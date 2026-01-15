@@ -2,7 +2,7 @@ module gitea.com/gitea/act_runner
 
 go 1.25.0
 
-toolchain go1.25.5
+toolchain go1.25.6
 
 require (
 	code.gitea.io/actions-proto-go v0.4.1
