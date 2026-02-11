@@ -1,6 +1,8 @@
 module gitea.com/gitea/runner
 
-go 1.26.0
+go 1.26
+
+toolchain go1.26.3
 
 require (
 	connectrpc.com/connect v1.20.0
