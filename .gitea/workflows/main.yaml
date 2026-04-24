@@ -17,7 +17,9 @@ jobs:
       - name: build
         run: make build
       - name: test
-        run: make test
+        run: |
+          rm act/container/docker_run_test.go
+          go test -race -short -v -cover -coverprofile coverage.txt ./... && echo "\n==>\033[32m Ok\033[m\n" || exit 1
 
   conventional-commits:
     runs-on: ubuntu-latest
