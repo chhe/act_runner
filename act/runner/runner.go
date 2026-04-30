@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"gitea.com/gitea/act_runner/act/common"
-	"gitea.com/gitea/act_runner/act/model"
+	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/act/model"
 
 	docker_container "github.com/docker/docker/api/types/container"
 	log "github.com/sirupsen/logrus"

@@ -71,17 +71,12 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Repo Meta
-        id: repo_meta
-        run: |
-          echo REPO_NAME=$(echo ${GITHUB_REPOSITORY} | awk -F"/" '{print $2}') >> $GITHUB_OUTPUT
-
       - name: "Docker meta"
         id: docker_meta
         uses: https://github.com/docker/metadata-action@v5
         with:
           images: |
-            ${{ env.DOCKER_ORG }}/${{ steps.repo_meta.outputs.REPO_NAME }}
+            ${{ env.DOCKER_ORG }}/runner
           tags: |
             type=semver,pattern={{major}}.{{minor}}.{{patch}}
             type=semver,pattern={{major}}.{{minor}}

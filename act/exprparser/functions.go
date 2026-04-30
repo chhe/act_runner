@@ -18,7 +18,7 @@ import (
 	"strconv"
 	"strings"
 
-	"gitea.com/gitea/act_runner/act/model"
+	"gitea.com/gitea/runner/act/model"
 
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 	"github.com/rhysd/actionlint"

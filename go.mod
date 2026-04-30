@@ -1,4 +1,4 @@
-module gitea.com/gitea/act_runner
+module gitea.com/gitea/runner
 
 go 1.26.0
 

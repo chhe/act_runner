@@ -69,7 +69,7 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Echo the tag
-        run: echo "${{ env.DOCKER_ORG }}/act_runner:nightly${{ matrix.variant.tag_suffix }}"
+        run: echo "${{ env.DOCKER_ORG }}/runner:nightly${{ matrix.variant.tag_suffix }}"
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -82,4 +82,4 @@ jobs:
             linux/arm64
           push: true
           tags: |
-            ${{ env.DOCKER_ORG }}/act_runner:nightly${{ matrix.variant.tag_suffix }}
+            ${{ env.DOCKER_ORG }}/runner:nightly${{ matrix.variant.tag_suffix }}

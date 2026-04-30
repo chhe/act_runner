@@ -15,8 +15,8 @@ import (
 	"path"
 	"path/filepath"
 
-	"gitea.com/gitea/act_runner/act/common"
-	"gitea.com/gitea/act_runner/act/model"
+	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/act/model"
 )
 
 type stepActionLocal struct {

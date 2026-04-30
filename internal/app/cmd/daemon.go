@@ -16,14 +16,14 @@ import (
 	"strings"
 	"time"
 
-	"gitea.com/gitea/act_runner/internal/app/poll"
-	"gitea.com/gitea/act_runner/internal/app/run"
-	"gitea.com/gitea/act_runner/internal/pkg/client"
-	"gitea.com/gitea/act_runner/internal/pkg/config"
-	"gitea.com/gitea/act_runner/internal/pkg/envcheck"
-	"gitea.com/gitea/act_runner/internal/pkg/labels"
-	"gitea.com/gitea/act_runner/internal/pkg/metrics"
-	"gitea.com/gitea/act_runner/internal/pkg/ver"
+	"gitea.com/gitea/runner/internal/app/poll"
+	"gitea.com/gitea/runner/internal/app/run"
+	"gitea.com/gitea/runner/internal/pkg/client"
+	"gitea.com/gitea/runner/internal/pkg/config"
+	"gitea.com/gitea/runner/internal/pkg/envcheck"
+	"gitea.com/gitea/runner/internal/pkg/labels"
+	"gitea.com/gitea/runner/internal/pkg/metrics"
+	"gitea.com/gitea/runner/internal/pkg/ver"
 
 	"connectrpc.com/connect"
 	"github.com/mattn/go-isatty"
@@ -104,7 +104,7 @@ func runDaemon(ctx context.Context, daemArgs *daemonArgs, configFile *string) fu
 			}
 			// if dockerSocketPath passes the check, override DOCKER_HOST with dockerSocketPath
 			os.Setenv("DOCKER_HOST", dockerSocketPath)
-			// empty cfg.Container.DockerHost means act_runner need to find an available docker host automatically
+			// empty cfg.Container.DockerHost means runner need to find an available docker host automatically
 			// and assign the path to cfg.Container.DockerHost
 			if cfg.Container.DockerHost == "" {
 				cfg.Container.DockerHost = dockerSocketPath

@@ -1,4 +1,4 @@
-### Running `act_runner` using `docker-compose`
+### Running `gitea-runner` using `docker-compose`
 
 ```yml
 ...
@@ -19,15 +19,15 @@
       # - GITEA_RUNNER_REGISTRATION_TOKEN=<user-defined registration token>
 
   runner:
-    image: gitea/act_runner
+    image: gitea/runner
     restart: always
     depends_on:
       gitea:
         # required so runner can attach to gitea, see "healthcheck"
-        condition: service_healthy 
+        condition: service_healthy
         restart: true
     volumes:
-      - ./data/act_runner:/data
+      - ./data/runner:/data
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - GITEA_INSTANCE_URL=<instance url>
@@ -38,18 +38,18 @@
       - GITEA_RUNNER_REGISTRATION_TOKEN=<registration token>
 ```
 
-### Running `act_runner` using Docker-in-Docker (DIND) 
+### Running `gitea-runner` using Docker-in-Docker (DIND)
 
 ```yml
 ...
   runner:
-    image: gitea/act_runner:latest-dind-rootless
+    image: gitea/runner:latest-dind-rootless
     restart: always
     privileged: true
     depends_on:
       - gitea
     volumes:
-      - ./data/act_runner:/data
+      - ./data/runner:/data
     environment:
       - GITEA_INSTANCE_URL=<instance url>
       - DOCKER_HOST=unix:///var/run/user/1000/docker.sock

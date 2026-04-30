@@ -16,8 +16,8 @@ import (
 	"strings"
 	"testing"
 
-	"gitea.com/gitea/act_runner/act/common"
-	"gitea.com/gitea/act_runner/act/model"
+	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/act/model"
 
 	"github.com/joho/godotenv"
 	log "github.com/sirupsen/logrus"

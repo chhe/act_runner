@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"strings"
 
-	"gitea.com/gitea/act_runner/act/common"
-	"gitea.com/gitea/act_runner/act/common/git"
+	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/act/common/git"
 )
 
 type GithubContext struct {

@@ -7,7 +7,7 @@ package runner
 import (
 	"testing"
 
-	"gitea.com/gitea/act_runner/act/model"
+	"gitea.com/gitea/runner/act/model"
 
 	"github.com/stretchr/testify/assert"
 )

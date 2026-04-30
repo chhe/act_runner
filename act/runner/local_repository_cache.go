@@ -16,7 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gitea.com/gitea/act_runner/act/filecollector"
+	"gitea.com/gitea/runner/act/filecollector"
 )
 
 type LocalRepositoryCache struct {

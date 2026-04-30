@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"gitea.com/gitea/act_runner/act/artifactcache"
-	"gitea.com/gitea/act_runner/internal/pkg/config"
+	"gitea.com/gitea/runner/act/artifactcache"
+	"gitea.com/gitea/runner/internal/pkg/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

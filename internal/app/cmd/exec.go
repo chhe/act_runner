@@ -17,11 +17,11 @@ import (
 	"strings"
 	"time"
 
-	"gitea.com/gitea/act_runner/act/artifactcache"
-	"gitea.com/gitea/act_runner/act/artifacts"
-	"gitea.com/gitea/act_runner/act/common"
-	"gitea.com/gitea/act_runner/act/model"
-	"gitea.com/gitea/act_runner/act/runner"
+	"gitea.com/gitea/runner/act/artifactcache"
+	"gitea.com/gitea/runner/act/artifacts"
+	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/act/model"
+	"gitea.com/gitea/runner/act/runner"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/joho/godotenv"

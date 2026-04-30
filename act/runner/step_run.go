@@ -12,10 +12,10 @@ import (
 	"slices"
 	"strings"
 
-	"gitea.com/gitea/act_runner/act/common"
-	"gitea.com/gitea/act_runner/act/container"
-	"gitea.com/gitea/act_runner/act/lookpath"
-	"gitea.com/gitea/act_runner/act/model"
+	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/act/container"
+	"gitea.com/gitea/runner/act/lookpath"
+	"gitea.com/gitea/runner/act/model"
 
 	"github.com/kballard/go-shellquote"
 	yaml "go.yaml.in/yaml/v4"

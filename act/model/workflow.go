@@ -15,7 +15,7 @@ import (
 	"strconv"
 	"strings"
 
-	"gitea.com/gitea/act_runner/act/common"
+	"gitea.com/gitea/runner/act/common"
 
 	log "github.com/sirupsen/logrus"
 	"go.yaml.in/yaml/v4"

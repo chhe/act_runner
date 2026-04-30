@@ -17,9 +17,9 @@ import (
 	"strings"
 	"sync"
 
-	"gitea.com/gitea/act_runner/act/common"
-	"gitea.com/gitea/act_runner/act/common/git"
-	"gitea.com/gitea/act_runner/act/model"
+	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/act/common/git"
+	"gitea.com/gitea/runner/act/model"
 )
 
 func newLocalReusableWorkflowExecutor(rc *RunContext) common.Executor {

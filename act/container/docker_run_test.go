@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"gitea.com/gitea/act_runner/act/common"
+	"gitea.com/gitea/runner/act/common"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"

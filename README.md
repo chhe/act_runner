@@ -1,6 +1,4 @@
-# act runner
-
-Act runner is a runner for Gitea.
+# Gitea Runner
 
 ## Installation
 
@@ -10,7 +8,7 @@ Docker Engine Community version is required for docker mode. To install Docker C
 
 ### Download pre-built binary
 
-Visit [here](https://dl.gitea.com/act_runner/) and download the right version for your platform.
+Visit [here](https://dl.gitea.com/gitea-runner/) and download the right version for your platform.
 
 ### Build from source
 
@@ -26,8 +24,8 @@ make docker
 
 ## Quickstart
 
-Actions are disabled by default, so you need to add the following to the configuration file of your Gitea instance to enable it: 
-  
+Actions are disabled by default, so you need to add the following to the configuration file of your Gitea instance to enable it:
+
 ```ini
 [actions]
 ENABLED=true
@@ -36,7 +34,7 @@ ENABLED=true
 ### Register
 
 ```bash
-./act_runner register
+./gitea-runner register
 ```
 
 And you will be asked to input:
@@ -68,7 +66,7 @@ INFO Runner registered successfully.
 You can also register with command line arguments.
 
 ```bash
-./act_runner register --instance http://192.168.8.8:3000 --token <my_runner_token> --no-interactive
+./gitea-runner register --instance http://192.168.8.8:3000 --token <my_runner_token> --no-interactive
 ```
 
 If the registry succeed, it will run immediately. Next time, you could run the runner directly.
@@ -76,13 +74,13 @@ If the registry succeed, it will run immediately. Next time, you could run the r
 ### Run
 
 ```bash
-./act_runner daemon
+./gitea-runner daemon
 ```
 
 ### Run with docker
 
 ```bash
-docker run -e GITEA_INSTANCE_URL=https://your_gitea.com -e GITEA_RUNNER_REGISTRATION_TOKEN=<your_token> -v /var/run/docker.sock:/var/run/docker.sock --name my_runner gitea/act_runner:nightly
+docker run -e GITEA_INSTANCE_URL=https://your_gitea.com -e GITEA_RUNNER_REGISTRATION_TOKEN=<your_token> -v /var/run/docker.sock:/var/run/docker.sock --name my_runner gitea/runner:nightly
 ```
 
 Mount a volume on `/data` if you want the registration file and optional config to survive container recreation (see [scripts/run.sh](scripts/run.sh)).
@@ -92,15 +90,15 @@ Mount a volume on `/data` if you want the registration file and optional config 
 The runner is configured with a YAML file. Generate a starting point (this matches what ships in the tree):
 
 ```bash
-./act_runner generate-config > config.yaml
+./gitea-runner generate-config > config.yaml
 ```
 
 Pass it with `-c` / `--config` on any command that loads configuration (`register`, `daemon`, `cache-server`):
 
 ```bash
-./act_runner -c config.yaml register
-./act_runner -c config.yaml daemon
-./act_runner -c config.yaml cache-server
+./gitea-runner -c config.yaml register
+./gitea-runner -c config.yaml daemon
+./gitea-runner -c config.yaml cache-server
 ```
 
 Every option is described in [config.example.yaml](internal/pkg/config/config.example.yaml) (the same content `generate-config` prints).
@@ -126,7 +124,7 @@ If `runner.labels` is set in the YAML file, those labels are used during `regist
 
 #### External cache (`actions/cache`)
 
-If `cache.external_server` is set, you must set `cache.external_secret` to the same value on this runner and on the standalone cache server. Run the server with `act_runner cache-server` using a config that defines `cache.external_secret` (and matching `cache.dir` / host / port as needed). Flags `--dir`, `--host`, and `--port` on `cache-server` override the file.
+If `cache.external_server` is set, you must set `cache.external_secret` to the same value on this runner and on the standalone cache server. Run the server with `gitea-runner cache-server` using a config that defines `cache.external_secret` (and matching `cache.dir` / host / port as needed). Flags `--dir`, `--host`, and `--port` on `cache-server` override the file.
 
 #### Official Docker image
 
