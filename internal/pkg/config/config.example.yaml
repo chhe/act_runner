@@ -3,8 +3,12 @@
 # You don't have to copy this file to your instance,
 # just run `./act_runner generate-config > config.yaml` to generate a config file.
 
+# Logging for the act_runner process itself (messages printed to stderr).
+# This does not control how workflow step output is streamed to the Gitea UI;
+# tune that with runner.log_report_* below.
 log:
-  # The level of logging, can be trace, debug, info, warn, error, fatal
+  # logrus severity: trace, debug, info, warn, error, fatal, panic.
+  # trace and debug turn on caller/file:line in log lines. Default if omitted: info.
   level: info
 
 runner:
@@ -92,6 +96,7 @@ container:
   # Specifies the network to which the container will connect.
   # Could be host, bridge or the name of a custom network.
   # If it's empty, act_runner will create a network automatically.
+  # Deprecated: `network_mode` is still accepted for old configs; use `network` instead.
   network: ""
   # Whether to use privileged mode or not when launching task containers (privileged mode is required for Docker-in-Docker).
   privileged: false

@@ -85,23 +85,54 @@ If the registry succeed, it will run immediately. Next time, you could run the r
 docker run -e GITEA_INSTANCE_URL=https://your_gitea.com -e GITEA_RUNNER_REGISTRATION_TOKEN=<your_token> -v /var/run/docker.sock:/var/run/docker.sock --name my_runner gitea/act_runner:nightly
 ```
 
+Mount a volume on `/data` if you want the registration file and optional config to survive container recreation (see [scripts/run.sh](scripts/run.sh)).
+
 ### Configuration
 
-You can also configure the runner with a configuration file.
-The configuration file is a YAML file, you can generate a sample configuration file with `./act_runner generate-config`.
+The runner is configured with a YAML file. Generate a starting point (this matches what ships in the tree):
 
 ```bash
 ./act_runner generate-config > config.yaml
 ```
 
-You can specify the configuration file path with `-c`/`--config` argument.
+Pass it with `-c` / `--config` on any command that loads configuration (`register`, `daemon`, `cache-server`):
 
 ```bash
-./act_runner -c config.yaml register # register with config file
-./act_runner -c config.yaml daemon # run with config file
+./act_runner -c config.yaml register
+./act_runner -c config.yaml daemon
+./act_runner -c config.yaml cache-server
 ```
 
-You can read the latest version of the configuration file online at [config.example.yaml](internal/pkg/config/config.example.yaml).
+Every option is described in [config.example.yaml](internal/pkg/config/config.example.yaml) (the same content `generate-config` prints).
+
+#### Without a config file
+
+If you omit `-c`, built-in defaults apply (same as an empty YAML document). A small set of **deprecated** environment variables can still override parts of that default config, but **only when no `-c` path was given**; they are ignored if you use a config file:
+
+| Variable | Effect |
+| --- | --- |
+| `GITEA_DEBUG` | If true, sets log level to `debug` |
+| `GITEA_TRACE` | If true, sets log level to `trace` |
+| `GITEA_RUNNER_CAPACITY` | Concurrent jobs (integer) |
+| `GITEA_RUNNER_FILE` | Registration state file path (default `.runner`) |
+| `GITEA_RUNNER_ENVIRON` | Extra job env vars as comma-separated `KEY:VALUE` pairs |
+| `GITEA_RUNNER_ENV_FILE` | Path to an env file merged into job env (same idea as `runner.env_file` in YAML) |
+
+Prefer a YAML file for all settings.
+
+#### Registration vs config labels
+
+If `runner.labels` is set in the YAML file, those labels are used during `register` and the `--labels` CLI flag is ignored.
+
+#### External cache (`actions/cache`)
+
+If `cache.external_server` is set, you must set `cache.external_secret` to the same value on this runner and on the standalone cache server. Run the server with `act_runner cache-server` using a config that defines `cache.external_secret` (and matching `cache.dir` / host / port as needed). Flags `--dir`, `--host`, and `--port` on `cache-server` override the file.
+
+#### Official Docker image
+
+Besides `GITEA_INSTANCE_URL` and `GITEA_RUNNER_REGISTRATION_TOKEN`, the image entrypoint supports optional variables such as `CONFIG_FILE` (passed through as `-c`), `GITEA_RUNNER_LABELS`, `GITEA_RUNNER_EPHEMERAL`, `GITEA_RUNNER_ONCE`, `GITEA_RUNNER_NAME`, `GITEA_MAX_REG_ATTEMPTS`, `RUNNER_STATE_FILE`, and `GITEA_RUNNER_REGISTRATION_TOKEN_FILE`. See [scripts/run.sh](scripts/run.sh) for exact behavior.
+
+For a fuller container-oriented walkthrough, see [examples/docker](examples/docker/README.md).
 
 ### Example Deployments
 
