@@ -633,14 +633,10 @@ func (cr *containerReference) exec(cmd []string, env map[string]string, user, wo
 			return fmt.Errorf("failed to inspect exec: %w", err)
 		}
 
-		switch inspectResp.ExitCode {
-		case 0:
+		if inspectResp.ExitCode == 0 {
 			return nil
-		case 127:
-			return fmt.Errorf("exitcode '%d': command not found, please refer to https://github.com/nektos/act/issues/107 for more information", inspectResp.ExitCode)
-		default:
-			return fmt.Errorf("exitcode '%d': failure", inspectResp.ExitCode)
 		}
+		return ExitCodeError(inspectResp.ExitCode)
 	}
 }
 
@@ -930,7 +926,7 @@ func (cr *containerReference) wait() common.Executor {
 			return nil
 		}
 
-		return fmt.Errorf("exit with `FAILURE`: %v", statusCode)
+		return ExitCodeError(statusCode)
 	}
 }
 

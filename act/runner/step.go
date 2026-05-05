@@ -107,7 +107,7 @@ func runStepExecutor(step step, stage stepStage, executor common.Executor) commo
 		if strings.Contains(stepString, "::add-mask::") {
 			stepString = "add-mask command"
 		}
-		logger.Infof("\u2B50 Run %s %s", stage, stepString)
+		logger.Infof("Run %s %s", stage, stepString)
 
 		// Prepare and clean Runner File Commands
 		actPath := rc.JobContainer.GetActPath()
@@ -158,7 +158,7 @@ func runStepExecutor(step step, stage stepStage, executor common.Executor) commo
 		err = executor(timeoutctx)
 
 		if err == nil {
-			logger.WithField("stepResult", stepResult.Outcome).Infof("  \u2705  Success - %s %s", stage, stepString)
+			logger.WithField("stepResult", stepResult.Outcome).Infof("Success - %s %s", stage, stepString)
 		} else {
 			stepResult.Outcome = model.StepStatusFailure
 
@@ -169,6 +169,7 @@ func runStepExecutor(step step, stage stepStage, executor common.Executor) commo
 			}
 
 			if continueOnError {
+				logger.Errorf("##[error]%v", err)
 				logger.Infof("Failed but continue next step")
 				err = nil
 				stepResult.Conclusion = model.StepStatusSuccess
@@ -176,7 +177,9 @@ func runStepExecutor(step step, stage stepStage, executor common.Executor) commo
 				stepResult.Conclusion = model.StepStatusFailure
 			}
 
-			logger.WithField("stepResult", stepResult.Outcome).Errorf("  \u274C  Failure - %s %s", stage, stepString)
+			// Infof: Errorf entries are promoted to the user log by the reporter,
+			// which would duplicate the ##[error] annotation emitted elsewhere.
+			logger.WithField("stepResult", stepResult.Outcome).Infof("Failure - %s %s", stage, stepString)
 		}
 		// Process Runner File Commands
 		orgerr := err
@@ -268,7 +271,7 @@ func isStepEnabled(ctx context.Context, expr string, step step, stage stepStage)
 
 	runStep, err := EvalBool(ctx, rc.NewStepExpressionEvaluator(ctx, step), expr, defaultStatusCheck)
 	if err != nil {
-		return false, fmt.Errorf("  \u274C  Error in if-expression: \"if: %s\" (%s)", expr, err)
+		return false, fmt.Errorf("if-expression %q evaluation failed: %s", expr, err)
 	}
 
 	return runStep, nil
@@ -284,7 +287,7 @@ func isContinueOnError(ctx context.Context, expr string, step step, _ stepStage)
 
 	continueOnError, err := EvalBool(ctx, rc.NewStepExpressionEvaluator(ctx, step), expr, exprparser.DefaultStatusCheckNone)
 	if err != nil {
-		return false, fmt.Errorf("  \u274C  Error in continue-on-error-expression: \"continue-on-error: %s\" (%s)", expr, err)
+		return false, fmt.Errorf("continue-on-error expression %q evaluation failed: %s", expr, err)
 	}
 
 	return continueOnError, nil

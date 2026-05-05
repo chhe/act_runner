@@ -23,6 +23,7 @@ import (
 	"github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDocker(t *testing.T) {
@@ -83,6 +84,11 @@ func (m *mockDockerClient) ContainerExecAttach(ctx context.Context, id string, o
 func (m *mockDockerClient) ContainerExecInspect(ctx context.Context, execID string) (types.ContainerExecInspect, error) {
 	args := m.Called(ctx, execID)
 	return args.Get(0).(types.ContainerExecInspect), args.Error(1)
+}
+
+func (m *mockDockerClient) ContainerWait(ctx context.Context, containerID string, condition container.WaitCondition) (<-chan container.WaitResponse, <-chan error) {
+	args := m.Called(ctx, containerID, condition)
+	return args.Get(0).(<-chan container.WaitResponse), args.Get(1).(<-chan error)
 }
 
 func (m *mockDockerClient) CopyToContainer(ctx context.Context, id, path string, content io.Reader, options types.CopyToContainerOptions) error {
@@ -174,9 +180,40 @@ func TestDockerExecFailure(t *testing.T) {
 	}
 
 	err := cr.exec([]string{""}, map[string]string{}, "user", "workdir")(ctx)
-	assert.Error(t, err, "exit with `FAILURE`: 1") //nolint:testifylint // pre-existing issue from nektos/act
+	var exitErr ExitCodeError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, ExitCodeError(1), exitErr)
+	assert.Equal(t, "Process completed with exit code 1.", err.Error())
 
 	conn.AssertExpectations(t)
+	client.AssertExpectations(t)
+}
+
+func TestDockerWaitFailure(t *testing.T) {
+	ctx := context.Background()
+
+	statusCh := make(chan container.WaitResponse, 1)
+	statusCh <- container.WaitResponse{StatusCode: 2}
+	errCh := make(chan error, 1)
+
+	client := &mockDockerClient{}
+	client.On("ContainerWait", ctx, "123", container.WaitConditionNotRunning).
+		Return((<-chan container.WaitResponse)(statusCh), (<-chan error)(errCh))
+
+	cr := &containerReference{
+		id:  "123",
+		cli: client,
+		input: &NewContainerInput{
+			Image: "image",
+		},
+	}
+
+	err := cr.wait()(ctx)
+	var exitErr ExitCodeError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, ExitCodeError(2), exitErr)
+	assert.Equal(t, "Process completed with exit code 2.", err.Error())
+
 	client.AssertExpectations(t)
 }
 

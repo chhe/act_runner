@@ -730,7 +730,7 @@ func (rc *RunContext) isEnabled(ctx context.Context) (bool, error) {
 	jobType, jobTypeErr := job.Type()
 
 	if runJobErr != nil {
-		return false, fmt.Errorf("  \u274C  Error in if-expression: \"if: %s\" (%s)", job.If.Value, runJobErr)
+		return false, fmt.Errorf("if-expression %q evaluation failed: %s", job.If.Value, runJobErr)
 	}
 
 	if jobType == model.JobTypeInvalid {

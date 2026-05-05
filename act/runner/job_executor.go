@@ -24,6 +24,13 @@ type jobInfo interface {
 	result(result string)
 }
 
+// reportStepError emits the GitHub Actions ##[error] annotation and records
+// the error against the job so the job is reported as failed.
+func reportStepError(ctx context.Context, err error) {
+	common.Logger(ctx).Errorf("##[error]%v", err)
+	common.SetJobError(ctx, err)
+}
+
 func newJobExecutor(info jobInfo, sf stepFactory, rc *RunContext) common.Executor {
 	steps := make([]common.Executor, 0)
 	preSteps := make([]common.Executor, 0)
@@ -32,7 +39,7 @@ func newJobExecutor(info jobInfo, sf stepFactory, rc *RunContext) common.Executo
 	steps = append(steps, func(ctx context.Context) error {
 		logger := common.Logger(ctx)
 		if len(info.matrix()) > 0 {
-			logger.Infof("\U0001F9EA  Matrix: %v", info.matrix())
+			logger.Infof("Matrix: %v", info.matrix())
 		}
 		return nil
 	})
@@ -75,33 +82,36 @@ func newJobExecutor(info jobInfo, sf stepFactory, rc *RunContext) common.Executo
 
 		preExec := step.pre()
 		preSteps = append(preSteps, useStepLogger(rc, stepModel, stepStagePre, func(ctx context.Context) error {
-			logger := common.Logger(ctx)
 			preErr := preExec(ctx)
 			if preErr != nil {
-				logger.Errorf("%v", preErr)
-				common.SetJobError(ctx, preErr)
+				reportStepError(ctx, preErr)
 			} else if ctx.Err() != nil {
-				logger.Errorf("%v", ctx.Err())
-				common.SetJobError(ctx, ctx.Err())
+				reportStepError(ctx, ctx.Err())
 			}
 			return preErr
 		}))
 
 		stepExec := step.main()
 		steps = append(steps, useStepLogger(rc, stepModel, stepStageMain, func(ctx context.Context) error {
-			logger := common.Logger(ctx)
 			err := stepExec(ctx)
 			if err != nil {
-				logger.Errorf("%v", err)
-				common.SetJobError(ctx, err)
+				reportStepError(ctx, err)
 			} else if ctx.Err() != nil {
-				logger.Errorf("%v", ctx.Err())
-				common.SetJobError(ctx, ctx.Err())
+				reportStepError(ctx, ctx.Err())
 			}
 			return nil
 		}))
 
-		postExec := useStepLogger(rc, stepModel, stepStagePost, step.post())
+		postFn := step.post()
+		postExec := useStepLogger(rc, stepModel, stepStagePost, func(ctx context.Context) error {
+			err := postFn(ctx)
+			if err != nil {
+				reportStepError(ctx, err)
+			} else if ctx.Err() != nil {
+				reportStepError(ctx, ctx.Err())
+			}
+			return err
+		})
 		if postExecutor != nil {
 			// run the post executor in reverse order
 			postExecutor = postExec.Finally(postExecutor)
@@ -196,7 +206,7 @@ func setJobResult(ctx context.Context, info jobInfo, rc *RunContext, success boo
 		jobResultMessage = "failed"
 	}
 
-	logger.WithField("jobResult", jobResult).Infof("\U0001F3C1  Job %s", jobResultMessage)
+	logger.WithField("jobResult", jobResult).Infof("Job %s", jobResultMessage)
 }
 
 func setJobOutputs(ctx context.Context, rc *RunContext) {

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"gitea.com/gitea/runner/act/common"
@@ -72,6 +73,31 @@ func TestGetContainerArchive(t *testing.T) {
 	assert.Equal(t, expectedContent, content)
 	_, err = reader.Next()
 	assert.ErrorIs(t, err, io.EOF)
+}
+
+func TestHostEnvironmentExecExitCode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	dir := t.TempDir()
+	ctx := context.Background()
+	e := &HostEnvironment{
+		Path:      filepath.Join(dir, "path"),
+		TmpDir:    filepath.Join(dir, "tmp"),
+		ToolCache: filepath.Join(dir, "tool_cache"),
+		ActPath:   filepath.Join(dir, "act_path"),
+		StdOut:    io.Discard,
+		Workdir:   filepath.Join(dir, "path"),
+	}
+	for _, p := range []string{e.Path, e.TmpDir, e.ToolCache, e.ActPath} {
+		assert.NoError(t, os.MkdirAll(p, 0o700)) //nolint:testifylint // test setup
+	}
+
+	err := e.Exec([]string{"sh", "-c", "exit 3"}, map[string]string{"PATH": os.Getenv("PATH")}, "", "")(ctx)
+	var exitErr ExitCodeError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, ExitCodeError(3), exitErr)
+	assert.Equal(t, "Process completed with exit code 3.", err.Error())
 }
 
 func TestHostEnvironmentRemoveCleansWorkdir(t *testing.T) {
