@@ -40,6 +40,12 @@ runner:
   # The runner uses exponential backoff when idle, increasing the interval up to this maximum.
   # Set to 0 or same as fetch_interval to disable backoff.
   fetch_interval_max: 5s
+  # While idle, remove stale bind-workdir task directories older than this duration.
+  # Setting either workdir_cleanup_age or idle_cleanup_interval to 0 (or any
+  # non-positive value) disables workdir cleanup entirely.
+  workdir_cleanup_age: 24h
+  # Cadence for the idle stale bind-workdir cleanup pass.
+  idle_cleanup_interval: 10m
   # The base interval for periodic log flush to the Gitea instance.
   # Logs may be sent earlier if the buffer reaches log_report_batch_size
   # or if log_report_max_latency expires after the first buffered row.
@@ -107,6 +113,7 @@ container:
   # If the path starts with '/', the '/' will be trimmed.
   # For example, if the parent directory is /path/to/my/dir, workdir_parent should be path/to/my/dir
   # If it's empty, /workspace will be used.
+  # Purely numeric subdirectories under this path are reserved for task workspaces and may be removed by idle cleanup.
   workdir_parent:
   # Volumes (including bind mounts) can be mounted to containers. Glob syntax is supported, see https://github.com/gobwas/glob
   # You can specify multiple volumes. If the sequence is empty, no volumes can be mounted.

@@ -7,12 +7,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -46,8 +48,10 @@ type Runner struct {
 	envs         map[string]string
 	cacheHandler *artifactcache.Handler
 
-	runningTasks sync.Map
-	runningCount atomic.Int64
+	runningTasks            sync.Map
+	runningCount            atomic.Int64
+	lastIdleCleanupUnixNano atomic.Int64
+	now                     func() time.Time
 }
 
 func NewRunner(cfg *config.Config, reg *config.Registration, cli client.Client) *Runner {
@@ -90,13 +94,94 @@ func NewRunner(cfg *config.Config, reg *config.Registration, cli client.Client) 
 	envs["GITEA_ACTIONS"] = "true"
 	envs["GITEA_ACTIONS_RUNNER_VERSION"] = ver.Version()
 
-	return &Runner{
+	runner := &Runner{
 		name:         reg.Name,
 		cfg:          cfg,
 		client:       cli,
 		labels:       ls,
 		envs:         envs,
 		cacheHandler: cacheHandler,
+		now:          time.Now,
+	}
+	return runner
+}
+
+// OnIdle performs lightweight maintenance during polling idle windows.
+// It runs synchronously on the poller goroutine; shouldRunIdleCleanup
+// throttles invocations to runner.idle_cleanup_interval so the impact on
+// poll cadence is bounded even when the workdir root is large.
+func (r *Runner) OnIdle(ctx context.Context) {
+	if !r.shouldRunIdleCleanup() {
+		return
+	}
+	workdirParent := strings.TrimLeft(r.cfg.Container.WorkdirParent, "/")
+	workdirRoot := filepath.FromSlash("/" + workdirParent)
+	r.cleanupStaleTaskDirs(ctx, workdirRoot)
+}
+
+func (r *Runner) shouldRunIdleCleanup() bool {
+	if !r.cfg.Container.BindWorkdir {
+		return false
+	}
+	if r.cfg.Runner.WorkdirCleanupAge <= 0 || r.cfg.Runner.IdleCleanupInterval <= 0 {
+		return false
+	}
+	if r.RunningCount() != 0 {
+		return false
+	}
+	now := r.now()
+	interval := r.cfg.Runner.IdleCleanupInterval
+	for {
+		last := r.lastIdleCleanupUnixNano.Load()
+		if last != 0 && now.Sub(time.Unix(0, last)) < interval {
+			return false
+		}
+		if r.lastIdleCleanupUnixNano.CompareAndSwap(last, now.UnixNano()) {
+			return true
+		}
+	}
+}
+
+func (r *Runner) cleanupStaleTaskDirs(ctx context.Context, workdirRoot string) {
+	entries, err := os.ReadDir(workdirRoot)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return
+		}
+		log.Warnf("failed to list task workspace root %s for stale cleanup: %v", workdirRoot, err)
+		return
+	}
+
+	// A task may begin between shouldRunIdleCleanup's running-count check and
+	// the loop below. That is safe because new task dirs are created with the
+	// current mtime and therefore fall on the keep side of cutoff.
+	cutoff := r.now().Add(-r.cfg.Runner.WorkdirCleanupAge)
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		if !entry.IsDir() {
+			continue
+		}
+		// Task workspaces are indexed by numeric task IDs; skip any other
+		// directories to avoid deleting operator-managed data under workdir_root.
+		if _, err := strconv.ParseUint(entry.Name(), 10, 64); err != nil {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			log.Warnf("failed to stat task workspace %s: %v", filepath.Join(workdirRoot, entry.Name()), err)
+			continue
+		}
+		if info.ModTime().After(cutoff) {
+			continue
+		}
+		taskDir := filepath.Join(workdirRoot, entry.Name())
+		if err := os.RemoveAll(taskDir); err != nil {
+			log.Warnf("failed to clean stale task workspace %s: %v", taskDir, err)
+			continue
+		}
+		log.Infof("cleaned stale task workspace %s", taskDir)
 	}
 }
 

@@ -125,6 +125,11 @@ type mockRunner struct {
 	totalCompleted atomic.Int64
 }
 
+type idleAwareRunner struct {
+	mockRunner
+	idleCalls atomic.Int64
+}
+
 func (m *mockRunner) Run(ctx context.Context, _ *runnerv1.Task) error {
 	atomicMax(&m.maxConcurrent, m.running.Add(1))
 	select {
@@ -134,6 +139,78 @@ func (m *mockRunner) Run(ctx context.Context, _ *runnerv1.Task) error {
 	m.running.Add(-1)
 	m.totalCompleted.Add(1)
 	return nil
+}
+
+func TestPollerRunIdleMaintenance(t *testing.T) {
+	runner := &idleAwareRunner{}
+	p := &Poller{runner: runner, jobsCtx: context.Background()}
+
+	p.runIdleMaintenance()
+
+	assert.Equal(t, int64(1), runner.idleCalls.Load())
+}
+
+func (m *idleAwareRunner) OnIdle(_ context.Context) {
+	m.idleCalls.Add(1)
+}
+
+func TestPollerPollCallsOnIdle(t *testing.T) {
+	cli := mocks.NewClient(t)
+	cli.On("FetchTask", mock.Anything, mock.Anything).Return(
+		func(_ context.Context, _ *connect_go.Request[runnerv1.FetchTaskRequest]) (*connect_go.Response[runnerv1.FetchTaskResponse], error) {
+			return connect_go.NewResponse(&runnerv1.FetchTaskResponse{}), nil
+		},
+	)
+
+	cfg, err := config.LoadDefault("")
+	require.NoError(t, err)
+	cfg.Runner.Capacity = 1
+	cfg.Runner.FetchInterval = 10 * time.Millisecond
+	cfg.Runner.FetchIntervalMax = 10 * time.Millisecond
+
+	runner := &idleAwareRunner{}
+	poller := New(cfg, cli, runner)
+
+	var wg sync.WaitGroup
+	wg.Go(poller.Poll)
+
+	require.Eventually(t, func() bool {
+		return runner.idleCalls.Load() > 0
+	}, time.Second, 10*time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	require.NoError(t, poller.Shutdown(ctx))
+	wg.Wait()
+}
+
+func TestPollerPollOnceCallsOnIdle(t *testing.T) {
+	cli := mocks.NewClient(t)
+	cli.On("FetchTask", mock.Anything, mock.Anything).Return(
+		func(_ context.Context, _ *connect_go.Request[runnerv1.FetchTaskRequest]) (*connect_go.Response[runnerv1.FetchTaskResponse], error) {
+			return connect_go.NewResponse(&runnerv1.FetchTaskResponse{}), nil
+		},
+	)
+
+	cfg, err := config.LoadDefault("")
+	require.NoError(t, err)
+	cfg.Runner.FetchInterval = 10 * time.Millisecond
+	cfg.Runner.FetchIntervalMax = 10 * time.Millisecond
+
+	runner := &idleAwareRunner{}
+	poller := New(cfg, cli, runner)
+
+	var wg sync.WaitGroup
+	wg.Go(poller.PollOnce)
+
+	require.Eventually(t, func() bool {
+		return runner.idleCalls.Load() > 0
+	}, time.Second, 10*time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	require.NoError(t, poller.Shutdown(ctx))
+	wg.Wait()
 }
 
 // TestPoller_ConcurrencyLimitedByCapacity verifies that with capacity=3 and

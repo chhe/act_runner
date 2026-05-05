@@ -27,6 +27,11 @@ type TaskRunner interface {
 	Run(ctx context.Context, task *runnerv1.Task) error
 }
 
+// IdleRunner can run maintenance while the poller is idle.
+type IdleRunner interface {
+	OnIdle(ctx context.Context)
+}
+
 type Poller struct {
 	client       client.Client
 	runner       TaskRunner
@@ -95,6 +100,7 @@ func (p *Poller) Poll() {
 
 		task, ok := p.fetchTask(p.pollingCtx, s)
 		if !ok {
+			p.runIdleMaintenance()
 			<-sem
 			if !p.waitBackoff(s) {
 				return
@@ -119,6 +125,7 @@ func (p *Poller) PollOnce() {
 	for {
 		task, ok := p.fetchTask(p.pollingCtx, s)
 		if !ok {
+			p.runIdleMaintenance()
 			if !p.waitBackoff(s) {
 				return
 			}
@@ -127,6 +134,12 @@ func (p *Poller) PollOnce() {
 		s.resetBackoff()
 		p.runTaskWithRecover(p.jobsCtx, task)
 		return
+	}
+}
+
+func (p *Poller) runIdleMaintenance() {
+	if idleRunner, ok := p.runner.(IdleRunner); ok {
+		idleRunner.OnIdle(p.jobsCtx)
 	}
 }
 

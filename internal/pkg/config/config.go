@@ -33,6 +33,8 @@ type Runner struct {
 	FetchTimeout        time.Duration     `yaml:"fetch_timeout"`          // FetchTimeout specifies the timeout duration for fetching resources.
 	FetchInterval       time.Duration     `yaml:"fetch_interval"`         // FetchInterval specifies the interval duration for fetching resources.
 	FetchIntervalMax    time.Duration     `yaml:"fetch_interval_max"`     // FetchIntervalMax specifies the maximum backoff interval when idle.
+	WorkdirCleanupAge   time.Duration     `yaml:"workdir_cleanup_age"`    // WorkdirCleanupAge removes stale bind-workdir task directories older than this duration during idle cleanup.
+	IdleCleanupInterval time.Duration     `yaml:"idle_cleanup_interval"`  // IdleCleanupInterval runs stale bind-workdir cleanup periodically while the runner is idle. Set to 0 to disable cleanup cadence.
 	LogReportInterval   time.Duration     `yaml:"log_report_interval"`    // LogReportInterval specifies the base interval for periodic log flush.
 	LogReportMaxLatency time.Duration     `yaml:"log_report_max_latency"` // LogReportMaxLatency specifies the max time a log row can wait before being sent.
 	LogReportBatchSize  int               `yaml:"log_report_batch_size"`  // LogReportBatchSize triggers immediate log flush when buffer reaches this size.
@@ -92,6 +94,7 @@ type Config struct {
 // If file is not empty, it will be used to load the configuration.
 func LoadDefault(file string) (*Config, error) {
 	cfg := &Config{}
+	definedRunnerKeys := map[string]bool{}
 	if file != "" {
 		content, err := os.ReadFile(file)
 		if err != nil {
@@ -99,6 +102,10 @@ func LoadDefault(file string) (*Config, error) {
 		}
 		if err := yaml.Unmarshal(content, cfg); err != nil {
 			return nil, fmt.Errorf("parse config file %q: %w", file, err)
+		}
+		definedRunnerKeys, err = definedRunnerConfigKeys(content)
+		if err != nil {
+			return nil, fmt.Errorf("parse config file %q for defaults metadata: %w", file, err)
 		}
 	}
 	compatibleWithOldEnvs(file != "", cfg)
@@ -157,6 +164,12 @@ func LoadDefault(file string) (*Config, error) {
 	if cfg.Runner.FetchIntervalMax <= 0 {
 		cfg.Runner.FetchIntervalMax = 5 * time.Second
 	}
+	if cfg.Runner.WorkdirCleanupAge == 0 && !definedRunnerKeys["workdir_cleanup_age"] {
+		cfg.Runner.WorkdirCleanupAge = 24 * time.Hour
+	}
+	if cfg.Runner.IdleCleanupInterval == 0 && !definedRunnerKeys["idle_cleanup_interval"] {
+		cfg.Runner.IdleCleanupInterval = 10 * time.Minute
+	}
 	if cfg.Runner.LogReportInterval <= 0 {
 		cfg.Runner.LogReportInterval = 5 * time.Second
 	}
@@ -198,4 +211,31 @@ func LoadDefault(file string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func definedRunnerConfigKeys(content []byte) (map[string]bool, error) {
+	var root yaml.Node
+	if err := yaml.Unmarshal(content, &root); err != nil {
+		return nil, err
+	}
+
+	defined := map[string]bool{}
+	if len(root.Content) == 0 {
+		return defined, nil
+	}
+
+	doc := root.Content[0]
+	for i := 0; i+1 < len(doc.Content); i += 2 {
+		key := doc.Content[i]
+		value := doc.Content[i+1]
+		if key.Value != "runner" || value.Kind != yaml.MappingNode {
+			continue
+		}
+		for j := 0; j+1 < len(value.Content); j += 2 {
+			defined[value.Content[j].Value] = true
+		}
+		break
+	}
+
+	return defined, nil
 }
