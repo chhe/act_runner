@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -238,6 +239,13 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 		workdirParent = fmt.Sprintf("%s/%d", workdirParent, task.Id)
 	}
 	workdir := filepath.FromSlash(fmt.Sprintf("/%s/%s", workdirParent, preset.Repository))
+	if runtime.GOOS == "windows" {
+		if abs, err := filepath.Abs(workdir); err == nil {
+			workdir = abs
+		}
+	}
+	// Without bind_workdir, the workspace path omits the task id; concurrent host-mode jobs
+	// for the same repository would share this directory and can race with per-job cleanup.
 
 	runnerConfig := &runner.Config{
 		// On Linux, Workdir will be like "/<parent_directory>/<owner>/<repo>"

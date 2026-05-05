@@ -13,7 +13,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"gitea.com/gitea/runner/act/common"
+
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Type assert HostEnvironment implements ExecutionsEnvironment
@@ -68,4 +72,52 @@ func TestGetContainerArchive(t *testing.T) {
 	assert.Equal(t, expectedContent, content)
 	_, err = reader.Next()
 	assert.ErrorIs(t, err, io.EOF)
+}
+
+func TestHostEnvironmentRemoveCleansWorkdir(t *testing.T) {
+	logger := logrus.New()
+	ctx := common.WithLogger(context.Background(), logrus.NewEntry(logger))
+	base := t.TempDir()
+	miscRoot := filepath.Join(base, "misc")
+	path := filepath.Join(miscRoot, "hostexecutor")
+	require.NoError(t, os.MkdirAll(path, 0o700))
+	workdir := filepath.Join(base, "workspace", "owner", "repo")
+	require.NoError(t, os.MkdirAll(workdir, 0o700))
+
+	e := &HostEnvironment{
+		Path:        path,
+		Workdir:     workdir,
+		BindWorkdir: false,
+		CleanUp: func() {
+			_ = os.RemoveAll(miscRoot)
+		},
+		StdOut: os.Stdout,
+	}
+	require.NoError(t, e.Remove()(ctx))
+	_, err := os.Stat(workdir)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestHostEnvironmentRemoveSkipsWorkdirWhenBindWorkdir(t *testing.T) {
+	logger := logrus.New()
+	ctx := common.WithLogger(context.Background(), logrus.NewEntry(logger))
+	base := t.TempDir()
+	miscRoot := filepath.Join(base, "misc")
+	path := filepath.Join(miscRoot, "hostexecutor")
+	require.NoError(t, os.MkdirAll(path, 0o700))
+	workdir := filepath.Join(base, "workspace", "123", "owner", "repo")
+	require.NoError(t, os.MkdirAll(workdir, 0o700))
+
+	e := &HostEnvironment{
+		Path:        path,
+		Workdir:     workdir,
+		BindWorkdir: true,
+		CleanUp: func() {
+			_ = os.RemoveAll(miscRoot)
+		},
+		StdOut: os.Stdout,
+	}
+	require.NoError(t, e.Remove()(ctx))
+	_, err := os.Stat(workdir)
+	require.NoError(t, err)
 }

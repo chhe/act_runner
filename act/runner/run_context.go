@@ -220,11 +220,12 @@ func (rc *RunContext) startHostEnvironment() common.Executor {
 		}
 		toolCache := filepath.Join(cacheDir, "tool_cache")
 		rc.JobContainer = &container.HostEnvironment{
-			Path:      path,
-			TmpDir:    runnerTmp,
-			ToolCache: toolCache,
-			Workdir:   rc.Config.Workdir,
-			ActPath:   actPath,
+			Path:        path,
+			TmpDir:      runnerTmp,
+			ToolCache:   toolCache,
+			Workdir:     rc.Config.Workdir,
+			BindWorkdir: rc.Config.BindWorkdir,
+			ActPath:     actPath,
 			CleanUp: func() {
 				os.RemoveAll(miscpath)
 			},
