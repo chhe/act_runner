@@ -7,15 +7,11 @@ package runner
 import (
 	"archive/tar"
 	"context"
-	"errors"
 	"fmt"
-	"io/fs"
 	"net/url"
-	"os"
 	"path"
 	"regexp"
 	"strings"
-	"sync"
 
 	"gitea.com/gitea/runner/act/common"
 	"gitea.com/gitea/runner/act/common/git"
@@ -51,7 +47,7 @@ func newLocalReusableWorkflowExecutor(rc *RunContext) common.Executor {
 	token := rc.Config.GetToken()
 
 	return common.NewPipelineExecutor(
-		newMutexExecutor(cloneIfRequired(rc, *remoteReusableWorkflow, workflowDir, token)),
+		cloneRemoteReusableWorkflow(rc, remoteReusableWorkflow.CloneURL(), remoteReusableWorkflow.Ref, workflowDir, token),
 		newReusableWorkflowExecutor(rc, workflowDir, remoteReusableWorkflow.FilePath()),
 	)
 }
@@ -85,7 +81,7 @@ func newRemoteReusableWorkflowExecutor(rc *RunContext) common.Executor {
 	token := getGitCloneToken(rc.Config, remoteReusableWorkflow.CloneURL())
 
 	return common.NewPipelineExecutor(
-		newMutexExecutor(cloneIfRequired(rc, *remoteReusableWorkflow, workflowDir, token)),
+		cloneRemoteReusableWorkflow(rc, remoteReusableWorkflow.CloneURL(), remoteReusableWorkflow.Ref, workflowDir, token),
 		newReusableWorkflowExecutor(rc, workflowDir, remoteReusableWorkflow.FilePath()),
 	)
 }
@@ -125,41 +121,25 @@ func newActionCacheReusableWorkflowExecutor(rc *RunContext, filename string, rem
 	}
 }
 
-var executorLock sync.Mutex
-
-func newMutexExecutor(executor common.Executor) common.Executor {
+// cloneRemoteReusableWorkflow always invokes the clone executor — moving refs
+// (branches, tags) must be re-resolved each run, matching GitHub Actions.
+//
+// Callers must not change remoteReusableWorkflow.URL, because:
+//  1. Gitea doesn't support specifying GithubContext.ServerURL by the GITHUB_SERVER_URL env
+//  2. Gitea has already full URL with rc.Config.GitHubInstance when calling newRemoteReusableWorkflowWithPlat
+//
+// remoteReusableWorkflow.URL = rc.getGithubContext(ctx).ServerURL
+func cloneRemoteReusableWorkflow(rc *RunContext, cloneURL, ref, targetDirectory, token string) common.Executor {
 	return func(ctx context.Context) error {
-		executorLock.Lock()
-		defer executorLock.Unlock()
-
-		return executor(ctx)
+		cloneURL = rc.NewExpressionEvaluator(ctx).Interpolate(ctx, cloneURL)
+		return git.NewGitCloneExecutor(git.NewGitCloneExecutorInput{
+			URL:         cloneURL,
+			Ref:         ref,
+			Dir:         targetDirectory,
+			Token:       token,
+			OfflineMode: rc.Config.ActionOfflineMode,
+		})(ctx)
 	}
-}
-
-func cloneIfRequired(rc *RunContext, remoteReusableWorkflow remoteReusableWorkflow, targetDirectory, token string) common.Executor {
-	return common.NewConditionalExecutor(
-		func(ctx context.Context) bool {
-			_, err := os.Stat(targetDirectory)
-			notExists := errors.Is(err, fs.ErrNotExist)
-			return notExists
-		},
-		func(ctx context.Context) error {
-			// interpolate the cloneURL
-			cloneURL := rc.NewExpressionEvaluator(ctx).Interpolate(ctx, remoteReusableWorkflow.CloneURL())
-			// Do not change the remoteReusableWorkflow.URL, because:
-			// 	1. Gitea doesn't support specifying GithubContext.ServerURL by the GITHUB_SERVER_URL env
-			//	2. Gitea has already full URL with rc.Config.GitHubInstance when calling newRemoteReusableWorkflowWithPlat
-			// remoteReusableWorkflow.URL = rc.getGithubContext(ctx).ServerURL
-			return git.NewGitCloneExecutor(git.NewGitCloneExecutorInput{
-				URL:         cloneURL,
-				Ref:         remoteReusableWorkflow.Ref,
-				Dir:         targetDirectory,
-				Token:       token,
-				OfflineMode: rc.Config.ActionOfflineMode,
-			})(ctx)
-		},
-		nil,
-	)
 }
 
 func newReusableWorkflowExecutor(rc *RunContext, directory, workflow string) common.Executor {
