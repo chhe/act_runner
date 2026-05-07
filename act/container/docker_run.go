@@ -53,7 +53,7 @@ func NewContainer(input *NewContainerInput) ExecutionsEnvironment {
 
 func (cr *containerReference) ConnectToNetwork(name string) common.Executor {
 	return common.
-		NewDebugExecutor("%sdocker network connect %s %s", logPrefix, name, cr.input.Name).
+		NewDebugExecutor("docker network connect %s %s", name, cr.input.Name).
 		Then(
 			common.NewPipelineExecutor(
 				cr.connect(),
@@ -90,7 +90,7 @@ func supportsContainerImagePlatform(ctx context.Context, cli client.APIClient) b
 
 func (cr *containerReference) Create(capAdd, capDrop []string) common.Executor {
 	return common.
-		NewInfoExecutor("%sdocker create image=%s platform=%s entrypoint=%+q cmd=%+q network=%+q", logPrefix, cr.input.Image, cr.input.Platform, cr.input.Entrypoint, cr.input.Cmd, cr.input.NetworkMode).
+		NewInfoExecutor("docker create image=%s platform=%s entrypoint=%+q cmd=%+q network=%+q", cr.input.Image, cr.input.Platform, cr.input.Entrypoint, cr.input.Cmd, cr.input.NetworkMode).
 		Then(
 			common.NewPipelineExecutor(
 				cr.connect(),
@@ -102,7 +102,7 @@ func (cr *containerReference) Create(capAdd, capDrop []string) common.Executor {
 
 func (cr *containerReference) Start(attach bool) common.Executor {
 	return common.
-		NewInfoExecutor("%sdocker run image=%s platform=%s entrypoint=%+q cmd=%+q network=%+q", logPrefix, cr.input.Image, cr.input.Platform, cr.input.Entrypoint, cr.input.Cmd, cr.input.NetworkMode).
+		NewInfoExecutor("docker run image=%s platform=%s entrypoint=%+q cmd=%+q network=%+q", cr.input.Image, cr.input.Platform, cr.input.Entrypoint, cr.input.Cmd, cr.input.NetworkMode).
 		Then(
 			common.NewPipelineExecutor(
 				cr.connect(),
@@ -125,7 +125,7 @@ func (cr *containerReference) Start(attach bool) common.Executor {
 
 func (cr *containerReference) Pull(forcePull bool) common.Executor {
 	return common.
-		NewInfoExecutor("%sdocker pull image=%s platform=%s username=%s forcePull=%t", logPrefix, cr.input.Image, cr.input.Platform, cr.input.Username, forcePull).
+		NewInfoExecutor("docker pull image=%s platform=%s username=%s forcePull=%t", cr.input.Image, cr.input.Platform, cr.input.Username, forcePull).
 		Then(
 			NewDockerPullExecutor(NewDockerPullExecutorInput{
 				Image:     cr.input.Image,
@@ -147,7 +147,7 @@ func (cr *containerReference) Copy(destPath string, files ...*FileEntry) common.
 
 func (cr *containerReference) CopyDir(destPath, srcPath string, useGitIgnore bool) common.Executor {
 	return common.NewPipelineExecutor(
-		common.NewInfoExecutor("%sdocker cp src=%s dst=%s", logPrefix, srcPath, destPath),
+		common.NewInfoExecutor("docker cp src=%s dst=%s", srcPath, destPath),
 		cr.copyDir(destPath, srcPath, useGitIgnore),
 		func(ctx context.Context) error {
 			// If this fails, then folders have wrong permissions on non root container
@@ -177,7 +177,7 @@ func (cr *containerReference) UpdateFromImageEnv(env *map[string]string) common.
 
 func (cr *containerReference) Exec(command []string, env map[string]string, user, workdir string) common.Executor {
 	return common.NewPipelineExecutor(
-		common.NewInfoExecutor("%sdocker exec cmd=[%s] user=%s workdir=%s", logPrefix, strings.Join(command, " "), user, workdir),
+		common.NewInfoExecutor("docker exec cmd=[%s] user=%s workdir=%s", strings.Join(command, " "), user, workdir),
 		cr.connect(),
 		cr.find(),
 		cr.exec(command, env, user, workdir),

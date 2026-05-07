@@ -193,7 +193,7 @@ func (rc *RunContext) GetBindsAndMounts() ([]string, map[string]string) {
 func (rc *RunContext) startHostEnvironment() common.Executor {
 	return func(ctx context.Context) error {
 		logger := common.Logger(ctx)
-		rawLogger := logger.WithField("raw_output", true)
+		rawLogger := logger.WithField(rawOutputField, true)
 		logWriter := common.NewLineWriter(rc.commandHandler(ctx), func(s string) bool {
 			if rc.Config.LogOutput {
 				rawLogger.Infof("%s", s)
@@ -260,11 +260,24 @@ func (rc *RunContext) startHostEnvironment() common.Executor {
 	}
 }
 
+// printStartJobContainerGroup mirrors actions/runner's "Starting job container"
+// section: emit the group header and summary, return a closer for ::endgroup::.
+func printStartJobContainerGroup(ctx context.Context, image, name, network string) func() {
+	rawLogger := common.Logger(ctx).WithField(rawOutputField, true)
+	rawLogger.Infof("::group::Starting job container")
+	rawLogger.Infof("image: %s", image)
+	rawLogger.Infof("name: %s", name)
+	rawLogger.Infof("network: %s", network)
+	return func() {
+		rawLogger.Infof("::endgroup::")
+	}
+}
+
 func (rc *RunContext) startJobContainer() common.Executor {
 	return func(ctx context.Context) error {
 		logger := common.Logger(ctx)
 		image := rc.platformImage(ctx)
-		rawLogger := logger.WithField("raw_output", true)
+		rawLogger := logger.WithField(rawOutputField, true)
 		logWriter := common.NewLineWriter(rc.commandHandler(ctx), func(s string) bool {
 			if rc.Config.LogOutput {
 				rawLogger.Infof("%s", s)
@@ -279,7 +292,6 @@ func (rc *RunContext) startJobContainer() common.Executor {
 			return fmt.Errorf("failed to handle credentials: %s", err)
 		}
 
-		logger.Infof("\U0001f680  Start image=%s", image)
 		name := rc.jobContainerName()
 		// For gitea, to support --volumes-from <container_name_or_id> in options.
 		// We need to set the container name to the environment variable.
@@ -424,6 +436,7 @@ func (rc *RunContext) startJobContainer() common.Executor {
 			return errors.New("Failed to create job container")
 		}
 
+		defer printStartJobContainerGroup(ctx, image, name, networkName)()
 		return common.NewPipelineExecutor(
 			rc.pullServicesImages(rc.Config.ForcePull),
 			rc.JobContainer.Pull(rc.Config.ForcePull),
@@ -753,7 +766,7 @@ func (rc *RunContext) isEnabled(ctx context.Context) (bool, error) {
 	img := rc.platformImage(ctx)
 	if img == "" {
 		for _, platformName := range rc.runsOnPlatformNames(ctx) {
-			l.Infof("\U0001F6A7  Skipping unsupported platform -- Try running with `-P %+v=...`", platformName)
+			l.Infof("Skipping unsupported platform -- Try running with `-P %+v=...`", platformName)
 		}
 		return false, nil
 	}

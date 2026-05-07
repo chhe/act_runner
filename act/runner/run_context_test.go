@@ -5,6 +5,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"gitea.com/gitea/runner/act/common"
 	"gitea.com/gitea/runner/act/exprparser"
 	"gitea.com/gitea/runner/act/model"
 
@@ -634,4 +636,26 @@ func TestCreateContainerNameBoundedForLongMatrixInput(t *testing.T) {
 	assert.LessOrEqual(t, len(name+"-env"), 255)
 	assert.LessOrEqual(t, len(name+"-network"), 255)
 	assert.LessOrEqual(t, len(name+"-job1234567890"), 255)
+}
+
+func TestPrintStartJobContainerGroupGolden(t *testing.T) {
+	buf := &bytes.Buffer{}
+	logger := log.New()
+	logger.SetOutput(buf)
+	logger.SetLevel(log.InfoLevel)
+	logger.SetFormatter(&jobLogFormatter{color: cyan})
+	entry := logger.WithFields(log.Fields{"job": "j1"})
+	ctx := common.WithLogger(context.Background(), entry)
+
+	printStartJobContainerGroup(ctx, "node:20", "GITEA-WORKFLOW-build-JOB-test", "gitea-runner-network")()
+
+	want := strings.Join([]string{
+		"[j1]   | ::group::Starting job container",
+		"[j1]   | image: node:20",
+		"[j1]   | name: GITEA-WORKFLOW-build-JOB-test",
+		"[j1]   | network: gitea-runner-network",
+		"[j1]   | ::endgroup::",
+		"",
+	}, "\n")
+	assert.Equal(t, want, buf.String())
 }

@@ -120,7 +120,7 @@ func (rc *RunContext) setOutput(ctx context.Context, kvPairs map[string]string, 
 
 	result, ok := rc.StepResults[stepID]
 	if !ok {
-		logger.Infof("  \U00002757  no outputs used step '%s'", stepID)
+		logger.Infof("No outputs registered for step '%s'", stepID)
 		return
 	}
 

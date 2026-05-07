@@ -24,7 +24,7 @@ import (
 func NewDockerPullExecutor(input NewDockerPullExecutorInput) common.Executor {
 	return func(ctx context.Context) error {
 		logger := common.Logger(ctx)
-		logger.Debugf("%sdocker pull %v", logPrefix, input.Image)
+		logger.Debugf("docker pull %v", input.Image)
 
 		if common.Dryrun(ctx) {
 			return nil

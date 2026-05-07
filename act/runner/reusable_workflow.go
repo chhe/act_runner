@@ -278,7 +278,7 @@ func setReusedWorkflowCallerResult(rc *RunContext, runner Runner) common.Executo
 				rc.caller.setReusedWorkflowJobResult(rc.JobName, reusedWorkflowJobResult)
 			} else {
 				rc.result(reusedWorkflowJobResult)
-				logger.WithField("jobResult", reusedWorkflowJobResult).Infof("\U0001F3C1  Job %s", reusedWorkflowJobResultMessage)
+				logger.WithField("jobResult", reusedWorkflowJobResult).Infof("Job %s", reusedWorkflowJobResultMessage)
 			}
 		}
 
