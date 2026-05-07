@@ -2,6 +2,6 @@ name: "last action check"
 description: "last action check"
 
 runs:
-  using: "node16"
+  using: "node24"
   main: main.js
   post: post.js

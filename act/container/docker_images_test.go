@@ -44,7 +44,7 @@ func TestImageExistsLocally(t *testing.T) {
 
 	// Chose alpine latest because it's so small
 	// maybe we should build an image instead so that tests aren't reliable on dockerhub
-	readerDefault, err := cli.ImagePull(ctx, "node:16-buster-slim", types.ImagePullOptions{
+	readerDefault, err := cli.ImagePull(ctx, "node:24-bookworm-slim", types.ImagePullOptions{
 		Platform: "linux/amd64",
 	})
 	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
@@ -52,12 +52,12 @@ func TestImageExistsLocally(t *testing.T) {
 	_, err = io.ReadAll(readerDefault)
 	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
 
-	imageDefaultArchExists, err := ImageExistsLocally(ctx, "node:16-buster-slim", "linux/amd64")
+	imageDefaultArchExists, err := ImageExistsLocally(ctx, "node:24-bookworm-slim", "linux/amd64")
 	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
 	assert.True(t, imageDefaultArchExists)
 
 	// Validate if another architecture platform can be pulled
-	readerArm64, err := cli.ImagePull(ctx, "node:16-buster-slim", types.ImagePullOptions{
+	readerArm64, err := cli.ImagePull(ctx, "node:24-bookworm-slim", types.ImagePullOptions{
 		Platform: "linux/arm64",
 	})
 	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
@@ -65,7 +65,7 @@ func TestImageExistsLocally(t *testing.T) {
 	_, err = io.ReadAll(readerArm64)
 	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
 
-	imageArm64Exists, err := ImageExistsLocally(ctx, "node:16-buster-slim", "linux/arm64")
+	imageArm64Exists, err := ImageExistsLocally(ctx, "node:24-bookworm-slim", "linux/arm64")
 	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
 	assert.True(t, imageArm64Exists)
 }

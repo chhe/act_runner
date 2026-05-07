@@ -1,27 +1,11 @@
-name: local-action-node12
+name: local-action-node24
 on: push
 
 jobs:
-  test-node12:
+  test-node24:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
-    - uses: ./actions/node12
-      with:
-        who-to-greet: 'Mona the Octocat'
-
-  test-node16:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v2
-    - uses: ./actions/node16
-      with:
-        who-to-greet: 'Mona the Octocat'
-  
-  test-node20:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v2
-    - uses: ./actions/node20
+    - uses: actions/checkout@v4
+    - uses: ./actions/node24
       with:
         who-to-greet: 'Mona the Octocat'

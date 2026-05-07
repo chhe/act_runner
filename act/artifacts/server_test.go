@@ -260,7 +260,7 @@ func TestArtifactFlow(t *testing.T) {
 	defer cancel()
 
 	platforms := map[string]string{
-		"ubuntu-latest": "node:16-buster", // Don't use node:16-buster-slim because it doesn't have curl command, which is used in the tests
+		"ubuntu-latest": "node:24-bookworm", // Don't use node:24-bookworm-slim because it doesn't have curl command, which is used in the tests
 	}
 
 	tables := []TestJobFileInfo{

@@ -26,7 +26,7 @@ import (
 )
 
 var (
-	baseImage = "node:16-buster-slim"
+	baseImage = "node:24-bookworm-slim"
 	platforms map[string]string
 	logLevel  = log.DebugLevel
 	workdir   = "testdata"
@@ -230,11 +230,9 @@ func TestRunEvent(t *testing.T) {
 	tables := []TestJobFileInfo{
 		// Shells
 		{workdir, "shells/defaults", "push", "", platforms, secrets},
-		// TODO: figure out why it fails
-		// {workdir, "shells/custom", "push", "", map[string]string{"ubuntu-latest": "catthehacker/ubuntu:pwsh-latest"}, }, // custom image with pwsh
 		{workdir, "shells/pwsh", "push", "", map[string]string{"ubuntu-latest": "catthehacker/ubuntu:pwsh-latest"}, secrets}, // custom image with pwsh
 		{workdir, "shells/bash", "push", "", platforms, secrets},
-		{workdir, "shells/python", "push", "", map[string]string{"ubuntu-latest": "node:16-buster"}, secrets}, // slim doesn't have python
+		{workdir, "shells/python", "push", "", map[string]string{"ubuntu-latest": "node:24-bookworm"}, secrets}, // slim doesn't have python
 		{workdir, "shells/sh", "push", "", platforms, secrets},
 
 		// Local action
@@ -463,7 +461,7 @@ func TestDryrunEvent(t *testing.T) {
 		{workdir, "shells/defaults", "push", "", platforms, secrets},
 		{workdir, "shells/pwsh", "push", "", map[string]string{"ubuntu-latest": "catthehacker/ubuntu:pwsh-latest"}, secrets}, // custom image with pwsh
 		{workdir, "shells/bash", "push", "", platforms, secrets},
-		{workdir, "shells/python", "push", "", map[string]string{"ubuntu-latest": "node:16-buster"}, secrets}, // slim doesn't have python
+		{workdir, "shells/python", "push", "", map[string]string{"ubuntu-latest": "node:24-bookworm"}, secrets}, // slim doesn't have python
 		{workdir, "shells/sh", "push", "", platforms, secrets},
 
 		// Local action
@@ -593,7 +591,7 @@ func TestRunWithService(t *testing.T) {
 	ctx := context.Background()
 
 	platforms := map[string]string{
-		"ubuntu-latest": "node:12.20.1-buster-slim",
+		"ubuntu-latest": "node:24-bookworm-slim",
 	}
 
 	workflowPath := "services"
