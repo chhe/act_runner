@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/act/common/git"
 	"gitea.com/gitea/runner/act/container"
 	"gitea.com/gitea/runner/act/model"
 
@@ -43,6 +44,11 @@ type runAction func(step actionStep, actionDir string, remoteAction *remoteActio
 
 //go:embed res/trampoline.js
 var trampoline embed.FS
+
+var (
+	ContainerImageExistsLocally     = container.ImageExistsLocally
+	ContainerNewDockerBuildExecutor = container.NewDockerBuildExecutor
+)
 
 func readActionImpl(ctx context.Context, step *model.Step, actionDir, actionPath string, readFile actionYamlReader, writeFile fileWriter) (*model.Action, error) {
 	logger := common.Logger(ctx)
@@ -148,6 +154,8 @@ func maybeCopyToActionDir(ctx context.Context, step actionStep, actionDir, actio
 		return rc.JobContainer.CopyTarStream(ctx, containerActionDirCopy, ta)
 	}
 
+	defer git.AcquireCloneLock(actionDir)()
+
 	if err := removeGitIgnore(ctx, actionDir); err != nil {
 		return err
 	}
@@ -197,7 +205,7 @@ func runActionImpl(step actionStep, actionDir string, remoteAction *remoteAction
 			if remoteAction == nil {
 				location = containerActionDir
 			}
-			return execAsDocker(ctx, step, actionName, location, remoteAction == nil)
+			return execAsDocker(ctx, step, actionName, actionDir, location, remoteAction == nil)
 		case x.IsComposite():
 			if err := maybeCopyToActionDir(ctx, step, actionDir, actionPath, containerActionDir); err != nil {
 				return err
@@ -265,7 +273,7 @@ func removeGitIgnore(ctx context.Context, directory string) error {
 }
 
 // TODO: break out parts of function to reduce complexicity
-func execAsDocker(ctx context.Context, step actionStep, actionName, basedir string, localAction bool) error {
+func execAsDocker(ctx context.Context, step actionStep, actionName, actionDir, basedir string, localAction bool) error {
 	logger := common.Logger(ctx)
 	rc := step.getRunContext()
 	action := step.getActionModel()
@@ -284,12 +292,12 @@ func execAsDocker(ctx context.Context, step actionStep, actionName, basedir stri
 		image = strings.ToLower(image)
 		contextDir, fileName := filepath.Split(filepath.Join(basedir, action.Runs.Image))
 
-		anyArchExists, err := container.ImageExistsLocally(ctx, image, "any")
+		anyArchExists, err := ContainerImageExistsLocally(ctx, image, "any")
 		if err != nil {
 			return err
 		}
 
-		correctArchExists, err := container.ImageExistsLocally(ctx, image, rc.Config.ContainerArchitecture)
+		correctArchExists, err := ContainerImageExistsLocally(ctx, image, rc.Config.ContainerArchitecture)
 		if err != nil {
 			return err
 		}
@@ -321,13 +329,21 @@ func execAsDocker(ctx context.Context, step actionStep, actionName, basedir stri
 				}
 				defer buildContext.Close()
 			}
-			prepImage = container.NewDockerBuildExecutor(container.NewDockerBuildExecutorInput{
+			prepImage = ContainerNewDockerBuildExecutor(container.NewDockerBuildExecutorInput{
 				ContextDir:   contextDir,
 				Dockerfile:   fileName,
 				ImageTag:     image,
 				BuildContext: buildContext,
 				Platform:     rc.Config.ContainerArchitecture,
 			})
+			if buildContext == nil {
+				// Held across the whole build: the daemon drains contextDir lazily.
+				inner := prepImage
+				prepImage = func(ctx context.Context) error {
+					defer git.AcquireCloneLock(actionDir)()
+					return inner(ctx)
+				}
+			}
 		} else {
 			logger.Debugf("image '%s' for architecture '%s' already exists", image, rc.Config.ContainerArchitecture)
 		}

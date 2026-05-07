@@ -5,11 +5,15 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
+	"gitea.com/gitea/runner/act/common/git"
 	"gitea.com/gitea/runner/act/model"
 
 	"github.com/stretchr/testify/require"
@@ -69,6 +73,54 @@ func TestReusableWorkflowCachedBranchRefRefreshes(t *testing.T) {
 	got, err = os.ReadFile(filepath.Join(cacheDir, workflowPath))
 	require.NoError(t, err)
 	require.Equal(t, tmpl("v2"), string(got), "cached workflow file must reflect the updated branch tip")
+}
+
+func TestNewReusableWorkflowExecutorHoldsCloneLock(t *testing.T) {
+	workflowDir := t.TempDir()
+
+	unlockOnce := sync.OnceFunc(git.AcquireCloneLock(workflowDir))
+	defer unlockOnce()
+
+	plannerCalled := make(chan struct{})
+
+	origPlanner := modelNewWorkflowPlanner
+	modelNewWorkflowPlanner = func(string, bool) (model.WorkflowPlanner, error) {
+		close(plannerCalled)
+		return nil, errors.New("stop")
+	}
+	defer func() { modelNewWorkflowPlanner = origPlanner }()
+
+	rc := &RunContext{
+		Config: &Config{},
+		Run:    &model.Run{Workflow: &model.Workflow{Jobs: map[string]*model.Job{}}},
+	}
+	exec := newReusableWorkflowExecutor(rc, workflowDir, "reusable.yml")
+
+	done := make(chan error, 1)
+	go func() { done <- exec(context.Background()) }()
+
+	select {
+	case <-plannerCalled:
+		t.Fatal("planner ran while clone lock was held")
+	case err := <-done:
+		t.Fatalf("executor returned before planner was reached: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	unlockOnce()
+
+	select {
+	case <-plannerCalled:
+	case <-time.After(time.Second):
+		t.Fatal("planner not called after lock was released")
+	}
+
+	select {
+	case err := <-done:
+		require.Error(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("executor did not return after planner ran")
+	}
 }
 
 func gitMust(t *testing.T, dir string, args ...string) {

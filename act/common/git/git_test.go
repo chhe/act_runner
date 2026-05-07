@@ -310,11 +310,11 @@ func TestAcquireCloneLock(t *testing.T) {
 	t.Run("same directory serializes", func(t *testing.T) {
 		dir := t.TempDir()
 
-		unlock1 := acquireCloneLock(dir)
+		unlock1 := AcquireCloneLock(dir)
 
 		secondAcquired := make(chan struct{})
 		go func() {
-			unlock := acquireCloneLock(dir)
+			unlock := AcquireCloneLock(dir)
 			close(secondAcquired)
 			unlock()
 		}()
@@ -338,12 +338,12 @@ func TestAcquireCloneLock(t *testing.T) {
 		dirA := t.TempDir()
 		dirB := t.TempDir()
 
-		unlockA := acquireCloneLock(dirA)
+		unlockA := AcquireCloneLock(dirA)
 		defer unlockA()
 
 		done := make(chan struct{})
 		go func() {
-			unlock := acquireCloneLock(dirB)
+			unlock := AcquireCloneLock(dirB)
 			unlock()
 			close(done)
 		}()

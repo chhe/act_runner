@@ -142,9 +142,16 @@ func cloneRemoteReusableWorkflow(rc *RunContext, cloneURL, ref, targetDirectory,
 	}
 }
 
+var modelNewWorkflowPlanner = model.NewWorkflowPlanner
+
 func newReusableWorkflowExecutor(rc *RunContext, directory, workflow string) common.Executor {
 	return func(ctx context.Context) error {
-		planner, err := model.NewWorkflowPlanner(path.Join(directory, workflow), true)
+		// Scoped to the yaml read so concurrent invocations don't serialize
+		// on the whole job run.
+		planner, err := func() (model.WorkflowPlanner, error) {
+			defer git.AcquireCloneLock(directory)()
+			return modelNewWorkflowPlanner(path.Join(directory, workflow), true)
+		}()
 		if err != nil {
 			return err
 		}

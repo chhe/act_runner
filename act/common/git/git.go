@@ -38,9 +38,11 @@ var (
 	ErrNoRepo   = errors.New("unable to find git repo")
 )
 
-// acquireCloneLock returns an unlock function after locking the per-directory mutex for dir.
-// Only concurrent operations targeting the same directory are erialized; clones into different directories run in parallel.
-func acquireCloneLock(dir string) func() {
+// AcquireCloneLock returns an unlock function after locking the per-directory mutex for dir.
+// Only concurrent operations targeting the same directory are serialized; clones into different directories run in parallel.
+// Callers reading files inside dir (e.g. tarring a checked-out action into a job container) must hold this lock too,
+// otherwise a concurrent NewGitCloneExecutor on the same dir can mutate the worktree mid-read.
+func AcquireCloneLock(dir string) func() {
 	v, _ := cloneLocks.LoadOrStore(dir, &sync.Mutex{})
 	mu := v.(*sync.Mutex)
 	mu.Lock()
@@ -308,7 +310,7 @@ func NewGitCloneExecutor(input NewGitCloneExecutorInput) common.Executor {
 		logger.Infof("git clone '%s' # ref=%s", input.URL, input.Ref)
 		logger.Debugf("  cloning %s to %s", input.URL, input.Dir)
 
-		defer acquireCloneLock(input.Dir)()
+		defer AcquireCloneLock(input.Dir)()
 
 		refName := plumbing.ReferenceName("refs/heads/" + input.Ref)
 		r, err := CloneIfRequired(ctx, refName, input, logger)
