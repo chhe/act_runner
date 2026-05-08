@@ -8,7 +8,9 @@ import (
 	"archive/tar"
 	"context"
 	"io"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -20,6 +22,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/format/index"
 	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type memoryFs struct {
@@ -173,4 +176,48 @@ func TestSymlinks(t *testing.T) {
 	assert.Equal(t, "test.env", files["test.env"].Name)
 	assert.Equal(t, ".env", files["test.env"].Linkname)
 	assert.ErrorIs(t, err, io.EOF, "tar must be read cleanly to EOF")
+}
+
+// Regression for https://gitea.com/gitea/runner/issues/876 and /941:
+// re-copying an action directory must overwrite a pre-existing read-only
+// file (e.g. a git pack .idx at mode 0444) instead of failing with EACCES
+// on macOS or "Access is denied" on Windows.
+func TestCopyCollectorWriteFileOverwritesReadOnlyFile(t *testing.T) {
+	dst := t.TempDir()
+	target := filepath.Join(dst, "sub", "pack.idx")
+	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o755))
+	require.NoError(t, os.WriteFile(target, []byte("old"), 0o444))
+
+	src := filepath.Join(t.TempDir(), "pack.idx")
+	require.NoError(t, os.WriteFile(src, []byte("new"), 0o444))
+	fi, err := os.Stat(src)
+	require.NoError(t, err)
+
+	cc := &CopyCollector{DstDir: dst}
+	require.NoError(t, cc.WriteFile("sub/pack.idx", fi, "", strings.NewReader("new")))
+
+	got, err := os.ReadFile(target)
+	require.NoError(t, err)
+	assert.Equal(t, "new", string(got))
+}
+
+// Without the destination removal, os.Symlink fails with EEXIST when the
+// path already holds a regular file from an earlier copy of the action.
+func TestCopyCollectorWriteFileOverwritesFileWithSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks requires elevated privileges on Windows")
+	}
+	dst := t.TempDir()
+	target := filepath.Join(dst, "link")
+	require.NoError(t, os.WriteFile(target, []byte("stale"), 0o644))
+
+	fi, err := os.Lstat(target)
+	require.NoError(t, err)
+
+	cc := &CopyCollector{DstDir: dst}
+	require.NoError(t, cc.WriteFile("link", fi, "target", nil))
+
+	resolved, err := os.Readlink(target)
+	require.NoError(t, err)
+	assert.Equal(t, "target", resolved)
 }
