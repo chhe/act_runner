@@ -325,10 +325,6 @@ func (h *Handler) openDB() (*bolthold.Store, error) {
 func (h *Handler) find(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	cred := credFromContext(r.Context())
 	keys := strings.Split(r.URL.Query().Get("keys"), ",")
-	// cache keys are case insensitive
-	for i, key := range keys {
-		keys[i] = strings.ToLower(key)
-	}
 	version := r.URL.Query().Get("version")
 
 	db, err := h.openDB()
@@ -371,8 +367,6 @@ func (h *Handler) reserve(w http.ResponseWriter, r *http.Request, _ httprouter.P
 		h.responseJSON(w, r, 400, err)
 		return
 	}
-	// cache keys are case insensitive
-	api.Key = strings.ToLower(api.Key)
 
 	cache := api.ToCache()
 	cache.Repo = cred.Repo
