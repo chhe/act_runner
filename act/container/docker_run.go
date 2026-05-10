@@ -23,6 +23,7 @@ import (
 	"gitea.com/gitea/runner/act/common"
 	"gitea.com/gitea/runner/act/filecollector"
 
+	"dario.cat/mergo"
 	"github.com/Masterminds/semver"
 	"github.com/docker/cli/cli/compose/loader"
 	"github.com/docker/cli/cli/connhelper"
@@ -36,7 +37,6 @@ import (
 	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 	"github.com/gobwas/glob"
-	"github.com/imdario/mergo"
 	"github.com/joho/godotenv"
 	"github.com/kballard/go-shellquote"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"

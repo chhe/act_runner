@@ -21,6 +21,7 @@ require (
 )
 
 require (
+	dario.cat/mergo v1.0.2
 	github.com/Masterminds/semver v1.5.0
 	github.com/creack/pty v1.1.24
 	github.com/distribution/reference v0.6.0
@@ -29,7 +30,6 @@ require (
 	github.com/go-git/go-billy/v5 v5.9.0
 	github.com/go-git/go-git/v5 v5.19.0
 	github.com/gobwas/glob v0.2.3
-	github.com/imdario/mergo v0.3.16
 	github.com/julienschmidt/httprouter v1.3.0
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51
 	github.com/moby/buildkit v0.13.2
@@ -46,7 +46,6 @@ require (
 
 require (
 	cyphar.com/go-pathrs v0.2.3 // indirect
-	dario.cat/mergo v1.0.2 // indirect
 	github.com/AdaLogics/go-fuzz-headers v0.0.0-20240806141605-e8a1dd7889d6 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.3.0 // indirect
