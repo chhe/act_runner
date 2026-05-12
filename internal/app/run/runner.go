@@ -218,6 +218,14 @@ func (r *Runner) Run(ctx context.Context, task *runnerv1.Task) error {
 	return nil
 }
 
+func (r *Runner) cloneEnvs() map[string]string {
+	// +3 reserves space for the per-task keys injected by run():
+	// ACTIONS_ID_TOKEN_REQUEST_URL, ACTIONS_ID_TOKEN_REQUEST_TOKEN, ACTIONS_RUNTIME_TOKEN.
+	envs := make(map[string]string, len(r.envs)+3)
+	maps.Copy(envs, r.envs)
+	return envs
+}
+
 // getDefaultActionsURL
 // when DEFAULT_ACTIONS_URL == "https://github.com" and GithubMirror is not blank,
 // it should be set to GithubMirror first.
@@ -251,6 +259,7 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 	reporter.ResetSteps(len(job.Steps))
 
 	taskContext := task.Context.Fields
+	envs := r.cloneEnvs()
 
 	log.Infof("task %v repo is %v %v %v", task.Id, taskContext["repository"].GetStringValue(),
 		r.getDefaultActionsURL(task),
@@ -281,9 +290,9 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 	}
 
 	if actionsIDTokenRequestURL := taskContext["actions_id_token_request_url"].GetStringValue(); actionsIDTokenRequestURL != "" {
-		r.envs["ACTIONS_ID_TOKEN_REQUEST_URL"] = actionsIDTokenRequestURL
-		r.envs["ACTIONS_ID_TOKEN_REQUEST_TOKEN"] = taskContext["actions_id_token_request_token"].GetStringValue()
-		task.Secrets["ACTIONS_ID_TOKEN_REQUEST_TOKEN"] = r.envs["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]
+		envs["ACTIONS_ID_TOKEN_REQUEST_URL"] = actionsIDTokenRequestURL
+		envs["ACTIONS_ID_TOKEN_REQUEST_TOKEN"] = taskContext["actions_id_token_request_token"].GetStringValue()
+		task.Secrets["ACTIONS_ID_TOKEN_REQUEST_TOKEN"] = envs["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]
 	}
 
 	giteaRuntimeToken := taskContext["gitea_runtime_token"].GetStringValue()
@@ -291,7 +300,7 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 		// use task token to action api token for previous Gitea Server Versions
 		giteaRuntimeToken = preset.Token
 	}
-	r.envs["ACTIONS_RUNTIME_TOKEN"] = giteaRuntimeToken
+	envs["ACTIONS_RUNTIME_TOKEN"] = giteaRuntimeToken
 	// Mask the runtime token so it cannot be echoed in user step output; it is
 	// now also the cache server's bearer credential and leaking it would let
 	// any reader of the log impersonate this job against the cache.
@@ -344,7 +353,7 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 		ForceRebuild:          r.cfg.Container.ForceRebuild,
 		LogOutput:             true,
 		JSONLogger:            false,
-		Env:                   r.envs,
+		Env:                   envs,
 		Secrets:               task.Secrets,
 		GitHubInstance:        strings.TrimSuffix(r.client.Address(), "/"),
 		AutoRemove:            true,
