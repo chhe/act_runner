@@ -17,6 +17,7 @@ import (
 
 func getHTTPClient(endpoint string, insecure bool) *http.Client {
 	transport := &http.Transport{
+		Proxy:               http.ProxyFromEnvironment,
 		MaxIdleConns:        10,
 		MaxIdleConnsPerHost: 10, // All requests go to one host; default is 2 which causes frequent reconnects.
 		IdleConnTimeout:     90 * time.Second,
