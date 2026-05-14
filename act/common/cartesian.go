@@ -4,6 +4,8 @@
 
 package common
 
+import "slices"
+
 // CartesianProduct takes map of lists and returns list of unique tuples
 func CartesianProduct(mapOfLists map[string][]any) []map[string]any {
 	listNames := make([]string, 0)
@@ -46,7 +48,7 @@ func cartN(a ...[]any) [][]any {
 		for j, n := range n {
 			pi[j] = a[j][n]
 		}
-		for j := len(n) - 1; j >= 0; j-- {
+		for j := range slices.Backward(n) {
 			n[j]++
 			if n[j] < len(a[j]) {
 				break
