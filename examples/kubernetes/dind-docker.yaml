@@ -4,7 +4,7 @@ metadata:
   name: runner-vol
 spec:
   accessModes:
-    - ReadWriteOnce
+  - ReadWriteOnce
   resources:
     requests:
       storage: 1Gi
@@ -35,28 +35,35 @@ spec:
   strategy: {}
   template:
     metadata:
-      creationTimestamp: null
       labels:
         app: runner
     spec:
       restartPolicy: Always
       volumes:
-      - name: docker-certs
+      - name: docker-socket
         emptyDir: {}
       - name: runner-data
         persistentVolumeClaim:
           claimName: runner-vol
+      initContainers:
+      - name: docker
+        image: docker:28.2.2-dind
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: docker-socket
+          mountPath: /var/run
+        startupProbe:
+          exec:
+            command: ["/usr/bin/test", "-S", "/var/run/docker.sock"]
+        livenessProbe:
+          exec:
+            command: ["/usr/bin/test", "-S", "/var/run/docker.sock"]
+        restartPolicy: Always
       containers:
       - name: runner
         image: gitea/runner:nightly
-        command: ["sh", "-c", "while ! nc -z localhost 2376 </dev/null; do echo 'waiting for docker daemon...'; sleep 5; done; /sbin/tini -- run.sh"]
         env:
-        - name: DOCKER_HOST
-          value: tcp://localhost:2376
-        - name: DOCKER_CERT_PATH
-          value: /certs/client
-        - name: DOCKER_TLS_VERIFY
-          value: "1"
         - name: GITEA_INSTANCE_URL
           value: http://gitea-http.gitea.svc.cluster.local:3000
         - name: GITEA_RUNNER_REGISTRATION_TOKEN
@@ -65,17 +72,7 @@ spec:
               name: runner-secret
               key: token
         volumeMounts:
-        - name: docker-certs
-          mountPath: /certs
         - name: runner-data
           mountPath: /data
-      - name: daemon
-        image: docker:23.0.6-dind
-        env:
-        - name: DOCKER_TLS_CERTDIR
-          value: /certs
-        securityContext:
-          privileged: true
-        volumeMounts:
-        - name: docker-certs
-          mountPath: /certs
+        - name: docker-socket
+          mountPath: /var/run
