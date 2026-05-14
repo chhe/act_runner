@@ -24,7 +24,7 @@ jobs:
         with:
           go-version-file: "go.mod"
       - name: goreleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser-pro
           args: release --nightly
@@ -57,13 +57,13 @@ jobs:
           fetch-depth: 0 # all history for all branches and tags
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker BuildX
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to DockerHub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
@@ -72,7 +72,7 @@ jobs:
         run: echo "${{ env.DOCKER_ORG }}/runner:nightly${{ matrix.variant.tag_suffix }}"
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
