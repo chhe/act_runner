@@ -14,10 +14,12 @@ import (
 
 	"gitea.com/gitea/runner/act/common"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/pkg/archive"
-	"github.com/moby/buildkit/frontend/dockerfile/dockerignore"
+	"github.com/moby/go-archive"
+	"github.com/moby/go-archive/compression"
+	"github.com/moby/moby/client"
 	"github.com/moby/patternmatcher"
+	"github.com/moby/patternmatcher/ignorefile"
+	specs "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 // NewDockerBuildExecutor function to create a run executor for the container
@@ -42,12 +44,18 @@ func NewDockerBuildExecutor(input NewDockerBuildExecutorInput) common.Executor {
 		logger.Debugf("Building image from '%v'", input.ContextDir)
 
 		tags := []string{input.ImageTag}
-		options := types.ImageBuildOptions{
+		options := client.ImageBuildOptions{
 			Tags:        tags,
 			Remove:      true,
-			Platform:    input.Platform,
 			AuthConfigs: LoadDockerAuthConfigs(ctx),
 			Dockerfile:  input.Dockerfile,
+		}
+		platform, err := parsePlatform(input.Platform)
+		if err != nil {
+			return err
+		}
+		if platform != nil {
+			options.Platforms = []specs.Platform{*platform}
 		}
 		var buildContext io.ReadCloser
 		if input.BuildContext != nil {
@@ -76,7 +84,7 @@ func createBuildContext(ctx context.Context, contextDir, relDockerfile string) (
 	common.Logger(ctx).Debugf("Creating archive for build context dir '%s' with relative dockerfile '%s'", contextDir, relDockerfile)
 
 	// And canonicalize dockerfile name to a platform-independent one
-	relDockerfile = archive.CanonicalTarNameForPath(relDockerfile)
+	relDockerfile = filepath.ToSlash(relDockerfile)
 
 	f, err := os.Open(filepath.Join(contextDir, ".dockerignore"))
 	if err != nil && !os.IsNotExist(err) {
@@ -86,7 +94,7 @@ func createBuildContext(ctx context.Context, contextDir, relDockerfile string) (
 
 	var excludes []string
 	if err == nil {
-		excludes, err = dockerignore.ReadAll(f) //nolint:staticcheck // pre-existing issue from nektos/act
+		excludes, err = ignorefile.ReadAll(f)
 		if err != nil {
 			return nil, err
 		}
@@ -106,9 +114,8 @@ func createBuildContext(ctx context.Context, contextDir, relDockerfile string) (
 		includes = append(includes, ".dockerignore", relDockerfile)
 	}
 
-	compression := archive.Uncompressed
 	buildCtx, err := archive.TarWithOptions(contextDir, &archive.TarOptions{
-		Compression:     compression,
+		Compression:     compression.None,
 		ExcludePatterns: excludes,
 		IncludeFiles:    includes,
 	})

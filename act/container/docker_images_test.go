@@ -9,8 +9,8 @@ import (
 	"io"
 	"testing"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
+	specs "github.com/opencontainers/image-spec/specs-go/v1"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
@@ -38,14 +38,14 @@ func TestImageExistsLocally(t *testing.T) {
 	assert.False(t, invalidImagePlatform)
 
 	// pull an image
-	cli, err := client.NewClientWithOpts(client.FromEnv)
+	cli, err := client.New(client.FromEnv)
 	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
-	cli.NegotiateAPIVersion(context.Background())
+	defer cli.Close()
 
 	// Chose alpine latest because it's so small
 	// maybe we should build an image instead so that tests aren't reliable on dockerhub
-	readerDefault, err := cli.ImagePull(ctx, "node:24-bookworm-slim", types.ImagePullOptions{
-		Platform: "linux/amd64",
+	readerDefault, err := cli.ImagePull(ctx, "node:24-bookworm-slim", client.ImagePullOptions{
+		Platforms: []specs.Platform{{OS: "linux", Architecture: "amd64"}},
 	})
 	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
 	defer readerDefault.Close()
@@ -57,8 +57,8 @@ func TestImageExistsLocally(t *testing.T) {
 	assert.True(t, imageDefaultArchExists)
 
 	// Validate if another architecture platform can be pulled
-	readerArm64, err := cli.ImagePull(ctx, "node:24-bookworm-slim", types.ImagePullOptions{
-		Platform: "linux/arm64",
+	readerArm64, err := cli.ImagePull(ctx, "node:24-bookworm-slim", client.ImagePullOptions{
+		Platforms: []specs.Platform{{OS: "linux", Architecture: "arm64"}},
 	})
 	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
 	defer readerArm64.Close()

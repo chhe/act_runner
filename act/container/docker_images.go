@@ -10,8 +10,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/client"
+	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/client"
 )
 
 // ImageExistsLocally returns a boolean indicating if an image with the
@@ -23,8 +23,8 @@ func ImageExistsLocally(ctx context.Context, imageName, platform string) (bool, 
 	}
 	defer cli.Close()
 
-	inspectImage, _, err := cli.ImageInspectWithRaw(ctx, imageName)
-	if client.IsErrNotFound(err) {
+	inspectImage, err := cli.ImageInspect(ctx, imageName)
+	if cerrdefs.IsNotFound(err) {
 		return false, nil
 	} else if err != nil {
 		return false, err
@@ -46,14 +46,14 @@ func RemoveImage(ctx context.Context, imageName string, force, pruneChildren boo
 	}
 	defer cli.Close()
 
-	inspectImage, _, err := cli.ImageInspectWithRaw(ctx, imageName)
-	if client.IsErrNotFound(err) {
+	inspectImage, err := cli.ImageInspect(ctx, imageName)
+	if cerrdefs.IsNotFound(err) {
 		return false, nil
 	} else if err != nil {
 		return false, err
 	}
 
-	if _, err = cli.ImageRemove(ctx, inspectImage.ID, types.ImageRemoveOptions{
+	if _, err = cli.ImageRemove(ctx, inspectImage.ID, client.ImageRemoveOptions{
 		Force:         force,
 		PruneChildren: pruneChildren,
 	}); err != nil {

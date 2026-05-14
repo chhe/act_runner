@@ -23,8 +23,8 @@ import (
 	"gitea.com/gitea/runner/act/model"
 	"gitea.com/gitea/runner/act/runner"
 
-	"github.com/docker/docker/api/types/container"
 	"github.com/joho/godotenv"
+	"github.com/moby/moby/api/types/container"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"

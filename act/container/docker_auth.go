@@ -8,34 +8,38 @@ package container
 
 import (
 	"context"
-	"strings"
 
 	"gitea.com/gitea/runner/act/common"
 
+	"github.com/distribution/reference"
 	"github.com/docker/cli/cli/config"
 	"github.com/docker/cli/cli/config/credentials"
-	"github.com/docker/docker/api/types/registry"
+	"github.com/moby/moby/api/types/registry"
 )
 
 func LoadDockerAuthConfig(ctx context.Context, image string) (registry.AuthConfig, error) {
 	logger := common.Logger(ctx)
-	config, err := config.Load(config.Dir())
+	// config.LoadDefaultConfigFile panics on nil io.Writer when the config
+	// file is malformed; use config.Load to route errors through the logger.
+	cfg, err := config.Load(config.Dir())
 	if err != nil {
 		logger.Warnf("Could not load docker config: %v", err)
 		return registry.AuthConfig{}, err
 	}
-
-	if !config.ContainsAuth() {
-		config.CredentialsStore = credentials.DetectDefaultStore(config.CredentialsStore)
+	if !cfg.ContainsAuth() {
+		cfg.CredentialsStore = credentials.DetectDefaultStore(cfg.CredentialsStore)
 	}
 
-	hostName := "index.docker.io"
-	index := strings.IndexRune(image, '/')
-	if index > -1 && (strings.ContainsAny(image[:index], ".:") || image[:index] == "localhost") {
-		hostName = image[:index]
+	registryKey := registryAuthConfigKey("docker.io")
+	if image != "" {
+		if registryRef, refErr := reference.ParseNormalizedNamed(image); refErr != nil {
+			logger.Warnf("Could not normalize image reference: %v", refErr)
+		} else {
+			registryKey = registryAuthConfigKey(reference.Domain(registryRef))
+		}
 	}
 
-	authConfig, err := config.GetAuthConfig(hostName)
+	authConfig, err := cfg.GetAuthConfig(registryKey)
 	if err != nil {
 		logger.Warnf("Could not get auth config from docker config: %v", err)
 		return registry.AuthConfig{}, err
@@ -46,21 +50,31 @@ func LoadDockerAuthConfig(ctx context.Context, image string) (registry.AuthConfi
 
 func LoadDockerAuthConfigs(ctx context.Context) map[string]registry.AuthConfig {
 	logger := common.Logger(ctx)
-	config, err := config.Load(config.Dir())
+	cfg, err := config.Load(config.Dir())
 	if err != nil {
 		logger.Warnf("Could not load docker config: %v", err)
 		return nil
 	}
-
-	if !config.ContainsAuth() {
-		config.CredentialsStore = credentials.DetectDefaultStore(config.CredentialsStore)
+	if !cfg.ContainsAuth() {
+		cfg.CredentialsStore = credentials.DetectDefaultStore(cfg.CredentialsStore)
 	}
 
-	creds, _ := config.GetAllCredentials()
+	creds, err := cfg.GetAllCredentials()
+	if err != nil {
+		logger.Warnf("Could not get docker auth configs: %v", err)
+		return nil
+	}
 	authConfigs := make(map[string]registry.AuthConfig, len(creds))
 	for k, v := range creds {
 		authConfigs[k] = registry.AuthConfig(v)
 	}
 
 	return authConfigs
+}
+
+func registryAuthConfigKey(domainName string) string {
+	if domainName == "docker.io" || domainName == "index.docker.io" {
+		return "https://index.docker.io/v1/"
+	}
+	return domainName
 }
