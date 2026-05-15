@@ -74,6 +74,11 @@ runner:
     - "ubuntu-latest:docker://docker.gitea.com/runner-images:ubuntu-latest"
     - "ubuntu-24.04:docker://docker.gitea.com/runner-images:ubuntu-24.04"
     - "ubuntu-22.04:docker://docker.gitea.com/runner-images:ubuntu-22.04"
+  # Allocate a pseudo-TTY for each step's process. Applies to both host and docker backends.
+  # Default false matches GitHub actions/runner. Enable only for jobs that need an interactive
+  # terminal; tools like `docker build` emit redrawing progress frames into the captured log
+  # when a TTY is present.
+  allocate_pty: false
 
 cache:
   # Enable cache server to use actions/cache.

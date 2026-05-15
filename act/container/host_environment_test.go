@@ -6,12 +6,14 @@ package container
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"io"
 	"os"
 	"path"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"gitea.com/gitea/runner/act/common"
@@ -98,6 +100,45 @@ func TestHostEnvironmentExecExitCode(t *testing.T) {
 	require.ErrorAs(t, err, &exitErr)
 	assert.Equal(t, ExitCodeError(3), exitErr)
 	assert.Equal(t, "Process completed with exit code 3.", err.Error())
+}
+
+func TestHostEnvironmentAllocatePTY(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	for _, tc := range []struct {
+		name     string
+		allocPTY bool
+		expect   string
+	}{
+		{name: "off", allocPTY: false, expect: "NOTTY"},
+		{name: "on", allocPTY: true, expect: "TTY"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			buf := &bytes.Buffer{}
+			e := &HostEnvironment{
+				Path:        filepath.Join(dir, "path"),
+				TmpDir:      filepath.Join(dir, "tmp"),
+				ToolCache:   filepath.Join(dir, "tool_cache"),
+				ActPath:     filepath.Join(dir, "act_path"),
+				StdOut:      buf,
+				Workdir:     filepath.Join(dir, "path"),
+				AllocatePTY: tc.allocPTY,
+			}
+			for _, p := range []string{e.Path, e.TmpDir, e.ToolCache, e.ActPath} {
+				require.NoError(t, os.MkdirAll(p, 0o700))
+			}
+
+			err := e.Exec(
+				[]string{"sh", "-c", "[ -t 1 ] && printf TTY || printf NOTTY"},
+				map[string]string{"PATH": os.Getenv("PATH")}, "", "",
+			)(context.Background())
+			require.NoError(t, err)
+			got := strings.TrimSpace(strings.ReplaceAll(buf.String(), "\r", ""))
+			assert.Equal(t, tc.expect, got)
+		})
+	}
 }
 
 func TestHostEnvironmentRemoveCleansWorkdir(t *testing.T) {

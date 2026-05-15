@@ -79,6 +79,7 @@ type Config struct {
 	ValidVolumes          []string                     // only volumes (and bind mounts) in this slice can be mounted on the job container or service containers
 	InsecureSkipTLS       bool                         // whether to skip verifying TLS certificate of the Gitea instance
 	MaxParallel           int                          // max parallel jobs to run across all workflows (0 = no limit, uses CPU count)
+	AllocatePTY           bool                         // allocate a pseudo-TTY for each step's process
 }
 
 // GetToken: Adapt to Gitea

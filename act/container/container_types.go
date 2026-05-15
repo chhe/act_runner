@@ -47,6 +47,7 @@ type NewContainerInput struct {
 	// Gitea specific
 	AutoRemove   bool
 	ValidVolumes []string
+	AllocatePTY  bool // allocate a pseudo-TTY for the container's exec processes
 }
 
 // FileEntry is a file to copy to a container

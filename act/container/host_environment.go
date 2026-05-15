@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gitea.com/gitea/runner/act/common"
@@ -42,6 +43,7 @@ type HostEnvironment struct {
 	ActPath     string
 	CleanUp     func()
 	StdOut      io.Writer
+	AllocatePTY bool // allocate a pseudo-TTY for each step's process
 
 	mu          sync.Mutex
 	runningPIDs map[int]struct{}
@@ -200,12 +202,12 @@ func (e *HostEnvironment) Start(_ bool) common.Executor {
 
 type ptyWriter struct {
 	Out       io.Writer
-	AutoStop  bool
+	AutoStop  atomic.Bool
 	dirtyLine bool
 }
 
 func (w *ptyWriter) Write(buf []byte) (int, error) {
-	if w.AutoStop && len(buf) > 0 && buf[len(buf)-1] == 4 {
+	if w.AutoStop.Load() && len(buf) > 0 && buf[len(buf)-1] == 4 {
 		n, err := w.Out.Write(buf[:len(buf)-1])
 		if err != nil {
 			return n, err
@@ -335,21 +337,20 @@ func (e *HostEnvironment) exec(ctx context.Context, command []string, cmdline st
 			tty.Close()
 		}
 	}()
-	if true /* allocate Terminal */ {
+	if e.AllocatePTY {
 		var err error
 		ppty, tty, err = setupPty(cmd, cmdline)
 		if err != nil {
 			common.Logger(ctx).Debugf("Failed to setup Pty %v\n", err.Error())
 		}
 	}
-	writer := &ptyWriter{Out: e.StdOut}
-	logctx, finishLog := context.WithCancel(context.Background())
+	var writer *ptyWriter
+	var logctx context.Context
 	if ppty != nil {
+		writer = &ptyWriter{Out: e.StdOut}
+		var finishLog context.CancelFunc
+		logctx, finishLog = context.WithCancel(context.Background())
 		go copyPtyOutput(writer, ppty, finishLog)
-	} else {
-		finishLog()
-	}
-	if ppty != nil {
 		go writeKeepAlive(ppty)
 	}
 	// Split Start/Wait so the PID can be registered before the process can exit;
@@ -379,14 +380,11 @@ func (e *HostEnvironment) exec(ctx context.Context, command []string, cmdline st
 		return err
 	}
 	if tty != nil {
-		writer.AutoStop = true
+		writer.AutoStop.Store(true)
 		if _, err := tty.WriteString("\x04"); err != nil {
 			common.Logger(ctx).Debug("Failed to write EOT")
 		}
-	}
-	<-logctx.Done()
-
-	if ppty != nil {
+		<-logctx.Done()
 		ppty.Close()
 		ppty = nil
 	}

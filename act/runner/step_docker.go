@@ -139,6 +139,7 @@ func (sd *stepDocker) newStepContainer(ctx context.Context, image string, cmd, e
 		Platform:     rc.Config.ContainerArchitecture,
 		AutoRemove:   rc.Config.AutoRemove,
 		ValidVolumes: rc.Config.ValidVolumes,
+		AllocatePTY:  rc.Config.AllocatePTY,
 	})
 	return stepContainer
 }

@@ -109,6 +109,55 @@ func TestStepDockerMain(t *testing.T) {
 	cm.AssertExpectations(t)
 }
 
+func TestStepDockerNewStepContainerAllocatePTY(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		allocPTY bool
+	}{
+		{name: "off", allocPTY: false},
+		{name: "on", allocPTY: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cm := &containerMock{}
+
+			var captured *container.NewContainerInput
+			origContainerNewContainer := ContainerNewContainer
+			ContainerNewContainer = func(input *container.NewContainerInput) container.ExecutionsEnvironment {
+				captured = input
+				return cm
+			}
+			defer func() {
+				ContainerNewContainer = origContainerNewContainer
+			}()
+
+			ctx := context.Background()
+			sd := &stepDocker{
+				RunContext: &RunContext{
+					StepResults: map[string]*model.StepResult{},
+					Config: &Config{
+						AllocatePTY: tc.allocPTY,
+						PlatformPicker: func(_ []string) string {
+							return "node:14"
+						},
+					},
+					Run: &model.Run{
+						JobID: "1",
+						Workflow: &model.Workflow{
+							Jobs: map[string]*model.Job{"1": {}},
+						},
+					},
+					JobContainer: cm,
+				},
+				Step: &model.Step{ID: "1", Uses: "docker://node:14"},
+			}
+			sd.RunContext.ExprEval = sd.RunContext.NewExpressionEvaluator(ctx)
+
+			_ = sd.newStepContainer(ctx, "node:14", []string{"echo", "hi"}, nil)
+			assert.Equal(t, tc.allocPTY, captured.AllocatePTY)
+		})
+	}
+}
+
 func TestStepDockerPrePost(t *testing.T) {
 	ctx := context.Background()
 	sd := &stepDocker{}
