@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewWorkflow(t *testing.T) {
@@ -117,6 +118,19 @@ func TestNewParallelExecutor(t *testing.T) {
 	assert.Equal(int32(3), count.Load(), "should run all 3 executors")
 	assert.Equal(int32(1), maxCount.Load(), "should run at most 1 executors in parallel")
 	assert.NoError(errSingle)
+}
+
+func TestNewParallelExecutorEmpty(t *testing.T) {
+	assert := assert.New(t)
+
+	ctx := context.Background()
+	require.NoError(t, NewParallelExecutor(2)(ctx))
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := NewParallelExecutor(2)(canceledCtx)
+	assert.ErrorIs(err, context.Canceled)
 }
 
 func TestNewParallelExecutorFailed(t *testing.T) {

@@ -97,6 +97,12 @@ func NewErrorExecutor(err error) Executor {
 
 // NewParallelExecutor creates a new executor from a parallel of other executors
 func NewParallelExecutor(parallel int, executors ...Executor) Executor {
+	if len(executors) == 0 {
+		return func(ctx context.Context) error {
+			return ctx.Err()
+		}
+	}
+
 	return func(ctx context.Context) error {
 		work := make(chan Executor, len(executors))
 		errs := make(chan error, len(executors))
