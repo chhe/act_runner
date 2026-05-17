@@ -19,6 +19,11 @@ RUN make clean && make build
 #
 FROM docker:29-dind AS dind
 
+ARG VERSION=dev
+
+LABEL org.opencontainers.image.source="https://gitea.com/gitea/runner"
+LABEL org.opencontainers.image.version="${VERSION}"
+
 RUN apk add --no-cache s6 bash git tzdata
 
 COPY --from=builder /opt/src/runner/gitea-runner /usr/local/bin/gitea-runner
@@ -33,6 +38,11 @@ ENTRYPOINT ["s6-svscan","/etc/s6"]
 #
 #
 FROM docker:29-dind-rootless AS dind-rootless
+
+ARG VERSION=dev
+
+LABEL org.opencontainers.image.source="https://gitea.com/gitea/runner"
+LABEL org.opencontainers.image.version="${VERSION}"
 
 USER root
 RUN apk add --no-cache s6 bash git tzdata
@@ -54,6 +64,12 @@ ENTRYPOINT ["s6-svscan","/etc/s6"]
 #
 #
 FROM alpine AS basic
+
+ARG VERSION=dev
+
+LABEL org.opencontainers.image.source="https://gitea.com/gitea/runner"
+LABEL org.opencontainers.image.version="${VERSION}"
+
 RUN apk add --no-cache tini bash git tzdata
 
 COPY --from=builder /opt/src/runner/gitea-runner /usr/local/bin/gitea-runner
