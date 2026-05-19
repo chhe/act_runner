@@ -639,7 +639,7 @@ func (r *Reporter) handleCommand(originalContent, command, value string) *string
 }
 
 func (r *Reporter) parseLogRow(entry *log.Entry) *runnerv1.LogRow {
-	content := strings.TrimRightFunc(entry.Message, func(r rune) bool { return r == '\r' || r == '\n' })
+	content := strings.TrimRight(entry.Message, "\r\n")
 
 	matches := cmdRegex.FindStringSubmatch(content)
 	if matches != nil {
