@@ -344,10 +344,11 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 	runnerConfig := &runner.Config{
 		// On Linux, Workdir will be like "/<parent_directory>/<owner>/<repo>"
 		// On Windows, Workdir will be like "\<parent_directory>\<owner>\<repo>"
-		Workdir:        workdir,
-		BindWorkdir:    r.cfg.Container.BindWorkdir,
-		ActionCacheDir: filepath.FromSlash(r.cfg.Host.WorkdirParent),
-		AllocatePTY:    r.cfg.Runner.AllocatePTY,
+		Workdir:           workdir,
+		BindWorkdir:       r.cfg.Container.BindWorkdir,
+		ActionCacheDir:    filepath.FromSlash(r.cfg.Host.WorkdirParent),
+		AllocatePTY:       r.cfg.Runner.AllocatePTY,
+		ActionOfflineMode: r.cfg.Cache.OfflineMode,
 
 		ReuseContainers:       false,
 		ForcePull:             r.cfg.Container.ForcePull,
