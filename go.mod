@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	code.gitea.io/actions-proto-go v0.4.1
-	connectrpc.com/connect v1.19.2
+	connectrpc.com/connect v1.20.0
 	dario.cat/mergo v1.0.2
 	github.com/Masterminds/semver v1.5.0
 	github.com/avast/retry-go/v5 v5.0.0
