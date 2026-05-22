@@ -1,7 +1,7 @@
 ### BUILDER STAGE
 #
 #
-FROM golang:1.26-alpine AS builder
+FROM golang:1.26-alpine3.23 AS builder
 
 # Do not remove `git` here, it is required for getting runner version when executing `make build`
 RUN apk add --no-cache make git
@@ -17,7 +17,7 @@ RUN make clean && make build
 ### DIND VARIANT
 #
 #
-FROM docker:29-dind AS dind
+FROM docker:29.5.2-dind AS dind
 
 ARG VERSION=dev
 
@@ -37,7 +37,7 @@ ENTRYPOINT ["s6-svscan","/etc/s6"]
 ### DIND-ROOTLESS VARIANT
 #
 #
-FROM docker:29-dind-rootless AS dind-rootless
+FROM docker:29.5.2-dind-rootless AS dind-rootless
 
 ARG VERSION=dev
 
@@ -63,7 +63,7 @@ ENTRYPOINT ["s6-svscan","/etc/s6"]
 ### BASIC VARIANT
 #
 #
-FROM alpine AS basic
+FROM alpine:3.23 AS basic
 
 ARG VERSION=dev
 
