@@ -58,6 +58,9 @@ type Reporter struct {
 	logReportMaxLatency time.Duration
 	logBatchSize        int
 	stateReportInterval time.Duration
+	// closeTimeout bounds each RPC attempt in the final flush, on a context
+	// detached from r.ctx so a server cancel can't abort the acknowledgement.
+	closeTimeout time.Duration
 
 	// Event notification channels (non-blocking, buffered 1)
 	logNotify   chan struct{} // signal: new log rows arrived
@@ -89,6 +92,7 @@ func NewReporter(ctx context.Context, cancel context.CancelFunc, client client.C
 		logReportMaxLatency: cfg.Runner.LogReportMaxLatency,
 		logBatchSize:        cfg.Runner.LogReportBatchSize,
 		stateReportInterval: cfg.Runner.StateReportInterval,
+		closeTimeout:        cfg.Runner.ReportCloseTimeout,
 		logNotify:           make(chan struct{}, 1),
 		stateNotify:         make(chan struct{}, 1),
 		state: &runnerv1.TaskState{
@@ -329,6 +333,9 @@ func (r *Reporter) runDaemonLoop() {
 			_ = r.ReportLog(false)
 
 		case <-r.ctx.Done():
+			// Stop heartbeating on cancel so Gitea sees the runner as offline
+			// during cleanup and won't assign an overlapping task. Close() still
+			// delivers the final flush on a detached context (flushFinal).
 			close(r.daemon)
 			return
 		}
@@ -431,15 +438,41 @@ func (r *Reporter) Close(lastWords string) error {
 	}
 	r.stateMu.Unlock()
 
-	// Report the job outcome even when all log upload retry attempts have been exhausted
+	// Separate budgets so a slow ReportLog can't starve the ReportState that
+	// carries the cancel acknowledgement.
 	return errors.Join(
-		retry.New(retry.Context(r.ctx)).Do(func() error {
-			return r.ReportLog(true)
-		}),
-		retry.New(retry.Context(r.ctx)).Do(func() error {
-			return r.ReportState(true)
-		}),
+		r.flushFinal(func() error { return r.ReportLog(true) }),
+		r.flushFinal(func() error { return r.ReportState(true) }),
 	)
+}
+
+// flushFinal retries fn on a detached, bounded context so a cancelled r.ctx
+// does not abort the final flush. Each call gets its own fresh budget.
+func (r *Reporter) flushFinal(fn func() error) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*r.effectiveCloseTimeout())
+	defer cancel()
+	return retry.New(retry.Context(ctx)).Do(fn)
+}
+
+// effectiveCloseTimeout returns closeTimeout, or 10s when unset, so a zero
+// value can't produce an already-expired context for the final flush.
+func (r *Reporter) effectiveCloseTimeout() time.Duration {
+	if r.closeTimeout <= 0 {
+		return 10 * time.Second
+	}
+	return r.closeTimeout
+}
+
+// rpcCtx returns the context for an outbound RPC plus a cancel func. While
+// r.ctx is alive it's used directly; once cancelled (server RESULT_CANCELLED),
+// RPCs switch to a fresh bounded context so Close()'s final flush still lands.
+func (r *Reporter) rpcCtx() (context.Context, context.CancelFunc) {
+	select {
+	case <-r.ctx.Done():
+		return context.WithTimeout(context.Background(), r.effectiveCloseTimeout())
+	default:
+		return r.ctx, func() {}
+	}
 }
 
 func (r *Reporter) ReportLog(noMore bool) error {
@@ -454,8 +487,11 @@ func (r *Reporter) ReportLog(noMore bool) error {
 		return nil
 	}
 
+	rpcCtx, rpcCancel := r.rpcCtx()
+	defer rpcCancel()
+
 	start := time.Now()
-	resp, err := r.client.UpdateLog(r.ctx, connect.NewRequest(&runnerv1.UpdateLogRequest{
+	resp, err := r.client.UpdateLog(rpcCtx, connect.NewRequest(&runnerv1.UpdateLogRequest{
 		TaskId: r.state.Id,
 		Index:  int64(r.logOffset),
 		Rows:   rows,
@@ -526,8 +562,11 @@ func (r *Reporter) ReportState(reportResult bool) error {
 		state.Result = runnerv1.Result_RESULT_UNSPECIFIED
 	}
 
+	rpcCtx, rpcCancel := r.rpcCtx()
+	defer rpcCancel()
+
 	start := time.Now()
-	resp, err := r.client.UpdateTask(r.ctx, connect.NewRequest(&runnerv1.UpdateTaskRequest{
+	resp, err := r.client.UpdateTask(rpcCtx, connect.NewRequest(&runnerv1.UpdateTaskRequest{
 		State:   state,
 		Outputs: outputs,
 	}))

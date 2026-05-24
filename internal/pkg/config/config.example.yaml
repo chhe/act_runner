@@ -60,6 +60,9 @@ runner:
   # The interval for reporting task state (step status, timing) to the Gitea instance.
   # State is also reported immediately on step transitions (start/stop).
   state_report_interval: 5s
+  # Per-attempt deadline for flushing the final logs and task state when a job
+  # finishes, on a detached context so a server cancel can't block the acknowledgement.
+  report_close_timeout: 10s
   # The github_mirror of a runner is used to specify the mirror address of the github that pulls the action repository.
   # It works when something like `uses: actions/checkout@v4` is used and DEFAULT_ACTIONS_URL is set to github,
   # and github_mirror is not empty. In this case,

@@ -754,3 +754,86 @@ func TestReporter_StateHeartbeat(t *testing.T) {
 	require.NoError(t, reporter.ReportState(false))
 	assert.Equal(t, int64(2), updateTaskCalls.Load(), "ReportState must heartbeat after stateReportInterval even with no state change")
 }
+
+// TestReporter_ServerCancelStillFlushesFinal asserts that when the Gitea server
+// returns RESULT_CANCELLED on an in-flight UpdateTask (which causes the
+// reporter to cancel the task context), Close() still successfully sends the
+// final UpdateLog{NoMore:true} and the final UpdateTask carrying the populated
+// final state. Before the fix this final flush used r.ctx, which was just
+// cancelled, so retry-go aborted on its context check and Gitea never received
+// the runner's acknowledgement of the cancel.
+func TestReporter_ServerCancelStillFlushesFinal(t *testing.T) {
+	var (
+		updateTaskCalls    atomic.Int64
+		finalLogNoMoreSeen atomic.Bool
+		finalTaskStateSeen atomic.Bool
+	)
+
+	client := mocks.NewClient(t)
+	client.On("UpdateLog", mock.Anything, mock.Anything).Return(
+		func(_ context.Context, req *connect_go.Request[runnerv1.UpdateLogRequest]) (*connect_go.Response[runnerv1.UpdateLogResponse], error) {
+			if req.Msg.NoMore {
+				finalLogNoMoreSeen.Store(true)
+			}
+			return connect_go.NewResponse(&runnerv1.UpdateLogResponse{
+				AckIndex: req.Msg.Index + int64(len(req.Msg.Rows)),
+			}), nil
+		},
+	)
+	// The first UpdateTask returns RESULT_CANCELLED — modelling a server-side
+	// cancellation; the reporter must call r.cancel() in response. The final
+	// UpdateTask issued by Close() must still arrive even though r.ctx is now
+	// cancelled.
+	client.On("UpdateTask", mock.Anything, mock.Anything).Return(
+		func(_ context.Context, req *connect_go.Request[runnerv1.UpdateTaskRequest]) (*connect_go.Response[runnerv1.UpdateTaskResponse], error) {
+			n := updateTaskCalls.Add(1)
+			if n == 1 {
+				return connect_go.NewResponse(&runnerv1.UpdateTaskResponse{
+					State: &runnerv1.TaskState{
+						Result: runnerv1.Result_RESULT_CANCELLED,
+					},
+				}), nil
+			}
+			if req.Msg.State != nil && req.Msg.State.Result != runnerv1.Result_RESULT_UNSPECIFIED {
+				finalTaskStateSeen.Store(true)
+			}
+			return connect_go.NewResponse(&runnerv1.UpdateTaskResponse{}), nil
+		},
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	taskCtx, err := structpb.NewStruct(map[string]any{})
+	require.NoError(t, err)
+	cfg, _ := config.LoadDefault("")
+	reporter := NewReporter(ctx, cancel, client, &runnerv1.Task{Context: taskCtx}, cfg)
+	reporter.ResetSteps(1)
+
+	// Force the first ReportState to actually call UpdateTask.
+	reporter.stateMu.Lock()
+	reporter.stateChanged = true
+	reporter.stateMu.Unlock()
+
+	// First ReportState — server returns RESULT_CANCELLED, reporter cancels r.ctx.
+	require.NoError(t, reporter.ReportState(false))
+	require.Equal(t, int64(1), updateTaskCalls.Load())
+
+	select {
+	case <-ctx.Done():
+		// Expected: reporter called cancel() because the server reported the task as cancelled.
+	case <-time.After(time.Second):
+		t.Fatal("expected r.ctx to be cancelled after server returned RESULT_CANCELLED")
+	}
+
+	// The test does not start the daemon goroutine; close(r.daemon) so Close()
+	// proceeds without waiting on its 60s timeout.
+	close(reporter.daemon)
+
+	// Now Close() runs. Before the fix, both final RPCs aborted on the cancelled
+	// r.ctx via retry.Context. After the fix, Close() uses a detached context and
+	// the per-RPC rpcCtx() falls back to a fresh ctx, so both calls succeed.
+	require.NoError(t, reporter.Close("cancelled"))
+
+	assert.True(t, finalLogNoMoreSeen.Load(), "Close() must send a final UpdateLog{NoMore:true} even after server-side cancellation")
+	assert.True(t, finalTaskStateSeen.Load(), "Close() must send a final UpdateTask with the populated final state even after server-side cancellation")
+}

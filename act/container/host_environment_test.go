@@ -187,3 +187,64 @@ func TestHostEnvironmentRemoveCleansWorkdirWhenOwned(t *testing.T) {
 	_, err := os.Stat(workdir)
 	assert.ErrorIs(t, err, os.ErrNotExist)
 }
+
+func TestBuildWindowsWorkspaceKillScript(t *testing.T) {
+	t.Run("single dir", func(t *testing.T) {
+		s := buildWindowsWorkspaceKillScript([]string{`C:\workspace\job1`})
+		assert.Contains(t, s, `$paths = @('C:\workspace\job1')`)
+		// Self-PID guard is essential — without it the script could taskkill
+		// the PowerShell process running it.
+		assert.Contains(t, s, "$selfPid = $PID")
+		assert.Contains(t, s, "$_.ProcessId -eq $selfPid")
+		// Must match both ExecutablePath (binaries from the workspace) and
+		// CommandLine (system binaries invoked with workspace paths in args),
+		// both bounded by dir+separator so a name-prefix sibling is spared.
+		assert.Contains(t, s, `$prefix = $p + '\'`)
+		assert.Contains(t, s, "$_.ExecutablePath.StartsWith($prefix")
+		assert.Contains(t, s, "$_.CommandLine.IndexOf($prefix")
+		// Each matched PID must be tree-killed, not just stopped.
+		assert.Contains(t, s, "taskkill.exe /PID $_.ProcessId /T /F")
+	})
+
+	t.Run("multiple dirs comma-separated", func(t *testing.T) {
+		s := buildWindowsWorkspaceKillScript([]string{
+			`C:\work\path`,
+			`C:\work\workdir`,
+			`C:\Users\runner\AppData\Local\Temp\job-42`,
+		})
+		assert.Contains(t, s, `'C:\work\path'`)
+		assert.Contains(t, s, `'C:\work\workdir'`)
+		assert.Contains(t, s, `'C:\Users\runner\AppData\Local\Temp\job-42'`)
+		// Commas between entries — no trailing comma, no leading comma.
+		assert.Contains(t, s, `'C:\work\path','C:\work\workdir',`)
+	})
+
+	t.Run("path with single quote is escaped", func(t *testing.T) {
+		// In PowerShell single-quoted strings the only special char is the
+		// quote itself, escaped by doubling. A workspace path that ever
+		// contained `'` would inject a command into the script otherwise.
+		s := buildWindowsWorkspaceKillScript([]string{`C:\work\it's\path`})
+		assert.Contains(t, s, `'C:\work\it''s\path'`)
+		// And it must NOT appear unescaped — otherwise the quote would
+		// terminate the literal early.
+		assert.NotContains(t, s, `'C:\work\it's\path'`)
+	})
+
+	t.Run("path with wildcard metacharacters is matched literally", func(t *testing.T) {
+		// A path containing [ ] ? * must be embedded verbatim and matched with
+		// ordinal String methods, not -like, otherwise the metacharacters would
+		// be interpreted as wildcards and the leftover process could escape.
+		s := buildWindowsWorkspaceKillScript([]string{`C:\work\[job]?1`})
+		assert.Contains(t, s, `'C:\work\[job]?1'`)
+		assert.NotContains(t, s, "-like")
+		assert.Contains(t, s, "StartsWith")
+		assert.Contains(t, s, "IndexOf")
+	})
+
+	t.Run("empty dir list still produces a valid script", func(t *testing.T) {
+		s := buildWindowsWorkspaceKillScript(nil)
+		// Empty array literal — script runs, matches nothing, is a no-op.
+		assert.Contains(t, s, "$paths = @()")
+		assert.Contains(t, s, "Get-CimInstance Win32_Process")
+	})
+}
