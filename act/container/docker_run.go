@@ -26,6 +26,7 @@ import (
 
 	"dario.cat/mergo"
 	"github.com/Masterminds/semver"
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/cli/cli/compose/loader"
 	"github.com/docker/cli/cli/connhelper"
 	"github.com/go-git/go-billy/v5/helper/polyfill"
@@ -152,6 +153,8 @@ func (cr *containerReference) Copy(destPath string, files ...*FileEntry) common.
 func (cr *containerReference) CopyDir(destPath, srcPath string, useGitIgnore bool) common.Executor {
 	return common.NewPipelineExecutor(
 		common.NewInfoExecutor("docker cp src=%s dst=%s", srcPath, destPath),
+		cr.connect(),
+		cr.find(),
 		cr.copyDir(destPath, srcPath, useGitIgnore),
 		func(ctx context.Context) error {
 			// If this fails, then folders have wrong permissions on non root container
@@ -166,6 +169,16 @@ func (cr *containerReference) CopyDir(destPath, srcPath string, useGitIgnore boo
 func (cr *containerReference) GetContainerArchive(ctx context.Context, srcPath string) (io.ReadCloser, error) {
 	if common.Dryrun(ctx) {
 		return nil, errors.New("DRYRUN is not supported in GetContainerArchive")
+	}
+	// Direct entry point (no pipeline) — revalidate cr.id ourselves.
+	if err := cr.connect()(ctx); err != nil {
+		return nil, err
+	}
+	if err := cr.find()(ctx); err != nil {
+		return nil, err
+	}
+	if cr.id == "" {
+		return nil, cr.missingContainerError("get archive %s", srcPath)
 	}
 	result, err := cr.cli.CopyFromContainer(ctx, cr.id, client.CopyFromContainerOptions{SourcePath: srcPath})
 	if err != nil {
@@ -314,10 +327,22 @@ func (cr *containerReference) Close() common.Executor {
 	}
 }
 
+// missingContainerError is the shared "container X does not exist" error
+// used by ops that need a live cr.id.
+func (cr *containerReference) missingContainerError(format string, args ...any) error {
+	return fmt.Errorf("container %q does not exist; cannot "+format, append([]any{cr.input.Name}, args...)...)
+}
+
 func (cr *containerReference) find() common.Executor {
 	return func(ctx context.Context) error {
 		if cr.id != "" {
-			return nil
+			// Validate cached id; clear only on definitive NotFound so a
+			// transient daemon error doesn't abort cleanup pipelines.
+			_, err := cr.cli.ContainerInspect(ctx, cr.id, client.ContainerInspectOptions{})
+			if !cerrdefs.IsNotFound(err) {
+				return nil
+			}
+			cr.id = ""
 		}
 		containers, err := cr.cli.ContainerList(ctx, client.ContainerListOptions{
 			All: true,
@@ -335,7 +360,6 @@ func (cr *containerReference) find() common.Executor {
 			}
 		}
 
-		cr.id = ""
 		return nil
 	}
 }
@@ -592,6 +616,9 @@ func (cr *containerReference) extractFromImageEnv(env *map[string]string) common
 
 func (cr *containerReference) exec(cmd []string, env map[string]string, user, workdir string) common.Executor {
 	return func(ctx context.Context) error {
+		if cr.id == "" {
+			return cr.missingContainerError("exec %v", cmd)
+		}
 		logger := common.Logger(ctx)
 		// Fix slashes when running on Windows
 		if runtime.GOOS == "windows" {
@@ -746,6 +773,9 @@ func (cr *containerReference) waitForCommand(ctx context.Context, isTerminal boo
 }
 
 func (cr *containerReference) CopyTarStream(ctx context.Context, destPath string, tarStream io.Reader) error {
+	if cr.id == "" {
+		return cr.missingContainerError("copy to %s", destPath)
+	}
 	// Mkdir
 	buf := &bytes.Buffer{}
 	tw := tar.NewWriter(buf)
@@ -779,6 +809,9 @@ func (cr *containerReference) CopyTarStream(ctx context.Context, destPath string
 
 func (cr *containerReference) copyDir(dstPath, srcPath string, useGitIgnore bool) common.Executor {
 	return func(ctx context.Context) error {
+		if cr.id == "" {
+			return cr.missingContainerError("copy directory to %s", dstPath)
+		}
 		logger := common.Logger(ctx)
 		tarFile, err := os.CreateTemp("", "act")
 		if err != nil {
@@ -853,6 +886,9 @@ func (cr *containerReference) copyDir(dstPath, srcPath string, useGitIgnore bool
 
 func (cr *containerReference) copyContent(dstPath string, files ...*FileEntry) common.Executor {
 	return func(ctx context.Context) error {
+		if cr.id == "" {
+			return cr.missingContainerError("copy to %s", dstPath)
+		}
 		logger := common.Logger(ctx)
 		var buf bytes.Buffer
 		tw := tar.NewWriter(&buf)
