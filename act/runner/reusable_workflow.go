@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -27,7 +28,9 @@ func newLocalReusableWorkflowExecutor(rc *RunContext) common.Executor {
 		workflowDir = strings.TrimPrefix(workflowDir, "./")
 
 		return common.NewPipelineExecutor(
-			newReusableWorkflowExecutor(rc, workflowDir, fileName),
+			// resolve the local workflow against the workspace root, not the process
+			// working directory, so it is found regardless of where the runner is invoked
+			newReusableWorkflowExecutor(rc, filepath.Join(rc.Config.Workdir, workflowDir), fileName),
 		)
 	}
 
@@ -284,7 +287,11 @@ func setReusedWorkflowCallerResult(rc *RunContext, runner Runner) common.Executo
 			if rc.caller != nil {
 				rc.caller.setReusedWorkflowJobResult(rc.JobName, reusedWorkflowJobResult)
 			} else {
+				// Serialize this shared Job.Result write against the other matrix combos
+				// and setJobResult (same lockJob key).
+				unlock := lockJob(rc.Run.Job())
 				rc.result(reusedWorkflowJobResult)
+				unlock()
 				logger.WithField("jobResult", reusedWorkflowJobResult).Infof("Job %s", reusedWorkflowJobResultMessage)
 			}
 		}

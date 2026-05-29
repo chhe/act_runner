@@ -455,7 +455,7 @@ func newStepContainer(ctx context.Context, step step, image string, cmd, entrypo
 		Platform:     rc.Config.ContainerArchitecture,
 		Options:      rc.Config.ContainerOptions,
 		AutoRemove:   rc.Config.AutoRemove,
-		ValidVolumes: rc.Config.ValidVolumes,
+		ValidVolumes: rc.validVolumes(),
 		AllocatePTY:  rc.Config.AllocatePTY,
 	})
 	return stepContainer

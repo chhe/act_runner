@@ -5,5 +5,5 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: nektos/test-override@a
+      - uses: https://github.com/nektos/test-override@a
       - uses: nektos/test-override@b

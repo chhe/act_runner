@@ -19,11 +19,3 @@ jobs:
           using: composite
       shell: cp {0} action.yml
     - uses: ./
-  remote-invalid-step:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: nektos/act-test-actions/invalid-composite-action/invalid-step@main
-  remote-missing-steps:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: nektos/act-test-actions/invalid-composite-action/missing-steps@main

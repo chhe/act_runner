@@ -13,7 +13,6 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/docker/cli/cli/config"
-	"github.com/docker/cli/cli/config/credentials"
 	"github.com/moby/moby/api/types/registry"
 )
 
@@ -26,10 +25,6 @@ func LoadDockerAuthConfig(ctx context.Context, image string) (registry.AuthConfi
 		logger.Warnf("Could not load docker config: %v", err)
 		return registry.AuthConfig{}, err
 	}
-	if !cfg.ContainsAuth() {
-		cfg.CredentialsStore = credentials.DetectDefaultStore(cfg.CredentialsStore)
-	}
-
 	registryKey := registryAuthConfigKey("docker.io")
 	if image != "" {
 		if registryRef, refErr := reference.ParseNormalizedNamed(image); refErr != nil {
@@ -55,10 +50,6 @@ func LoadDockerAuthConfigs(ctx context.Context) map[string]registry.AuthConfig {
 		logger.Warnf("Could not load docker config: %v", err)
 		return nil
 	}
-	if !cfg.ContainsAuth() {
-		cfg.CredentialsStore = credentials.DetectDefaultStore(cfg.CredentialsStore)
-	}
-
 	creds, err := cfg.GetAllCredentials()
 	if err != nil {
 		logger.Warnf("Could not get docker auth configs: %v", err)

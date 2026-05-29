@@ -5,6 +5,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     container:
-      image: catthehacker/ubuntu:runner-latest # image with user 'runner:runner' built on tag 'act-latest'
+      image: node:24-bookworm-slim
+      options: --user 1000
     steps:
       - run: echo PASS

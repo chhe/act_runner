@@ -183,18 +183,25 @@ func newJobExecutor(info jobInfo, sf stepFactory, rc *RunContext) common.Executo
 func setJobResult(ctx context.Context, info jobInfo, rc *RunContext, success bool) {
 	logger := common.Logger(ctx)
 
-	jobResult := "success"
-	// we have only one result for a whole matrix build, so we need
-	// to keep an existing result state if we run a matrix
-	if len(info.matrix()) > 0 && rc.Run.Job().Result != "" {
-		jobResult = rc.Run.Job().Result
-	}
+	// Matrix combinations share one *model.Job and run in parallel; serialize the
+	// read-modify-write of the job result so a failing combination is not lost-updated by a
+	// concurrent succeeding one.
+	job := rc.Run.Job()
+	jobResult := func() string {
+		defer lockJob(job)()
+		result := "success"
+		// we have only one result for a whole matrix build, so we need
+		// to keep an existing result state if we run a matrix
+		if len(info.matrix()) > 0 && job.Result != "" {
+			result = job.Result
+		}
+		if !success {
+			result = "failure"
+		}
+		info.result(result)
+		return result
+	}()
 
-	if !success {
-		jobResult = "failure"
-	}
-
-	info.result(jobResult)
 	if rc.caller != nil {
 		// set reusable workflow job result
 		rc.caller.setReusedWorkflowJobResult(rc.JobName, jobResult) // For Gitea
@@ -220,7 +227,11 @@ func setJobOutputs(ctx context.Context, rc *RunContext) {
 			callerOutputs[k] = ee.Interpolate(ctx, ee.Interpolate(ctx, v.Value))
 		}
 
-		rc.caller.runContext.Run.Job().Outputs = callerOutputs
+		// Matrix combinations of a reusable-workflow caller share the caller's *model.Job;
+		// serialize the write so parallel combos don't race on its Outputs field.
+		callerJob := rc.caller.runContext.Run.Job()
+		defer lockJob(callerJob)()
+		callerJob.Outputs = callerOutputs
 	}
 }
 

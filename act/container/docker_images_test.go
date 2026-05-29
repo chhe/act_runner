@@ -6,66 +6,64 @@ package container
 
 import (
 	"context"
-	"io"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
 	"testing"
 
-	"github.com/moby/moby/client"
-	specs "github.com/opencontainers/image-spec/specs-go/v1"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func init() {
 	log.SetLevel(log.DebugLevel)
 }
 
+// buildScratchImage builds a tiny empty image for the given platform locally (FROM scratch, no
+// network or emulation since there is nothing to run) and returns its tag, removing it after
+// the test.
+func buildScratchImage(t *testing.T, platform string) string {
+	t.Helper()
+	tag := fmt.Sprintf("act-test-exists-%s:latest", strings.TrimPrefix(platform, "linux/"))
+	cmd := exec.Command("docker", "build", "--platform", platform, "-t", tag, "-")
+	cmd.Stdin = strings.NewReader("FROM scratch\nLABEL act-test=1\n")
+	// Force BuildKit: it records the requested architecture in the image config for a
+	// FROM-scratch build, whereas the classic builder ignores --platform and tags it with the
+	// host arch, which would break the per-platform existence assertions below.
+	cmd.Env = append(os.Environ(), "DOCKER_BUILDKIT=1")
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	t.Cleanup(func() { _ = exec.Command("docker", "rmi", "-f", tag).Run() })
+	return tag
+}
+
 func TestImageExistsLocally(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	requireDocker(t)
 	ctx := context.Background()
-	// to help make this test reliable and not flaky, we need to have
-	// an image that will exist, and onew that won't exist
 
-	// Test if image exists with specific tag
-	invalidImageTag, err := ImageExistsLocally(ctx, "library/alpine:this-random-tag-will-never-exist", "linux/amd64")
+	// a non-existent image is reported absent
+	missing, err := ImageExistsLocally(ctx, "library/alpine:this-random-tag-will-never-exist", "linux/amd64")
 	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
-	assert.False(t, invalidImageTag)
+	assert.False(t, missing)
 
-	// Test if image exists with specific architecture (image platform)
-	invalidImagePlatform, err := ImageExistsLocally(ctx, "alpine:latest", "windows/amd64")
-	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
-	assert.False(t, invalidImagePlatform)
+	// Build tiny images for two architectures locally so per-platform existence can be checked
+	// offline (formerly pulled node:24-bookworm-slim for amd64 and arm64 over the network).
+	amd64Ref := buildScratchImage(t, "linux/amd64")
+	arm64Ref := buildScratchImage(t, "linux/arm64")
 
-	// pull an image
-	cli, err := client.New(client.FromEnv)
+	amd64Exists, err := ImageExistsLocally(ctx, amd64Ref, "linux/amd64")
 	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
-	defer cli.Close()
+	assert.True(t, amd64Exists)
 
-	// Chose alpine latest because it's so small
-	// maybe we should build an image instead so that tests aren't reliable on dockerhub
-	readerDefault, err := cli.ImagePull(ctx, "node:24-bookworm-slim", client.ImagePullOptions{
-		Platforms: []specs.Platform{{OS: "linux", Architecture: "amd64"}},
-	})
+	// a non-host architecture image is detected for its own architecture
+	arm64Exists, err := ImageExistsLocally(ctx, arm64Ref, "linux/arm64")
 	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
-	defer readerDefault.Close()
-	_, err = io.ReadAll(readerDefault)
-	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
+	assert.True(t, arm64Exists)
 
-	imageDefaultArchExists, err := ImageExistsLocally(ctx, "node:24-bookworm-slim", "linux/amd64")
+	// a present image is reported absent for a different platform
+	wrongPlatform, err := ImageExistsLocally(ctx, amd64Ref, "linux/arm64")
 	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
-	assert.True(t, imageDefaultArchExists)
-
-	// Validate if another architecture platform can be pulled
-	readerArm64, err := cli.ImagePull(ctx, "node:24-bookworm-slim", client.ImagePullOptions{
-		Platforms: []specs.Platform{{OS: "linux", Architecture: "arm64"}},
-	})
-	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
-	defer readerArm64.Close()
-	_, err = io.ReadAll(readerArm64)
-	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
-
-	imageArm64Exists, err := ImageExistsLocally(ctx, "node:24-bookworm-slim", "linux/arm64")
-	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
-	assert.True(t, imageArm64Exists)
+	assert.False(t, wrongPlatform)
 }

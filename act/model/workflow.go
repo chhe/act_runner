@@ -325,14 +325,20 @@ func (j *Job) Needs() []string {
 
 // RunsOn list for Job
 func (j *Job) RunsOn() []string {
-	switch j.RawRunsOn.Kind {
+	return RunsOnFromNode(j.RawRunsOn)
+}
+
+// RunsOnFromNode parses the runs-on labels from a raw runs-on node, so callers can evaluate a
+// copy of the node (avoiding mutation of the shared Job) before reading the labels.
+func RunsOnFromNode(rawRunsOn yaml.Node) []string {
+	switch rawRunsOn.Kind {
 	case yaml.MappingNode:
 		var val struct {
 			Group  string
 			Labels yaml.Node
 		}
 
-		if !decodeNode(j.RawRunsOn, &val) {
+		if !decodeNode(rawRunsOn, &val) {
 			return nil
 		}
 
@@ -344,7 +350,7 @@ func (j *Job) RunsOn() []string {
 
 		return labels
 	default:
-		return nodeAsStringSlice(j.RawRunsOn)
+		return nodeAsStringSlice(rawRunsOn)
 	}
 }
 
@@ -643,6 +649,33 @@ type Step struct {
 	With               map[string]string `yaml:"with"`
 	RawContinueOnError string            `yaml:"continue-on-error"`
 	TimeoutMinutes     string            `yaml:"timeout-minutes"`
+}
+
+// Clone returns a deep copy safe to mutate independently of s. Job steps are shared across
+// parallel matrix runs, which mutate per-job fields (ID, Number, Shell) and evaluate the If/Env
+// yaml.Nodes in place, so each job must own its copy.
+func (s *Step) Clone() *Step {
+	clone := *s
+	clone.If = CloneYamlNode(s.If)
+	clone.Env = CloneYamlNode(s.Env)
+	clone.With = maps.Clone(s.With)
+	return &clone
+}
+
+// CloneYamlNode returns a deep copy of a yaml.Node so callers can evaluate it in place without
+// mutating a node shared across parallel jobs.
+func CloneYamlNode(n yaml.Node) yaml.Node {
+	clone := n
+	if n.Content != nil {
+		clone.Content = make([]*yaml.Node, len(n.Content))
+		for i, child := range n.Content {
+			if child != nil {
+				childClone := CloneYamlNode(*child)
+				clone.Content[i] = &childClone
+			}
+		}
+	}
+	return clone
 }
 
 // String gets the name of step

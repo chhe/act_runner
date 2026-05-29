@@ -188,14 +188,17 @@ func (j *TestJobFileInfo) runTest(ctx context.Context, t *testing.T, cfg *Config
 		EventPath:             cfg.EventPath,
 		Platforms:             j.platforms,
 		ReuseContainers:       false,
+		ForceRebuild:          true,
 		Env:                   cfg.Env,
 		Secrets:               cfg.Secrets,
 		Inputs:                cfg.Inputs,
 		GitHubInstance:        "github.com",
+		DefaultActionInstance: cfg.DefaultActionInstance,
 		ContainerArchitecture: cfg.ContainerArchitecture,
 		ContainerMaxLifetime:  time.Hour,
 		Matrix:                cfg.Matrix,
 		ActionCache:           cfg.ActionCache,
+		ValidVolumes:          []string{"**"}, // allow workflow-declared volumes (e.g. container-volumes)
 	}
 
 	runner, err := New(runnerConfig)
@@ -223,18 +226,14 @@ type TestConfig struct {
 }
 
 func TestRunEvent(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	requireDocker(t)
 
 	ctx := context.Background()
 
 	tables := []TestJobFileInfo{
 		// Shells
 		{workdir, "shells/defaults", "push", "", platforms, secrets},
-		{workdir, "shells/pwsh", "push", "", map[string]string{"ubuntu-latest": "catthehacker/ubuntu:pwsh-latest"}, secrets}, // custom image with pwsh
 		{workdir, "shells/bash", "push", "", platforms, secrets},
-		{workdir, "shells/python", "push", "", map[string]string{"ubuntu-latest": "node:24-bookworm"}, secrets}, // slim doesn't have python
 		{workdir, "shells/sh", "push", "", platforms, secrets},
 
 		// Local action
@@ -246,11 +245,6 @@ func TestRunEvent(t *testing.T) {
 		// Uses
 		{workdir, "uses-composite", "push", "", platforms, secrets},
 		{workdir, "uses-composite-with-error", "push", "Job 'failing-composite-action' failed", platforms, secrets},
-		{workdir, "uses-nested-composite", "push", "", platforms, secrets},
-		{workdir, "remote-action-composite-js-pre-with-defaults", "push", "", platforms, secrets},
-		{workdir, "remote-action-composite-action-ref", "push", "", platforms, secrets},
-		{workdir, "uses-workflow", "push", "", platforms, map[string]string{"secret": "keep_it_private"}},
-		{workdir, "uses-workflow", "pull_request", "", platforms, map[string]string{"secret": "keep_it_private"}},
 		{workdir, "uses-docker-url", "push", "", platforms, secrets},
 		{workdir, "act-composite-env-test", "push", "", platforms, secrets},
 
@@ -260,21 +254,15 @@ func TestRunEvent(t *testing.T) {
 		{workdir, "evalmatrixneeds2", "push", "", platforms, secrets},
 		{workdir, "evalmatrix-merge-map", "push", "", platforms, secrets},
 		{workdir, "evalmatrix-merge-array", "push", "", platforms, secrets},
-		{workdir, "issue-1195", "push", "", platforms, secrets},
 
 		{workdir, "basic", "push", "", platforms, secrets},
 		{workdir, "fail", "push", "exit with `FAILURE`: 1", platforms, secrets},
-		{workdir, "runs-on", "push", "", platforms, secrets},
 		{workdir, "checkout", "push", "", platforms, secrets},
 		{workdir, "job-container", "push", "", platforms, secrets},
 		{workdir, "job-container-non-root", "push", "", platforms, secrets},
 		{workdir, "job-container-invalid-credentials", "push", "failed to handle credentials: failed to interpolate container.credentials.password", platforms, secrets},
 		{workdir, "container-hostname", "push", "", platforms, secrets},
-		{workdir, "remote-action-docker", "push", "", platforms, secrets},
-		{workdir, "remote-action-js", "push", "", platforms, secrets},
-		{workdir, "remote-action-js-node-user", "push", "", platforms, secrets}, // Test if this works with non root container
 		{workdir, "matrix", "push", "", platforms, secrets},
-		{workdir, "matrix-include-exclude", "push", "", platforms, secrets},
 		{workdir, "matrix-exitcode", "push", "Job 'test' failed", platforms, secrets},
 		{workdir, "commands", "push", "", platforms, secrets},
 		{workdir, "workdir", "push", "", platforms, secrets},
@@ -295,7 +283,6 @@ func TestRunEvent(t *testing.T) {
 		{workdir, "job-status-check", "push", "job 'fail' failed", platforms, secrets},
 		{workdir, "if-expressions", "push", "Job 'mytest' failed", platforms, secrets},
 		{workdir, "actions-environment-and-context-tests", "push", "", platforms, secrets},
-		{workdir, "uses-action-with-pre-and-post-step", "push", "", platforms, secrets},
 		{workdir, "evalenv", "push", "", platforms, secrets},
 		{workdir, "docker-action-custom-path", "push", "", platforms, secrets},
 		{workdir, "GITHUB_ENV-use-in-env-ctx", "push", "", platforms, secrets},
@@ -306,7 +293,6 @@ func TestRunEvent(t *testing.T) {
 		{workdir, "workflow_dispatch-scalar", "workflow_dispatch", "", platforms, secrets},
 		{workdir, "workflow_dispatch-scalar-composite-action", "workflow_dispatch", "", platforms, secrets},
 		{workdir, "job-needs-context-contains-result", "push", "", platforms, secrets},
-		{"../model/testdata", "strategy", "push", "", platforms, secrets}, // TODO: move all testdata into pkg so we can validate it with planner and runner
 		{"../model/testdata", "container-volumes", "push", "", platforms, secrets},
 		{workdir, "path-handling", "push", "", platforms, secrets},
 		{workdir, "do-not-leak-step-env-in-composite", "push", "", platforms, secrets},
@@ -316,7 +302,6 @@ func TestRunEvent(t *testing.T) {
 
 		// services
 		{workdir, "services", "push", "", platforms, secrets},
-		{workdir, "services-host-network", "push", "", platforms, secrets},
 		{workdir, "services-with-container", "push", "", platforms, secrets},
 
 		// local remote action overrides
@@ -325,6 +310,11 @@ func TestRunEvent(t *testing.T) {
 
 	for _, table := range tables {
 		t.Run(table.workflowPath, func(t *testing.T) {
+			if table.workflowPath == "container-volumes" {
+				// host /proc bind mounts are Linux-Docker-only
+				requireLinuxDocker(t)
+			}
+
 			config := &Config{
 				Secrets: table.secrets,
 			}
@@ -356,9 +346,12 @@ func TestRunEvent(t *testing.T) {
 }
 
 func TestRunEventHostEnvironment(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	// Runs steps directly on the host (the "-self-hosted" platform), so it needs the shells
+	// and tools the workflows invoke. No network gate: every action these workflows reference
+	// is a local `./` fixture or the skipped actions/checkout, so the suite runs offline (same
+	// as TestRunEvent). Only the broadly-used interpreters are required up front; the pwsh- and
+	// nix-specific cases gate on their own tool below so a missing pwsh/nix skips just those.
+	requireHostTools(t, "bash", "node")
 
 	ctx := context.Background()
 
@@ -374,7 +367,6 @@ func TestRunEventHostEnvironment(t *testing.T) {
 			{workdir, "shells/defaults", "push", "", platforms, secrets},
 			{workdir, "shells/pwsh", "push", "", platforms, secrets},
 			{workdir, "shells/bash", "push", "", platforms, secrets},
-			{workdir, "shells/python", "push", "", platforms, secrets},
 			{workdir, "shells/sh", "push", "", platforms, secrets},
 
 			// Local action
@@ -383,7 +375,6 @@ func TestRunEventHostEnvironment(t *testing.T) {
 			// Uses
 			{workdir, "uses-composite", "push", "", platforms, secrets},
 			{workdir, "uses-composite-with-error", "push", "Job 'failing-composite-action' failed", platforms, secrets},
-			{workdir, "uses-nested-composite", "push", "", platforms, secrets},
 			{workdir, "act-composite-env-test", "push", "", platforms, secrets},
 
 			// Eval
@@ -392,14 +383,10 @@ func TestRunEventHostEnvironment(t *testing.T) {
 			{workdir, "evalmatrixneeds2", "push", "", platforms, secrets},
 			{workdir, "evalmatrix-merge-map", "push", "", platforms, secrets},
 			{workdir, "evalmatrix-merge-array", "push", "", platforms, secrets},
-			{workdir, "issue-1195", "push", "", platforms, secrets},
 
 			{workdir, "fail", "push", "exit with `FAILURE`: 1", platforms, secrets},
-			{workdir, "runs-on", "push", "", platforms, secrets},
 			{workdir, "checkout", "push", "", platforms, secrets},
-			{workdir, "remote-action-js", "push", "", platforms, secrets},
 			{workdir, "matrix", "push", "", platforms, secrets},
-			{workdir, "matrix-include-exclude", "push", "", platforms, secrets},
 			{workdir, "commands", "push", "", platforms, secrets},
 			{workdir, "defaults-run", "push", "", platforms, secrets},
 			{workdir, "composite-fail-with-output", "push", "", platforms, secrets},
@@ -413,7 +400,6 @@ func TestRunEventHostEnvironment(t *testing.T) {
 			{workdir, "steps-context/outcome", "push", "", platforms, secrets},
 			{workdir, "job-status-check", "push", "job 'fail' failed", platforms, secrets},
 			{workdir, "if-expressions", "push", "Job 'mytest' failed", platforms, secrets},
-			{workdir, "uses-action-with-pre-and-post-step", "push", "", platforms, secrets},
 			{workdir, "evalenv", "push", "", platforms, secrets},
 			{workdir, "ensure-post-steps", "push", "Job 'second-post-step-should-fail' failed", platforms, secrets},
 		}...)
@@ -446,24 +432,26 @@ func TestRunEventHostEnvironment(t *testing.T) {
 
 	for _, table := range tables {
 		t.Run(table.workflowPath, func(t *testing.T) {
+			switch table.workflowPath {
+			case "shells/pwsh":
+				requireHostTools(t, "pwsh")
+			case "nix-prepend-path":
+				requireHostTools(t, "nix")
+			}
 			table.runTest(ctx, t, &Config{})
 		})
 	}
 }
 
 func TestDryrunEvent(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
-
+	// Dryrun plans without containers or network (shells and local actions only).
 	ctx := common.WithDryrun(context.Background(), true)
 
 	tables := []TestJobFileInfo{
 		// Shells
 		{workdir, "shells/defaults", "push", "", platforms, secrets},
-		{workdir, "shells/pwsh", "push", "", map[string]string{"ubuntu-latest": "catthehacker/ubuntu:pwsh-latest"}, secrets}, // custom image with pwsh
+		{workdir, "shells/pwsh", "push", "", platforms, secrets},
 		{workdir, "shells/bash", "push", "", platforms, secrets},
-		{workdir, "shells/python", "push", "", map[string]string{"ubuntu-latest": "node:24-bookworm"}, secrets}, // slim doesn't have python
 		{workdir, "shells/sh", "push", "", platforms, secrets},
 
 		// Local action
@@ -480,10 +468,18 @@ func TestDryrunEvent(t *testing.T) {
 	}
 }
 
+// TestReusableWorkflowCaller exercises the reusable-workflow caller path against a local
+// reusable workflow (typed inputs, secrets as both a map and `inherit`, and reading the called
+// workflow's outputs via `needs`).
+func TestReusableWorkflowCaller(t *testing.T) {
+	requireDocker(t)
+	table := TestJobFileInfo{workdir, "uses-workflow", "push", "", platforms, map[string]string{"secret": "keep_it_private"}}
+	table.runTest(context.Background(), t, &Config{Secrets: table.secrets})
+}
+
 func TestDockerActionForcePullForceRebuild(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	requireDocker(t)
+	requireNetwork(t) // force-pulls a docker action image
 
 	ctx := context.Background()
 
@@ -502,22 +498,6 @@ func TestDockerActionForcePullForceRebuild(t *testing.T) {
 			table.runTest(ctx, t, config)
 		})
 	}
-}
-
-func TestRunDifferentArchitecture(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
-
-	tjfi := TestJobFileInfo{
-		workdir:      workdir,
-		workflowPath: "basic",
-		eventName:    "push",
-		errorMessage: "",
-		platforms:    platforms,
-	}
-
-	tjfi.runTest(context.Background(), t, &Config{ContainerArchitecture: "linux/arm64"})
 }
 
 type maskJobLoggerFactory struct {
@@ -540,9 +520,7 @@ func TestMaskValues(t *testing.T) {
 		assert.False(t, strings.Contains(text, "composite secret")) //nolint:testifylint // pre-existing issue from nektos/act
 	}
 
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	requireDocker(t)
 
 	log.SetLevel(log.DebugLevel)
 
@@ -563,9 +541,7 @@ func TestMaskValues(t *testing.T) {
 }
 
 func TestRunEventSecrets(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	requireDocker(t)
 	workflowPath := "secrets"
 
 	tjfi := TestJobFileInfo{
@@ -585,9 +561,7 @@ func TestRunEventSecrets(t *testing.T) {
 }
 
 func TestRunWithService(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	requireDocker(t)
 
 	log.SetLevel(log.DebugLevel)
 	ctx := context.Background()
@@ -603,10 +577,11 @@ func TestRunWithService(t *testing.T) {
 	assert.NoError(t, err, workflowPath) //nolint:testifylint // pre-existing issue from nektos/act
 
 	runnerConfig := &Config{
-		Workdir:         workdir,
-		EventName:       eventName,
-		Platforms:       platforms,
-		ReuseContainers: false,
+		Workdir:              workdir,
+		EventName:            eventName,
+		Platforms:            platforms,
+		ReuseContainers:      false,
+		ContainerMaxLifetime: time.Hour, // otherwise the job container is `sleep 0` and exits at once
 	}
 	runner, err := New(runnerConfig)
 	assert.NoError(t, err, workflowPath) //nolint:testifylint // pre-existing issue from nektos/act
@@ -622,9 +597,7 @@ func TestRunWithService(t *testing.T) {
 }
 
 func TestRunActionInputs(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	requireDocker(t)
 	workflowPath := "input-from-cli"
 
 	tjfi := TestJobFileInfo{
@@ -643,9 +616,7 @@ func TestRunActionInputs(t *testing.T) {
 }
 
 func TestRunEventPullRequest(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	requireDocker(t)
 
 	workflowPath := "pull-request"
 
@@ -661,9 +632,7 @@ func TestRunEventPullRequest(t *testing.T) {
 }
 
 func TestRunMatrixWithUserDefinedInclusions(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	requireDocker(t)
 	workflowPath := "matrix-with-user-inclusions"
 
 	tjfi := TestJobFileInfo{

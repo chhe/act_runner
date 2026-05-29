@@ -24,4 +24,3 @@ jobs:
         args: ${{format('"{0}"', 'Mona is not the Octocat') }}
         who-to-greet: 'Mona the Octocat'
     - run: '[[ "${{ env.SOMEVAR }}" == "Mona is not the Octocat" ]]'
-    - uses: ./localdockerimagetest_

@@ -28,14 +28,10 @@ import (
 )
 
 func TestDocker(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	requireDocker(t)
 	ctx := context.Background()
 	client, err := GetDockerClient(ctx)
-	if err != nil {
-		t.Skipf("skipping integration test: %v", err)
-	}
+	require.NoError(t, err)
 	defer client.Close()
 
 	dockerBuild := NewDockerBuildExecutor(NewDockerBuildExecutorInput{
@@ -300,6 +296,35 @@ func TestDockerCopyTarStreamErrorInMkdir(t *testing.T) {
 	assert.ErrorIs(t, err, merr) //nolint:testifylint // pre-existing issue from nektos/act
 
 	client.AssertExpectations(t)
+}
+
+// TestDockerCopyToSymlinkPath is a regression test for gitea/runner#981. Most base images
+// symlink /var/run to /run, so copying into /var/run/act traverses that symlink. The broken
+// docker 29.5.1 daemon fails the extraction with "mkdirat var/run: file exists" (fixed in
+// 29.5.2). Running against the daemon shipped in the dind image, this catches a bad bump.
+func TestDockerCopyToSymlinkPath(t *testing.T) {
+	requireDocker(t)
+	ctx := context.Background()
+
+	rc := NewContainer(&NewContainerInput{
+		Image:      "alpine:latest",
+		Entrypoint: []string{"sleep", "30"},
+		Name:       "act-test-symlink-" + time.Now().Format("20060102150405.000000"),
+		AutoRemove: true,
+	})
+	require.NoError(t, rc.Pull(false)(ctx))
+	require.NoError(t, rc.Create(nil, nil)(ctx))
+	require.NoError(t, rc.Start(false)(ctx))
+	t.Cleanup(func() {
+		_ = rc.Remove()(ctx)
+		_ = rc.Close()(ctx)
+	})
+
+	// CopyTarStream first creates the destination directory by extracting a tar at "/",
+	// which makes the daemon mkdir var, then var/run (the symlink), then act — the exact
+	// step that fails on the broken daemon.
+	err := rc.CopyTarStream(ctx, "/var/run/act", &bytes.Buffer{})
+	require.NoError(t, err)
 }
 
 // Type assert containerReference implements ExecutionsEnvironment

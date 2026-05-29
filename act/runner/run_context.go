@@ -20,7 +20,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"gitea.com/gitea/runner/act/common"
@@ -55,6 +57,10 @@ type RunContext struct {
 	Masks               []string
 	cleanUpJobContainer common.Executor
 	caller              *caller // job calling this RunContext (reusable workflows)
+	// outputTemplate is this combination's pristine snapshot of the job's output expressions,
+	// captured before execution so each matrix combo interpolates from the originals rather
+	// than from a sibling's already-resolved values written into the shared Job.Outputs.
+	outputTemplate map[string]string
 }
 
 func (rc *RunContext) AddMask(mask string) {
@@ -130,17 +136,34 @@ func getDockerDaemonSocketMountPath(daemonPath string) string {
 	return daemonPath
 }
 
+// containerDaemonSocket returns the configured Docker daemon socket, applying the default
+// without mutating the shared Config. Parallel jobs in a plan share one *Config, so a job
+// must never write to it.
+func (rc *RunContext) containerDaemonSocket() string {
+	if rc.Config.ContainerDaemonSocket == "" {
+		return "/var/run/docker.sock"
+	}
+	return rc.Config.ContainerDaemonSocket
+}
+
+// validVolumes returns the volumes allowed on this job's containers: the configured base
+// plus the volumes the runner mounts automatically. It derives a fresh slice every call and
+// never mutates the shared Config (see containerDaemonSocket).
+func (rc *RunContext) validVolumes() []string {
+	name := rc.jobContainerName()
+	volumes := slices.Clone(rc.Config.ValidVolumes)
+	// TODO: add a new configuration to control whether the docker daemon can be mounted
+	return append(volumes, "act-toolcache", name, name+"-env",
+		getDockerDaemonSocketMountPath(rc.containerDaemonSocket()))
+}
+
 // Returns the binds and mounts for the container, resolving paths as appopriate
 func (rc *RunContext) GetBindsAndMounts() ([]string, map[string]string) {
 	name := rc.jobContainerName()
 
-	if rc.Config.ContainerDaemonSocket == "" {
-		rc.Config.ContainerDaemonSocket = "/var/run/docker.sock"
-	}
-
 	binds := []string{}
-	if rc.Config.ContainerDaemonSocket != "-" {
-		daemonPath := getDockerDaemonSocketMountPath(rc.Config.ContainerDaemonSocket)
+	if daemonSocket := rc.containerDaemonSocket(); daemonSocket != "-" {
+		daemonPath := getDockerDaemonSocketMountPath(daemonSocket)
 		binds = append(binds, fmt.Sprintf("%s:%s", daemonPath, "/var/run/docker.sock"))
 	}
 
@@ -178,14 +201,6 @@ func (rc *RunContext) GetBindsAndMounts() ([]string, map[string]string) {
 	} else {
 		mounts[name] = ext.ToContainerPath(rc.Config.Workdir)
 	}
-
-	// For Gitea
-	// add some default binds and mounts to ValidVolumes
-	rc.Config.ValidVolumes = append(rc.Config.ValidVolumes, "act-toolcache")
-	rc.Config.ValidVolumes = append(rc.Config.ValidVolumes, name)
-	rc.Config.ValidVolumes = append(rc.Config.ValidVolumes, name+"-env")
-	// TODO: add a new configuration to control whether the docker daemon can be mounted
-	rc.Config.ValidVolumes = append(rc.Config.ValidVolumes, getDockerDaemonSocketMountPath(rc.Config.ContainerDaemonSocket))
 
 	return binds, mounts
 }
@@ -432,7 +447,7 @@ func (rc *RunContext) startJobContainer() common.Executor {
 			Platform:       rc.Config.ContainerArchitecture,
 			Options:        rc.options(ctx),
 			AutoRemove:     rc.Config.AutoRemove,
-			ValidVolumes:   rc.Config.ValidVolumes,
+			ValidVolumes:   rc.validVolumes(),
 			AllocatePTY:    rc.Config.AllocatePTY,
 		})
 		if rc.JobContainer == nil {
@@ -586,14 +601,29 @@ func (rc *RunContext) ActionCacheDir() string {
 }
 
 // Interpolate outputs after a job is done
+// jobMutexes serializes per-job result/output aggregation across the matrix combinations that
+// share one *model.Job and run in parallel. Keyed by the shared *model.Job (mirrors the
+// per-directory AcquireCloneLock pattern).
+var jobMutexes sync.Map // key: *model.Job; value: *sync.Mutex
+
+func lockJob(job *model.Job) func() {
+	v, _ := jobMutexes.LoadOrStore(job, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
 func (rc *RunContext) interpolateOutputs() common.Executor {
 	return func(ctx context.Context) error {
 		ee := rc.NewExpressionEvaluator(ctx)
-		for k, v := range rc.Run.Job().Outputs {
-			interpolated := ee.Interpolate(ctx, v)
-			if v != interpolated {
-				rc.Run.Job().Outputs[k] = interpolated
-			}
+		job := rc.Run.Job()
+		// Matrix combinations share this Job and its Outputs map. Interpolate from this combo's
+		// pristine snapshot (outputTemplate) and write under the lock, so each combo overwrites
+		// with its own resolved values (last wins, as on GitHub) instead of the first combo's
+		// resolved values freezing the shared template against later combos.
+		defer lockJob(job)()
+		for k, v := range rc.outputTemplate {
+			job.Outputs[k] = ee.Interpolate(ctx, v)
 		}
 		return nil
 	}
@@ -660,7 +690,18 @@ func (rc *RunContext) result(result string) {
 }
 
 func (rc *RunContext) steps() []*model.Step {
-	return rc.Run.Job().Steps
+	// Return per-job copies of the steps. Matrix combinations run in parallel and share the
+	// workflow model, but step execution mutates per-job fields and evaluates the If/Env nodes
+	// in place, so the *model.Step instances must not be shared across jobs (see Step.Clone).
+	shared := rc.Run.Job().Steps
+	steps := make([]*model.Step, len(shared))
+	for i, step := range shared {
+		if step == nil {
+			continue
+		}
+		steps[i] = step.Clone()
+	}
+	return steps
 }
 
 // Executor returns a pipeline executor for all the steps in the job
@@ -737,12 +778,15 @@ func (rc *RunContext) runsOnPlatformNames(ctx context.Context) []string {
 		return []string{}
 	}
 
-	if err := rc.ExprEval.EvaluateYamlNode(ctx, &job.RawRunsOn); err != nil {
+	// Evaluate a copy: RawRunsOn is shared across parallel matrix jobs, so interpolating it in
+	// place would race and leak one matrix combination's runs-on into the others.
+	rawRunsOn := model.CloneYamlNode(job.RawRunsOn)
+	if err := rc.ExprEval.EvaluateYamlNode(ctx, &rawRunsOn); err != nil {
 		common.Logger(ctx).Errorf("Error while evaluating runs-on: %v", err)
 		return []string{}
 	}
 
-	return job.RunsOn()
+	return model.RunsOnFromNode(rawRunsOn)
 }
 
 func (rc *RunContext) platformImage(ctx context.Context) string {
@@ -1165,12 +1209,9 @@ func (rc *RunContext) handleServiceCredentials(ctx context.Context, creds map[st
 
 // GetServiceBindsAndMounts returns the binds and mounts for the service container, resolving paths as appopriate
 func (rc *RunContext) GetServiceBindsAndMounts(svcVolumes []string) ([]string, map[string]string) {
-	if rc.Config.ContainerDaemonSocket == "" {
-		rc.Config.ContainerDaemonSocket = "/var/run/docker.sock"
-	}
 	binds := []string{}
-	if rc.Config.ContainerDaemonSocket != "-" {
-		daemonPath := getDockerDaemonSocketMountPath(rc.Config.ContainerDaemonSocket)
+	if daemonSocket := rc.containerDaemonSocket(); daemonSocket != "-" {
+		daemonPath := getDockerDaemonSocketMountPath(daemonSocket)
 		binds = append(binds, fmt.Sprintf("%s:%s", daemonPath, "/var/run/docker.sock"))
 	}
 

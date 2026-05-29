@@ -140,8 +140,12 @@ tidy-check: tidy
 	fi
 
 .PHONY: test
-test: fmt-check security-check ## test everything
-	@$(GO) test -race -short -v -cover -coverprofile coverage.txt ./... && echo "\n==>\033[32m Ok\033[m\n" || exit 1
+test: fmt-check security-check ## test everything (integration tests self-skip without docker/network)
+	@$(GO) test -race -timeout 20m -v -cover -coverprofile coverage.txt ./... && echo "\n==>\033[32m Ok\033[m\n" || exit 1
+
+.PHONY: test-dind
+test-dind: ## run the daemon-facing tests against the built dind image (TARGET=dind|dind-rootless)
+	@./scripts/test-dind.sh $(TARGET)
 
 .PHONY: install
 install: $(GOFILES) ## install the runner binary via `go install`

@@ -66,8 +66,21 @@ func (e *Error) Commit() string {
 	return e.commit
 }
 
+// goGitMu serializes go-git repository access across the process. go-git is not safe for
+// concurrent use of the same repository (even read access decodes packfiles into shared
+// state), so parallel jobs inspecting the shared workdir repo race without this. The guarded
+// operations are fast local reads; gitea runs one job per process, so the lock is effectively
+// uncontended in production.
+var goGitMu sync.Mutex
+
 // FindGitRevision get the current git revision
 func FindGitRevision(ctx context.Context, file string) (shortSha, sha string, err error) {
+	goGitMu.Lock()
+	defer goGitMu.Unlock()
+	return findGitRevision(ctx, file)
+}
+
+func findGitRevision(ctx context.Context, file string) (shortSha, sha string, err error) {
 	logger := common.Logger(ctx)
 
 	gitDir, err := git.PlainOpenWithOptions(
@@ -99,10 +112,13 @@ func FindGitRevision(ctx context.Context, file string) (shortSha, sha string, er
 
 // FindGitRef get the current git ref
 func FindGitRef(ctx context.Context, file string) (string, error) {
+	goGitMu.Lock()
+	defer goGitMu.Unlock()
+
 	logger := common.Logger(ctx)
 
 	logger.Debugf("Loading revision from git directory")
-	_, ref, err := FindGitRevision(ctx, file)
+	_, ref, err := findGitRevision(ctx, file)
 	if err != nil {
 		return "", err
 	}
@@ -174,6 +190,8 @@ func FindGitRef(ctx context.Context, file string) (string, error) {
 
 // FindGithubRepo get the repo
 func FindGithubRepo(ctx context.Context, file, githubInstance, remoteName string) (string, error) {
+	goGitMu.Lock()
+	defer goGitMu.Unlock()
 	if remoteName == "" {
 		remoteName = "origin"
 	}

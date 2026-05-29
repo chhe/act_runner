@@ -4,7 +4,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - run: |
-        FROM ubuntu:latest
+        FROM node:24-bookworm-slim
         ENV PATH="/opt/texlive/texdir/bin/x86_64-linuxmusl:${PATH}"
         ENV ORG_PATH="${PATH}"
         ENTRYPOINT [ "bash", "-c", "echo \"PATH=$PATH\" && echo \"ORG_PATH=$ORG_PATH\" && [[ \"$PATH\" = \"$ORG_PATH\" ]]" ]

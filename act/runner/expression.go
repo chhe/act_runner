@@ -562,15 +562,15 @@ func getWorkflowSecrets(ctx context.Context, rc *RunContext) map[string]string {
 			secrets = rc.caller.runContext.Config.Secrets
 		}
 
-		if secrets == nil {
-			secrets = map[string]string{}
-		}
-
+		// Interpolate into a new map. secrets may be the shared Config.Secrets (or the job's
+		// map), which other parallel jobs read concurrently (e.g. log masking), so mutating it
+		// in place is a data race.
+		interpolated := make(map[string]string, len(secrets))
 		for k, v := range secrets {
-			secrets[k] = rc.caller.runContext.ExprEval.Interpolate(ctx, v)
+			interpolated[k] = rc.caller.runContext.ExprEval.Interpolate(ctx, v)
 		}
 
-		return secrets
+		return interpolated
 	}
 
 	return rc.Config.Secrets

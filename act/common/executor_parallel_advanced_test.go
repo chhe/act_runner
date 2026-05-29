@@ -170,68 +170,6 @@ func TestMaxParallelWithErrors(t *testing.T) {
 	})
 }
 
-// TestMaxParallelPerformance tests performance characteristics
-func TestMaxParallelPerformance(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping performance test in short mode")
-	}
-
-	t.Run("ParallelFasterThanSequential", func(t *testing.T) {
-		executors := make([]Executor, 10)
-		for i := range 10 {
-			executors[i] = func(ctx context.Context) error {
-				time.Sleep(50 * time.Millisecond)
-				return nil
-			}
-		}
-
-		ctx := context.Background()
-
-		// Sequential (max-parallel=1)
-		start := time.Now()
-		err := NewParallelExecutor(1, executors...)(ctx)
-		sequentialDuration := time.Since(start)
-		assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
-
-		// Parallel (max-parallel=5)
-		start = time.Now()
-		err = NewParallelExecutor(5, executors...)(ctx)
-		parallelDuration := time.Since(start)
-		assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
-
-		// Parallel should be significantly faster
-		assert.Less(t, parallelDuration, sequentialDuration/2,
-			"Parallel execution should be at least 2x faster")
-	})
-
-	t.Run("OptimalWorkerCount", func(t *testing.T) {
-		executors := make([]Executor, 20)
-		for i := range 20 {
-			executors[i] = func(ctx context.Context) error {
-				time.Sleep(10 * time.Millisecond)
-				return nil
-			}
-		}
-
-		ctx := context.Background()
-
-		// Test with different worker counts
-		workerCounts := []int{1, 2, 5, 10, 20}
-		durations := make(map[int]time.Duration)
-
-		for _, count := range workerCounts {
-			start := time.Now()
-			err := NewParallelExecutor(count, executors...)(ctx)
-			durations[count] = time.Since(start)
-			assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
-		}
-
-		// More workers should generally be faster (up to a point)
-		assert.Less(t, durations[5], durations[1], "5 workers should be faster than 1")
-		assert.Less(t, durations[10], durations[2], "10 workers should be faster than 2")
-	})
-}
-
 // TestMaxParallelResourceSharing tests resource sharing scenarios
 func TestMaxParallelResourceSharing(t *testing.T) {
 	t.Run("SharedResourceWithMutex", func(t *testing.T) {

@@ -291,7 +291,9 @@ type remoteAction struct {
 
 func (ra *remoteAction) CloneURL(u string) string {
 	if ra.URL == "" {
-		if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
+		// keep an absolute local path as-is (used by tests to resolve actions from a local
+		// repo); only bare host names get the https:// scheme prepended
+		if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") && !filepath.IsAbs(u) {
 			u = "https://" + u
 		}
 	} else {

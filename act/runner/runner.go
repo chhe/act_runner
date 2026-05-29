@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"runtime"
 	"sync"
@@ -250,7 +251,14 @@ func (runner *runnerImpl) NewPlanExecutor(plan *model.Plan) common.Executor {
 						return executor(common.WithJobErrorContainer(WithJobLogger(ctx, rc.Run.JobID, jobName, rc.Config, &rc.Masks, matrix)))
 					})
 				}
-				pipeline = append(pipeline, common.NewParallelExecutor(maxParallel, stageExecutor...))
+				// Run all matrix combinations of this job, then drop its aggregation mutex: the
+				// combos are the only users of it, so once they finish the jobMutexes entry can be
+				// released, keeping the map from growing unbounded over a long-lived runner.
+				stageParallel := common.NewParallelExecutor(maxParallel, stageExecutor...)
+				pipeline = append(pipeline, func(ctx context.Context) error {
+					defer jobMutexes.Delete(job)
+					return stageParallel(ctx)
+				})
 			}
 
 			// For pipeline execution:
@@ -334,6 +342,11 @@ func (runner *runnerImpl) newRunContext(ctx context.Context, run *model.Run, mat
 	}
 	rc.ExprEval = rc.NewExpressionEvaluator(ctx)
 	rc.Name = rc.ExprEval.Interpolate(ctx, run.String())
+	// Snapshot the job's pristine output expressions now, before any matrix combo runs and
+	// rewrites the shared Job.Outputs (see interpolateOutputs).
+	if job := run.Job(); job != nil {
+		rc.outputTemplate = maps.Clone(job.Outputs)
+	}
 
 	return rc
 }

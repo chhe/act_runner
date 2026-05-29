@@ -27,7 +27,7 @@ jobs:
             exit 1
           fi
 
-      - uses: nektos/act-test-actions/composite@main
+      - uses: ./path-handling/
         with:
           input: some input
 

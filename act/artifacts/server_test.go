@@ -5,24 +5,25 @@
 package artifacts
 
 import (
-	"context"
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
-
-	"gitea.com/gitea/runner/act/model"
-	"gitea.com/gitea/runner/act/runner"
+	"time"
 
 	"github.com/julienschmidt/httprouter"
-	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type writableMapFile struct {
@@ -234,89 +235,133 @@ func TestDownloadArtifactFile(t *testing.T) {
 	assert.Equal("content", string(data))
 }
 
-type TestJobFileInfo struct {
-	workdir               string
-	workflowPath          string
-	eventName             string
-	errorMessage          string
-	platforms             map[string]string
-	containerArchitecture string
-}
-
-var (
-	artifactsPath = path.Join(os.TempDir(), "test-artifacts")
-	artifactsAddr = "127.0.0.1"
-	artifactsPort = "12345"
-)
-
+// TestArtifactFlow drives the real Serve() artifact server over a loopback socket, exercising
+// the same upload -> finalize -> list -> download protocol the upload-artifact/download-artifact
+// actions speak. Running it in-process (rather than from a job container) keeps it network-free
+// and reachable everywhere, including when the CI job is itself a container.
 func TestArtifactFlow(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
+	artifactPath := t.TempDir()
+
+	// Serve the exact routes Serve() wires up, on a real loopback socket via httptest. httptest
+	// picks a free port and Close() tears the server down synchronously — avoiding both the
+	// port-rebind race and Serve()'s detached ListenAndServe goroutine, which logger.Fatal()s
+	// (process exit) on a bind error and can outlive the test's temp-dir cleanup.
+	router := httprouter.New()
+	fsys := readWriteFSImpl{}
+	uploads(router, artifactPath, fsys)
+	downloads(router, artifactPath, fsys)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	baseURL := server.URL
+	client := server.Client()
+	client.Timeout = 5 * time.Second
+
+	// request performs one HTTP call and returns the status and body. The default transport adds
+	// Accept-Encoding: gzip and transparently decompresses, so gzipped downloads come back plain.
+	request := func(t *testing.T, method, rawURL string, body io.Reader, header http.Header) (int, []byte) {
+		t.Helper()
+		req, err := http.NewRequest(method, rawURL, body)
+		require.NoError(t, err)
+		maps.Copy(req.Header, header)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		data, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		return resp.StatusCode, data
 	}
 
-	ctx := context.Background()
+	t.Run("upload-and-download", func(t *testing.T) {
+		const runID, item, content = "1", "my-artifact/data.txt", "hello artifact\n"
 
-	cancel := Serve(ctx, artifactsPath, artifactsAddr, artifactsPort)
-	defer cancel()
+		status, data := request(t, http.MethodPost, baseURL+"/_apis/pipelines/workflows/"+runID+"/artifacts", nil, nil)
+		require.Equal(t, http.StatusOK, status, string(data))
+		var prep FileContainerResourceURL
+		require.NoError(t, json.Unmarshal(data, &prep))
+		require.Equal(t, baseURL+"/upload/"+runID, prep.FileContainerResourceURL)
 
-	platforms := map[string]string{
-		"ubuntu-latest": "node:24-bookworm", // Don't use node:24-bookworm-slim because it doesn't have curl command, which is used in the tests
-	}
+		status, data = request(t, http.MethodPut, prep.FileContainerResourceURL+"?itemPath="+url.QueryEscape(item), strings.NewReader(content), nil)
+		require.Equal(t, http.StatusOK, status, string(data))
+		var msg ResponseMessage
+		require.NoError(t, json.Unmarshal(data, &msg))
+		require.Equal(t, "success", msg.Message)
 
-	tables := []TestJobFileInfo{
-		{"testdata", "upload-and-download", "push", "", platforms, ""},
-		{"testdata", "GHSL-2023-004", "push", "", platforms, ""},
-	}
-	log.SetLevel(log.DebugLevel)
+		status, data = request(t, http.MethodPatch, baseURL+"/_apis/pipelines/workflows/"+runID+"/artifacts", nil, nil)
+		require.Equal(t, http.StatusOK, status, string(data))
 
-	for _, table := range tables {
-		runTestJobFile(ctx, t, table)
-	}
-}
+		status, data = request(t, http.MethodGet, baseURL+"/_apis/pipelines/workflows/"+runID+"/artifacts", nil, nil)
+		require.Equal(t, http.StatusOK, status, string(data))
+		var list NamedFileContainerResourceURLResponse
+		require.NoError(t, json.Unmarshal(data, &list))
+		require.Equal(t, 1, list.Count)
+		require.Equal(t, "my-artifact", list.Value[0].Name)
 
-func runTestJobFile(ctx context.Context, t *testing.T, tjfi TestJobFileInfo) {
-	t.Run(tjfi.workflowPath, func(t *testing.T) {
-		fmt.Printf("::group::%s\n", tjfi.workflowPath) //nolint:forbidigo // pre-existing issue from nektos/act
+		status, data = request(t, http.MethodGet, list.Value[0].FileContainerResourceURL+"?itemPath=my-artifact", nil, nil)
+		require.Equal(t, http.StatusOK, status, string(data))
+		var items ContainerItemResponse
+		require.NoError(t, json.Unmarshal(data, &items))
+		require.Len(t, items.Value, 1)
+		require.Equal(t, "file", items.Value[0].ItemType)
+		require.Equal(t, "my-artifact/data.txt", items.Value[0].Path)
 
-		if err := os.RemoveAll(artifactsPath); err != nil {
-			panic(err)
-		}
+		status, data = request(t, http.MethodGet, items.Value[0].ContentLocation, nil, nil)
+		require.Equal(t, http.StatusOK, status)
+		require.Equal(t, content, string(data))
 
-		workdir, err := filepath.Abs(tjfi.workdir)
-		assert.NoError(t, err, workdir) //nolint:testifylint // pre-existing issue from nektos/act
-		fullWorkflowPath := filepath.Join(workdir, tjfi.workflowPath)
-		runnerConfig := &runner.Config{
-			Workdir:               workdir,
-			BindWorkdir:           false,
-			EventName:             tjfi.eventName,
-			Platforms:             tjfi.platforms,
-			ReuseContainers:       false,
-			ContainerArchitecture: tjfi.containerArchitecture,
-			GitHubInstance:        "github.com",
-			ArtifactServerPath:    artifactsPath,
-			ArtifactServerAddr:    artifactsAddr,
-			ArtifactServerPort:    artifactsPort,
-		}
+		stored, err := os.ReadFile(filepath.Join(artifactPath, runID, "my-artifact", "data.txt"))
+		require.NoError(t, err)
+		require.Equal(t, content, string(stored))
+	})
 
-		runner, err := runner.New(runnerConfig)
-		assert.NoError(t, err, tjfi.workflowPath) //nolint:testifylint // pre-existing issue from nektos/act
+	t.Run("gzip-roundtrip", func(t *testing.T) {
+		const runID, item, content = "2", "logs/app.log", "compressed payload\n"
 
-		planner, err := model.NewWorkflowPlanner(fullWorkflowPath, true)
-		assert.NoError(t, err, fullWorkflowPath) //nolint:testifylint // pre-existing issue from nektos/act
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		_, err := gz.Write([]byte(content))
+		require.NoError(t, err)
+		require.NoError(t, gz.Close())
 
-		plan, err := planner.PlanEvent(tjfi.eventName)
-		if err == nil {
-			err = runner.NewPlanExecutor(plan)(ctx)
-			if tjfi.errorMessage == "" {
-				assert.NoError(t, err, fullWorkflowPath) //nolint:testifylint // pre-existing issue from nektos/act
-			} else {
-				assert.Error(t, err, tjfi.errorMessage) //nolint:testifylint // pre-existing issue from nektos/act
-			}
-		} else {
-			assert.Nil(t, plan)
-		}
+		status, data := request(t, http.MethodPut, baseURL+"/upload/"+runID+"?itemPath="+url.QueryEscape(item),
+			&buf, http.Header{"Content-Encoding": []string{"gzip"}})
+		require.Equal(t, http.StatusOK, status, string(data))
 
-		fmt.Println("::endgroup::") //nolint:forbidigo // pre-existing issue from nektos/act
+		// stored compressed, with the server's gzip marker suffix
+		_, err = os.Stat(filepath.Join(artifactPath, runID, "logs", "app.log.gz__"))
+		require.NoError(t, err)
+
+		status, data = request(t, http.MethodGet, baseURL+"/download/"+runID+"?itemPath=logs", nil, nil)
+		require.Equal(t, http.StatusOK, status, string(data))
+		var items ContainerItemResponse
+		require.NoError(t, json.Unmarshal(data, &items))
+		require.Len(t, items.Value, 1)
+		require.Equal(t, "logs/app.log", items.Value[0].Path)
+
+		status, data = request(t, http.MethodGet, items.Value[0].ContentLocation, nil, nil)
+		require.Equal(t, http.StatusOK, status)
+		require.Equal(t, content, string(data))
+	})
+
+	// GHSL-2023-004: an itemPath that climbs out of the run directory must be neutralised so the
+	// blob cannot be written outside the artifact root.
+	t.Run("GHSL-2023-004", func(t *testing.T) {
+		const runID, content = "3", "contained\n"
+
+		status, data := request(t, http.MethodPut, baseURL+"/upload/"+runID+"?itemPath="+url.QueryEscape("../../escape.txt"),
+			strings.NewReader(content), nil)
+		require.Equal(t, http.StatusOK, status, string(data))
+
+		stored, err := os.ReadFile(filepath.Join(artifactPath, runID, "escape.txt"))
+		require.NoError(t, err)
+		require.Equal(t, content, string(stored))
+
+		_, err = os.Stat(filepath.Join(filepath.Dir(artifactPath), "escape.txt"))
+		require.True(t, os.IsNotExist(err), "upload escaped the artifact root")
+
+		status, data = request(t, http.MethodGet, baseURL+"/artifact/"+runID+"/escape.txt", nil, nil)
+		require.Equal(t, http.StatusOK, status)
+		require.Equal(t, content, string(data))
 	})
 }
 
