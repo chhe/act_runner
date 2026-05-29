@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 
@@ -166,9 +167,29 @@ func withStepLogger(ctx context.Context, stepNumber int, stepID, stepName, stage
 
 type entryProcessor func(entry *logrus.Entry) *logrus.Entry
 
+func AppendSecretMasker(oldnew []string, v string) []string {
+	ret := oldnew
+
+	for l := range strings.SplitSeq(v, "\n") {
+		tm := strings.TrimSpace(l)
+		// formatted JSON secrets could otherwise mask {,[,],} everywhere
+		if len(tm) > 1 {
+			ret = append(ret, tm, "***")
+		}
+	}
+
+	return ret
+}
+
 // valueMasker applies secrets and ::add-mask:: patterns to every log entry, including
 // raw_output (command/stream) lines; there is no bypass by field.
 func valueMasker(insecureSecrets bool, secrets map[string]string) entryProcessor {
+	var oldnew []string
+	for _, v := range secrets {
+		oldnew = AppendSecretMasker(oldnew, v)
+	}
+	oldnew = slices.Clip(oldnew)
+	defReplacer := strings.NewReplacer(oldnew...)
 	return func(entry *logrus.Entry) *logrus.Entry {
 		if insecureSecrets {
 			return entry
@@ -176,16 +197,16 @@ func valueMasker(insecureSecrets bool, secrets map[string]string) entryProcessor
 
 		masks := Masks(entry.Context)
 
-		for _, v := range secrets {
-			if v != "" {
-				entry.Message = strings.ReplaceAll(entry.Message, v, "***")
-			}
-		}
+		if len(*masks) == 0 {
+			entry.Message = defReplacer.Replace(entry.Message)
+		} else {
+			cmasker := oldnew
 
-		for _, v := range *masks {
-			if v != "" {
-				entry.Message = strings.ReplaceAll(entry.Message, v, "***")
+			for _, v := range *masks {
+				cmasker = AppendSecretMasker(cmasker, v)
 			}
+
+			entry.Message = strings.NewReplacer(cmasker...).Replace(entry.Message)
 		}
 
 		return entry

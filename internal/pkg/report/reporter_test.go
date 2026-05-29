@@ -51,6 +51,19 @@ func TestReporter_parseLogRow(t *testing.T) {
 			},
 		},
 		{
+			"Add-mask-multiline", false,
+			[]string{
+				"foo mysecret bar",
+				"::add-mask::LINE1%0ALINE2",
+				"foo LINE1 bar",
+			},
+			[]string{
+				"foo mysecret bar",
+				"<nil>",
+				"foo *** bar",
+			},
+		},
+		{
 			"Debug enabled", true,
 			[]string{
 				"::debug::GitHub Actions runtime token access controls",

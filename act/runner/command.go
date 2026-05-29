@@ -51,7 +51,7 @@ func (rc *RunContext) commandHandler(ctx context.Context) common.LineHandler {
 			logger.Infof("%s", line)
 			return false
 		}
-		arg = unescapeCommandData(arg)
+		arg = UnescapeCommandData(arg)
 		kvPairs = unescapeKvPairs(kvPairs)
 		switch command {
 		case "set-env":
@@ -151,7 +151,7 @@ func parseKeyValuePairs(kvPairs, separator string) map[string]string {
 	return rtn
 }
 
-func unescapeCommandData(arg string) string {
+func UnescapeCommandData(arg string) string {
 	escapeMap := map[string]string{
 		"%25": "%",
 		"%0D": "\r",

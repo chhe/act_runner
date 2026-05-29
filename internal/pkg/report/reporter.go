@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"gitea.com/gitea/runner/act/runner"
 	"gitea.com/gitea/runner/internal/pkg/client"
 	"gitea.com/gitea/runner/internal/pkg/config"
 	"gitea.com/gitea/runner/internal/pkg/metrics"
@@ -73,13 +74,13 @@ type Reporter struct {
 func NewReporter(ctx context.Context, cancel context.CancelFunc, client client.Client, task *runnerv1.Task, cfg *config.Config) *Reporter {
 	var oldnew []string
 	if v := task.Context.Fields["token"].GetStringValue(); v != "" {
-		oldnew = append(oldnew, v, "***")
+		oldnew = runner.AppendSecretMasker(oldnew, v)
 	}
 	if v := task.Context.Fields["gitea_runtime_token"].GetStringValue(); v != "" {
-		oldnew = append(oldnew, v, "***")
+		oldnew = runner.AppendSecretMasker(oldnew, v)
 	}
 	for _, v := range task.Secrets {
-		oldnew = append(oldnew, v, "***")
+		oldnew = runner.AppendSecretMasker(oldnew, v)
 	}
 
 	rv := &Reporter{
@@ -689,7 +690,7 @@ func (r *Reporter) parseLogRow(entry *log.Entry) *runnerv1.LogRow {
 
 	matches := cmdRegex.FindStringSubmatch(content)
 	if matches != nil {
-		if output := r.handleCommand(content, matches[1], matches[3]); output != nil {
+		if output := r.handleCommand(content, matches[1], runner.UnescapeCommandData(matches[3])); output != nil {
 			content = *output
 		} else {
 			return nil
@@ -705,6 +706,6 @@ func (r *Reporter) parseLogRow(entry *log.Entry) *runnerv1.LogRow {
 }
 
 func (r *Reporter) addMask(msg string) {
-	r.oldnew = append(r.oldnew, msg, "***")
+	r.oldnew = runner.AppendSecretMasker(r.oldnew, msg)
 	r.logReplacer = strings.NewReplacer(r.oldnew...)
 }
