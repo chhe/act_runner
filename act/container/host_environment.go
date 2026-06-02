@@ -322,6 +322,30 @@ func (e *HostEnvironment) exec(ctx context.Context, command []string, cmdline st
 	cmd.Stderr = e.StdOut
 	cmd.Dir = wd
 	cmd.SysProcAttr = getSysProcAttr(cmdline, false)
+
+	// On Windows a step often launches a process tree (a shell that starts a
+	// child which spawns further GUI or background processes). The default
+	// context cancellation only kills the direct child, leaving the rest of the
+	// tree running; and because the orphans inherit cmd's stdout/stderr pipe,
+	// cmd.Wait() would block forever, hanging the runner. Kill the whole tree
+	// via a Job Object on cancellation, and bound the wait so a leftover pipe
+	// writer can never hang Wait indefinitely.
+	var killer atomic.Pointer[processKiller]
+	if runtime.GOOS == "windows" {
+		cmd.Cancel = func() error {
+			if k := killer.Load(); k != nil {
+				return k.Kill()
+			}
+			if cmd.Process != nil {
+				return cmd.Process.Kill()
+			}
+			return nil
+		}
+		// Once the step process has exited, give its I/O pipes at most this long
+		// to drain before Wait force-closes them and returns (Go's WaitDelay).
+		cmd.WaitDelay = 10 * time.Second
+	}
+
 	var ppty *os.File
 	var tty *os.File
 	defer func() {
@@ -350,6 +374,18 @@ func (e *HostEnvironment) exec(ctx context.Context, command []string, cmdline st
 	}
 	if err := cmd.Start(); err != nil {
 		return err
+	}
+	if runtime.GOOS == "windows" {
+		// Assign the started process to a Job Object so cmd.Cancel can kill the
+		// whole descendant tree. Children spawned afterwards are auto-included.
+		// On failure (e.g. nested-job restrictions) we fall back to the default
+		// single-process kill; WaitDelay + end-of-job cleanup still apply.
+		if k, kerr := newProcessKiller(cmd.Process); kerr != nil {
+			common.Logger(ctx).Warnf("process tree kill setup failed, falling back to single-process kill: %v", kerr)
+		} else {
+			killer.Store(k)
+			defer k.Close()
+		}
 	}
 	err = cmd.Wait()
 	if err != nil {
