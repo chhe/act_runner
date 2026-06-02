@@ -16,8 +16,8 @@ import (
 	"gitea.com/gitea/runner/internal/pkg/config"
 	"gitea.com/gitea/runner/internal/pkg/metrics"
 
-	runnerv1 "code.gitea.io/actions-proto-go/runner/v1"
 	"connectrpc.com/connect"
+	runnerv1 "gitea.dev/actions-proto-go/runner/v1"
 	log "github.com/sirupsen/logrus"
 )
 

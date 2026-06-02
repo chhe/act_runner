@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"code.gitea.io/actions-proto-go/ping/v1/pingv1connect"
-	"code.gitea.io/actions-proto-go/runner/v1/runnerv1connect"
 	"connectrpc.com/connect"
+	"gitea.dev/actions-proto-go/ping/v1/pingv1connect"
+	"gitea.dev/actions-proto-go/runner/v1/runnerv1connect"
 )
 
 func getHTTPClient(endpoint string, insecure bool) *http.Client {

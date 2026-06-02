@@ -15,8 +15,8 @@ import (
 	"gitea.com/gitea/runner/internal/pkg/client/mocks"
 	"gitea.com/gitea/runner/internal/pkg/config"
 
-	runnerv1 "code.gitea.io/actions-proto-go/runner/v1"
 	connect_go "connectrpc.com/connect"
+	runnerv1 "gitea.dev/actions-proto-go/runner/v1"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"

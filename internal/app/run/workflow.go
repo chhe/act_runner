@@ -11,7 +11,7 @@ import (
 
 	"gitea.com/gitea/runner/act/model"
 
-	runnerv1 "code.gitea.io/actions-proto-go/runner/v1"
+	runnerv1 "gitea.dev/actions-proto-go/runner/v1"
 	"go.yaml.in/yaml/v4"
 )
 

@@ -19,9 +19,9 @@ import (
 	"gitea.com/gitea/runner/internal/pkg/labels"
 	"gitea.com/gitea/runner/internal/pkg/ver"
 
-	pingv1 "code.gitea.io/actions-proto-go/ping/v1"
-	runnerv1 "code.gitea.io/actions-proto-go/runner/v1"
 	"connectrpc.com/connect"
+	pingv1 "gitea.dev/actions-proto-go/ping/v1"
+	runnerv1 "gitea.dev/actions-proto-go/runner/v1"
 	"github.com/mattn/go-isatty"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
