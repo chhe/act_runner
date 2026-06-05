@@ -265,8 +265,23 @@ type NewGitCloneExecutorInput struct {
 func CloneIfRequired(ctx context.Context, refName plumbing.ReferenceName, input NewGitCloneExecutorInput, logger log.FieldLogger) (*git.Repository, bool, error) {
 	r, err := git.PlainOpen(input.Dir)
 	if err == nil {
-		// Reuse existing clone
-		return r, true, nil
+		// Verify the cached clone still points to the resolved URL before reusing it.
+		remote, err := r.Remote("origin")
+		if err == nil && len(remote.Config().URLs) > 0 && remote.Config().URLs[0] == input.URL {
+			// Reuse existing clone
+			return r, true, nil
+		}
+
+		if err != nil {
+			logger.Debugf("Removing cached clone at %s because origin cannot be read: %v", input.Dir, err)
+		} else if len(remote.Config().URLs) == 0 {
+			logger.Debugf("Removing cached clone at %s because origin has no URL", input.Dir)
+		} else {
+			logger.Debugf("Removing cached clone at %s because origin URL changed from %s to %s", input.Dir, remote.Config().URLs[0], input.URL)
+		}
+		if err := os.RemoveAll(input.Dir); err != nil {
+			return nil, false, fmt.Errorf("remove cached clone %s: %w", input.Dir, err)
+		}
 	}
 
 	var progressWriter io.Writer

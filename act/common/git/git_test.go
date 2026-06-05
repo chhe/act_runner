@@ -235,6 +235,51 @@ func TestGitCloneExecutor(t *testing.T) {
 	}
 }
 
+func TestGitCloneExecutorReclonesWhenOriginURLChanges(t *testing.T) {
+	createRemote := func(message string) string {
+		remoteDir := t.TempDir()
+		require.NoError(t, gitCmd("init", "--bare", "--initial-branch=main", remoteDir))
+
+		workDir := t.TempDir()
+		require.NoError(t, gitCmd("clone", remoteDir, workDir))
+		require.NoError(t, gitCmd("-C", workDir, "checkout", "-b", "main"))
+		require.NoError(t, gitCmd("-C", workDir, "commit", "--allow-empty", "-m", message))
+		require.NoError(t, gitCmd("-C", workDir, "push", "-u", "origin", "main"))
+
+		return remoteDir
+	}
+
+	oldRemoteDir := createRemote("old-action")
+	newRemoteDir := createRemote("new-action")
+	cacheDir := t.TempDir()
+
+	require.NoError(t, NewGitCloneExecutor(NewGitCloneExecutorInput{
+		URL: oldRemoteDir,
+		Ref: "main",
+		Dir: cacheDir,
+	})(t.Context()))
+
+	markerPath := filepath.Join(cacheDir, "stale-marker")
+	require.NoError(t, os.WriteFile(markerPath, []byte("stale"), 0o644))
+
+	require.NoError(t, NewGitCloneExecutor(NewGitCloneExecutorInput{
+		URL: newRemoteDir,
+		Ref: "main",
+		Dir: cacheDir,
+	})(t.Context()))
+
+	originURL, err := findGitRemoteURL(t.Context(), cacheDir, "origin")
+	require.NoError(t, err)
+	assert.Equal(t, newRemoteDir, originURL)
+
+	out, err := exec.Command("git", "-C", cacheDir, "log", "--oneline", "-1", "--format=%s").Output()
+	require.NoError(t, err)
+	assert.Equal(t, "new-action", strings.TrimSpace(string(out)))
+
+	_, err = os.Stat(markerPath)
+	require.True(t, os.IsNotExist(err), "stale cached directory should be removed before recloning")
+}
+
 func TestGitCloneExecutorNonFastForwardRef(t *testing.T) {
 	// Simulate the scenario where a remote ref (e.g. a GitHub PR head ref) changes
 	// non-fast-forward between two fetches. Before the fix, the fetch used Force=false,
