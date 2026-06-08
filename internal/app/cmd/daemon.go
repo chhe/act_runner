@@ -148,6 +148,7 @@ func runDaemon(ctx context.Context, daemArgs *daemonArgs, configFile *string) fu
 			log.Infof("runner: %s, with version: %s, with labels: %v, declare successfully",
 				resp.Msg.Runner.Name, resp.Msg.Runner.Version, resp.Msg.Runner.Labels)
 		}
+		runner.SetCapabilitiesFromDeclare(resp)
 
 		if cfg.Metrics.Enabled {
 			metrics.Init()

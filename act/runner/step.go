@@ -124,7 +124,12 @@ func runStepExecutor(step step, stage stepStage, executor common.Executor) commo
 		envFileCommand := path.Join("workflow", "envs.txt")
 		(*step.getEnv())["GITHUB_ENV"] = path.Join(actPath, envFileCommand)
 
-		summaryFileCommand := path.Join("workflow", "SUMMARY.md")
+		// Per-step summary file. Composite sub-steps share the outer job step's index
+		// via the Parent chain so all writes from within a composite action accumulate
+		// in the same file and upload under the outer step_index.
+		topRC := rc.topLevelRunContext()
+		stepSummaryIndex := topRC.CurrentStepIndex
+		summaryFileCommand := path.Join("workflow", "step-summary-"+strconv.Itoa(stepSummaryIndex)+".md")
 		(*step.getEnv())["GITHUB_STEP_SUMMARY"] = path.Join(actPath, summaryFileCommand)
 
 		{
@@ -136,22 +141,23 @@ func runStepExecutor(step step, stage stepStage, executor common.Executor) commo
 			(*step.getEnv())["GITEA_STEP_SUMMARY"] = (*step.getEnv())["GITHUB_STEP_SUMMARY"]
 		}
 
-		_ = rc.JobContainer.Copy(actPath, &container.FileEntry{
-			Name: outputFileCommand,
-			Mode: 0o666,
-		}, &container.FileEntry{
-			Name: stateFileCommand,
-			Mode: 0o666,
-		}, &container.FileEntry{
-			Name: pathFileCommand,
-			Mode: 0o666,
-		}, &container.FileEntry{
-			Name: envFileCommand,
-			Mode: 0o666,
-		}, &container.FileEntry{
-			Name: summaryFileCommand,
-			Mode: 0o666,
-		})(ctx)
+		// Reset the per-phase file-command files. GITHUB_STEP_SUMMARY is intentionally
+		// excluded here and initialized below at most once per step so writes from later
+		// phases and from composite sub-steps accumulate instead of being truncated.
+		files := []*container.FileEntry{
+			{Name: outputFileCommand, Mode: 0o666},
+			{Name: stateFileCommand, Mode: 0o666},
+			{Name: pathFileCommand, Mode: 0o666},
+			{Name: envFileCommand, Mode: 0o666},
+		}
+		if topRC.summaryFileInitialized == nil {
+			topRC.summaryFileInitialized = map[int]bool{}
+		}
+		if !topRC.summaryFileInitialized[stepSummaryIndex] {
+			files = append(files, &container.FileEntry{Name: summaryFileCommand, Mode: 0o666})
+			topRC.summaryFileInitialized[stepSummaryIndex] = true
+		}
+		_ = rc.JobContainer.Copy(actPath, files...)(ctx)
 
 		timeoutctx, cancelTimeOut := evaluateStepTimeout(ctx, rc.ExprEval, stepModel)
 		defer cancelTimeOut()

@@ -47,6 +47,7 @@ type Runner struct {
 	labels       labels.Labels
 	envs         map[string]string
 	cacheHandler *artifactcache.Handler
+	capabilities string
 
 	runningTasks            sync.Map
 	runningCount            atomic.Int64
@@ -185,6 +186,14 @@ func (r *Runner) cleanupStaleTaskDirs(ctx context.Context, workdirRoot string) {
 	}
 }
 
+func (r *Runner) SetCapabilitiesFromDeclare(resp *connect.Response[runnerv1.DeclareResponse]) {
+	if resp == nil {
+		return
+	}
+	// Capability negotiation is done via response headers to avoid a hard proto bump.
+	r.capabilities = strings.TrimSpace(resp.Header().Get("X-Gitea-Actions-Capabilities"))
+}
+
 func (r *Runner) Run(ctx context.Context, task *runnerv1.Task) error {
 	if _, ok := r.runningTasks.Load(task.Id); ok {
 		return fmt.Errorf("task %d is already running", task.Id)
@@ -219,9 +228,10 @@ func (r *Runner) Run(ctx context.Context, task *runnerv1.Task) error {
 }
 
 func (r *Runner) cloneEnvs() map[string]string {
-	// +3 reserves space for the per-task keys injected by run():
-	// ACTIONS_ID_TOKEN_REQUEST_URL, ACTIONS_ID_TOKEN_REQUEST_TOKEN, ACTIONS_RUNTIME_TOKEN.
-	envs := make(map[string]string, len(r.envs)+3)
+	// Reserve space for the per-task keys injected by run():
+	// ACTIONS_ID_TOKEN_REQUEST_URL, ACTIONS_ID_TOKEN_REQUEST_TOKEN, ACTIONS_RUNTIME_TOKEN,
+	// GITEA_ACTIONS_CAPABILITIES, GITEA_RUN_ID.
+	envs := make(map[string]string, len(r.envs)+5)
 	maps.Copy(envs, r.envs)
 	return envs
 }
@@ -260,6 +270,13 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 
 	taskContext := task.Context.Fields
 	envs := r.cloneEnvs()
+
+	if r.capabilities != "" {
+		envs["GITEA_ACTIONS_CAPABILITIES"] = r.capabilities
+	}
+	if v := taskContext["run_id"].GetStringValue(); v != "" {
+		envs["GITEA_RUN_ID"] = v
+	}
 
 	log.Infof("task %v repo is %v %v %v", task.Id, taskContext["repository"].GetStringValue(),
 		r.getDefaultActionsURL(task),
