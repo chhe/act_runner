@@ -38,7 +38,12 @@ func TestStepDockerMain(t *testing.T) {
 	sd := &stepDocker{
 		RunContext: &RunContext{
 			StepResults: map[string]*model.StepResult{},
-			Config:      &Config{},
+			Config: &Config{
+				Secrets: map[string]string{
+					"DOCKER_USERNAME": "docker-user",
+					"DOCKER_PASSWORD": "docker-password",
+				},
+			},
 			Run: &model.Run{
 				JobID: "1",
 				Workflow: &model.Workflow{
@@ -105,6 +110,10 @@ func TestStepDockerMain(t *testing.T) {
 	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
 
 	assert.Equal(t, "node:14", input.Image)
+
+	// DOCKER_USERNAME/DOCKER_PASSWORD secrets should not be used as implicit pull credentials for docker:// action containers.
+	assert.Empty(t, input.Username)
+	assert.Empty(t, input.Password)
 
 	cm.AssertExpectations(t)
 }

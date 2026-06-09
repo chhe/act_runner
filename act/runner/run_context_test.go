@@ -170,6 +170,38 @@ func TestRunContext_EvalBool(t *testing.T) {
 	}
 }
 
+func TestRunContextHandleCredentialsDoesNotUseDockerSecrets(t *testing.T) {
+	workflow, err := model.ReadWorkflow(strings.NewReader(`
+name: test
+on: push
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps: []
+`))
+	require.NoError(t, err)
+
+	rc := &RunContext{
+		Config: &Config{
+			Secrets: map[string]string{
+				"DOCKER_USERNAME": "docker-user",
+				"DOCKER_PASSWORD": "docker-password",
+			},
+			Env: map[string]string{},
+		},
+		Run: &model.Run{
+			JobID:    "job",
+			Workflow: workflow,
+		},
+	}
+
+	// DOCKER_USERNAME/DOCKER_PASSWORD secrets should not be used as implicit job container pull credentials.
+	username, password, err := rc.handleCredentials(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, username)
+	assert.Empty(t, password)
+}
+
 func TestRunContext_GetBindsAndMounts(t *testing.T) {
 	rctemplate := &RunContext{
 		Name: "TestRCName",

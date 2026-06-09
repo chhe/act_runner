@@ -436,13 +436,11 @@ func newStepContainer(ctx context.Context, step step, image string, cmd, entrypo
 	if rc.IsHostEnv(ctx) {
 		networkMode = "default"
 	}
-	stepContainer := container.NewContainer(&container.NewContainerInput{
+	stepContainer := ContainerNewContainer(&container.NewContainerInput{
 		Cmd:          cmd,
 		Entrypoint:   entrypoint,
 		WorkingDir:   rc.JobContainer.ToContainerPath(rc.Config.Workdir),
 		Image:        image,
-		Username:     rc.Config.Secrets["DOCKER_USERNAME"],
-		Password:     rc.Config.Secrets["DOCKER_PASSWORD"],
 		Name:         createContainerName(rc.jobContainerName(), "STEP-"+stepModel.ID),
 		Env:          envList,
 		Mounts:       mounts,

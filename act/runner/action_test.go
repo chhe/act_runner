@@ -258,6 +258,54 @@ func TestActionRunner(t *testing.T) {
 	}
 }
 
+func TestNewStepContainerDoesNotUseDockerSecrets(t *testing.T) {
+	cm := &containerMock{}
+
+	var captured *container.NewContainerInput
+	origContainerNewContainer := ContainerNewContainer
+	ContainerNewContainer = func(input *container.NewContainerInput) container.ExecutionsEnvironment {
+		captured = input
+		return cm
+	}
+	defer func() {
+		ContainerNewContainer = origContainerNewContainer
+	}()
+
+	ctx := context.Background()
+	rc := &RunContext{
+		Name: "job",
+		Config: &Config{
+			Secrets: map[string]string{
+				"DOCKER_USERNAME": "docker-user",
+				"DOCKER_PASSWORD": "docker-password",
+			},
+		},
+		Run: &model.Run{
+			JobID: "job",
+			Workflow: &model.Workflow{
+				Name: "test",
+				Jobs: map[string]*model.Job{
+					"job": {},
+				},
+			},
+		},
+		JobContainer: cm,
+		StepResults:  map[string]*model.StepResult{},
+	}
+	env := map[string]string{}
+	step := &stepMock{}
+	step.On("getRunContext").Return(rc)
+	step.On("getStepModel").Return(&model.Step{ID: "action"})
+	step.On("getEnv").Return(&env)
+
+	_ = newStepContainer(ctx, step, "registry.example.com/action:tag", nil, nil)
+
+	// DOCKER_USERNAME/DOCKER_PASSWORD should not be injected as pull credentials for docker action containers.
+	assert.Empty(t, captured.Username)
+	assert.Empty(t, captured.Password)
+	step.AssertExpectations(t)
+}
+
 func TestMaybeCopyToActionDirHoldsCloneLock(t *testing.T) {
 	ctx := context.Background()
 

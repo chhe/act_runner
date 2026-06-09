@@ -1175,21 +1175,18 @@ func setActionRuntimeVars(rc *RunContext, env map[string]string) {
 }
 
 func (rc *RunContext) handleCredentials(ctx context.Context) (string, string, error) {
-	// TODO: remove below 2 lines when we can release act with breaking changes
-	username := rc.Config.Secrets["DOCKER_USERNAME"]
-	password := rc.Config.Secrets["DOCKER_PASSWORD"]
-
 	container := rc.Run.Job().Container()
 	if container == nil || container.Credentials == nil {
-		return username, password, nil
+		return "", "", nil
 	}
 
-	if container.Credentials != nil && len(container.Credentials) != 2 {
+	if len(container.Credentials) != 2 {
 		err := errors.New("invalid property count for key 'credentials:'")
 		return "", "", err
 	}
 
 	ee := rc.NewExpressionEvaluator(ctx)
+	var username, password string
 	if username = ee.Interpolate(ctx, container.Credentials["username"]); username == "" {
 		err := errors.New("failed to interpolate container.credentials.username")
 		return "", "", err
