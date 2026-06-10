@@ -17,7 +17,7 @@ RUN make clean && make build
 ### DIND VARIANT
 #
 #
-FROM docker:29.5.2-dind AS dind
+FROM docker:29.5.3-dind AS dind
 
 ARG VERSION=dev
 
@@ -37,7 +37,7 @@ ENTRYPOINT ["s6-svscan","/etc/s6"]
 ### DIND-ROOTLESS VARIANT
 #
 #
-FROM docker:29.5.2-dind-rootless AS dind-rootless
+FROM docker:29.5.3-dind-rootless AS dind-rootless
 
 ARG VERSION=dev
 
