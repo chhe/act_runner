@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"gitea.com/gitea/runner/internal/app/run"
 	"gitea.com/gitea/runner/internal/pkg/client"
 	"gitea.com/gitea/runner/internal/pkg/config"
 	"gitea.com/gitea/runner/internal/pkg/labels"
@@ -365,11 +366,12 @@ func doRegister(ctx context.Context, cfg *config.Config, inputs *registerInputs)
 	}
 	// register new runner.
 	resp, err := cli.Register(ctx, connect.NewRequest(&runnerv1.RegisterRequest{
-		Name:      reg.Name,
-		Token:     reg.Token,
-		Version:   ver.Version(),
-		Labels:    ls,
-		Ephemeral: reg.Ephemeral,
+		Name:         reg.Name,
+		Token:        reg.Token,
+		Version:      ver.Version(),
+		Labels:       ls,
+		Ephemeral:    reg.Ephemeral,
+		Capabilities: run.RunnerCapabilities(),
 	}))
 	if err != nil {
 		log.WithError(err).Error("poller: cannot register new runner")

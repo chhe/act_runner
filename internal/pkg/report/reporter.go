@@ -391,15 +391,28 @@ func (r *Reporter) Close(lastWords string) error {
 	r.stateMu.Lock()
 	r.closed = true
 	if r.state.Result == runnerv1.Result_RESULT_UNSPECIFIED {
+		// When r.ctx has been cancelled (server returned RESULT_CANCELLED via
+		// rpcCtx/ReportState, see line 590) the job is being torn down on the
+		// cancellation path: surface that explicitly instead of attributing it
+		// to a generic failure.
+		cancelled := errors.Is(r.ctx.Err(), context.Canceled)
 		if lastWords == "" {
-			lastWords = "Early termination"
+			if cancelled {
+				lastWords = "Cancelled"
+			} else {
+				lastWords = "Early termination"
+			}
 		}
 		for _, v := range r.state.Steps {
 			if v.Result == runnerv1.Result_RESULT_UNSPECIFIED {
 				v.Result = runnerv1.Result_RESULT_CANCELLED
 			}
 		}
-		r.state.Result = runnerv1.Result_RESULT_FAILURE
+		if cancelled {
+			r.state.Result = runnerv1.Result_RESULT_CANCELLED
+		} else {
+			r.state.Result = runnerv1.Result_RESULT_FAILURE
+		}
 		r.logRows = append(r.logRows, &runnerv1.LogRow{
 			Time:    timestamppb.Now(),
 			Content: lastWords,

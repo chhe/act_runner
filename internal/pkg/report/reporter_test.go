@@ -850,3 +850,74 @@ func TestReporter_ServerCancelStillFlushesFinal(t *testing.T) {
 	assert.True(t, finalLogNoMoreSeen.Load(), "Close() must send a final UpdateLog{NoMore:true} even after server-side cancellation")
 	assert.True(t, finalTaskStateSeen.Load(), "Close() must send a final UpdateTask with the populated final state even after server-side cancellation")
 }
+
+// TestReporter_CloseReportsCancelledOnCanceledCtx asserts that when Close()
+// runs on a reporter whose state has not been finalised AND whose context has
+// been cancelled, the synthesised final state carries RESULT_CANCELLED and
+// the appended log row reads "Cancelled" — not RESULT_FAILURE / "Early
+// termination". This is the runner-side half of the Running -> Cancelling ->
+// Cancelled flow: it gives Gitea an explicit cancel acknowledgement rather
+// than a generic failure when the job is torn down on the cancel path.
+func TestReporter_CloseReportsCancelledOnCanceledCtx(t *testing.T) {
+	var finalState atomic.Pointer[runnerv1.TaskState]
+	var finalLogRows atomic.Pointer[[]*runnerv1.LogRow]
+
+	client := mocks.NewClient(t)
+	client.On("UpdateLog", mock.Anything, mock.Anything).Return(
+		func(_ context.Context, req *connect_go.Request[runnerv1.UpdateLogRequest]) (*connect_go.Response[runnerv1.UpdateLogResponse], error) {
+			if req.Msg.NoMore {
+				rows := append([]*runnerv1.LogRow(nil), req.Msg.Rows...)
+				finalLogRows.Store(&rows)
+			}
+			return connect_go.NewResponse(&runnerv1.UpdateLogResponse{
+				AckIndex: req.Msg.Index + int64(len(req.Msg.Rows)),
+			}), nil
+		},
+	)
+	client.On("UpdateTask", mock.Anything, mock.Anything).Return(
+		func(_ context.Context, req *connect_go.Request[runnerv1.UpdateTaskRequest]) (*connect_go.Response[runnerv1.UpdateTaskResponse], error) {
+			if req.Msg.State != nil && req.Msg.State.Result != runnerv1.Result_RESULT_UNSPECIFIED {
+				finalState.Store(req.Msg.State)
+			}
+			return connect_go.NewResponse(&runnerv1.UpdateTaskResponse{}), nil
+		},
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	taskCtx, err := structpb.NewStruct(map[string]any{})
+	require.NoError(t, err)
+	cfg, _ := config.LoadDefault("")
+	reporter := NewReporter(ctx, cancel, client, &runnerv1.Task{Context: taskCtx}, cfg)
+	reporter.ResetSteps(1)
+
+	// Simulate the cancellation path: r.ctx is cancelled before Close() runs.
+	cancel()
+
+	// Skip the daemon wait inside Close().
+	close(reporter.daemon)
+
+	// Empty lastWords so Close() picks the synthesised value.
+	require.NoError(t, reporter.Close(""))
+
+	got := finalState.Load()
+	require.NotNil(t, got, "Close() must send a final UpdateTask")
+	assert.Equal(t, runnerv1.Result_RESULT_CANCELLED, got.Result,
+		"final Result must be RESULT_CANCELLED when r.ctx is cancelled, not RESULT_FAILURE")
+	require.Len(t, got.Steps, 1)
+	assert.Equal(t, runnerv1.Result_RESULT_CANCELLED, got.Steps[0].Result,
+		"unfinished steps must be marked RESULT_CANCELLED")
+
+	rows := finalLogRows.Load()
+	require.NotNil(t, rows, "Close() must send a final UpdateLog{NoMore:true}")
+	var foundCancelled, foundEarlyTermination bool
+	for _, r := range *rows {
+		if r.Content == "Cancelled" {
+			foundCancelled = true
+		}
+		if r.Content == "Early termination" {
+			foundEarlyTermination = true
+		}
+	}
+	assert.True(t, foundCancelled, "final log must contain a 'Cancelled' row")
+	assert.False(t, foundEarlyTermination, "final log must not contain 'Early termination' on the cancel path")
+}

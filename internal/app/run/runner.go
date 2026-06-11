@@ -37,6 +37,18 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// CapabilityCancelling tells the server this runner understands the
+// transitional cancelling state and will run post-step cleanup before
+// finalizing a task as RESULT_CANCELLED.
+const CapabilityCancelling = "cancelling"
+
+// RunnerCapabilities are the capability flags this runner advertises to the
+// server during registration and declaration. The server uses them to enable
+// transitional features that require runner-side support.
+func RunnerCapabilities() []string {
+	return []string{CapabilityCancelling}
+}
+
 // Runner runs the pipeline.
 type Runner struct {
 	name string
@@ -504,7 +516,8 @@ func (r *Runner) RunningCount() int64 {
 
 func (r *Runner) Declare(ctx context.Context, labels []string) (*connect.Response[runnerv1.DeclareResponse], error) {
 	return r.client.Declare(ctx, connect.NewRequest(&runnerv1.DeclareRequest{
-		Version: ver.Version(),
-		Labels:  labels,
+		Version:      ver.Version(),
+		Labels:       labels,
+		Capabilities: RunnerCapabilities(),
 	}))
 }
