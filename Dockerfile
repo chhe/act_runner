@@ -63,7 +63,7 @@ ENTRYPOINT ["s6-svscan","/etc/s6"]
 ### BASIC VARIANT
 #
 #
-FROM alpine:3.23 AS basic
+FROM alpine:3.24 AS basic
 
 ARG VERSION=dev
 
