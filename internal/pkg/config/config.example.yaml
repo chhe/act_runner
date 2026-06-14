@@ -40,11 +40,12 @@ runner:
   # The runner uses exponential backoff when idle, increasing the interval up to this maximum.
   # Set to 0 or same as fetch_interval to disable backoff.
   fetch_interval_max: 5s
-  # While idle, remove stale bind-workdir task directories older than this duration.
-  # Setting either workdir_cleanup_age or idle_cleanup_interval to 0 (or any
-  # non-positive value) disables workdir cleanup entirely.
+  # While idle, remove stale bind-workdir task directories and orphaned host-mode
+  # scratch directories (left behind when a host cleanup delete stalls) older than
+  # this duration. Setting either workdir_cleanup_age or idle_cleanup_interval to 0
+  # (or any non-positive value) disables stale-directory cleanup entirely.
   workdir_cleanup_age: 24h
-  # Cadence for the idle stale bind-workdir cleanup pass.
+  # Cadence for the idle stale-directory cleanup pass.
   idle_cleanup_interval: 10m
   # The base interval for periodic log flush to the Gitea instance.
   # Logs may be sent earlier if the buffer reaches log_report_batch_size

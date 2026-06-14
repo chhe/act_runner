@@ -52,6 +52,55 @@ func TestRunnerCleanupStaleTaskDirs(t *testing.T) {
 	assert.DirExists(t, alphaNumericTask)
 }
 
+// TestRunnerOnIdleCleansStaleHostScratchDirs covers the host-mode leak path:
+// a per-job scratch dir (16 hex chars) left behind by a timed-out cleanup must
+// be reclaimed, while the shared tool_cache and operator data are preserved.
+func TestRunnerOnIdleCleansStaleHostScratchDirs(t *testing.T) {
+	now := time.Date(2026, time.April, 29, 20, 0, 0, 0, time.UTC)
+	hostRoot := filepath.Join(t.TempDir(), "act")
+	require.NoError(t, os.MkdirAll(hostRoot, 0o700))
+
+	staleScratch := filepath.Join(hostRoot, "0123456789abcdef") // 16 hex
+	freshScratch := filepath.Join(hostRoot, "fedcba9876543210")
+	toolCache := filepath.Join(hostRoot, "tool_cache")
+	operatorData := filepath.Join(hostRoot, "keep-me")
+	for _, path := range []string{staleScratch, freshScratch, toolCache, operatorData} {
+		require.NoError(t, os.MkdirAll(path, 0o700))
+	}
+	require.NoError(t, os.Chtimes(staleScratch, now.Add(-48*time.Hour), now.Add(-48*time.Hour)))
+	require.NoError(t, os.Chtimes(freshScratch, now.Add(-10*time.Minute), now.Add(-10*time.Minute)))
+	require.NoError(t, os.Chtimes(toolCache, now.Add(-72*time.Hour), now.Add(-72*time.Hour)))
+	require.NoError(t, os.Chtimes(operatorData, now.Add(-72*time.Hour), now.Add(-72*time.Hour)))
+
+	r := &Runner{
+		cfg: &config.Config{
+			Host: config.Host{WorkdirParent: hostRoot},
+			Runner: config.Runner{
+				WorkdirCleanupAge:   24 * time.Hour,
+				IdleCleanupInterval: time.Minute,
+			},
+		},
+		now: func() time.Time { return now },
+	}
+
+	r.OnIdle(context.Background())
+
+	assert.NoDirExists(t, staleScratch) // stale scratch reclaimed
+	assert.DirExists(t, freshScratch)   // within cleanup age, kept
+	assert.DirExists(t, toolCache)      // shared cache, never a scratch match
+	assert.DirExists(t, operatorData)   // non-hex name, untouched
+}
+
+func TestIsHostScratchDir(t *testing.T) {
+	assert.True(t, isHostScratchDir("0123456789abcdef"))
+	assert.True(t, isHostScratchDir("ffffffffffffffff"))
+	assert.False(t, isHostScratchDir("tool_cache"))
+	assert.False(t, isHostScratchDir("0123456789ABCDEF"))  // hex.EncodeToString is lowercase
+	assert.False(t, isHostScratchDir("0123456789abcde"))   // 15 chars
+	assert.False(t, isHostScratchDir("0123456789abcdef0")) // 17 chars
+	assert.False(t, isHostScratchDir("123"))
+}
+
 func TestRunnerCleanupStaleTaskDirsMissingRoot(t *testing.T) {
 	r := &Runner{
 		cfg: &config.Config{
@@ -135,7 +184,10 @@ func TestRunnerShouldRunIdleCleanupSkipsWhenJobRunning(t *testing.T) {
 	assert.False(t, r.shouldRunIdleCleanup())
 }
 
-func TestRunnerShouldRunIdleCleanupSkipsWhenBindWorkdirDisabled(t *testing.T) {
+// Idle cleanup runs regardless of bind_workdir: host mode (bind_workdir off)
+// still leaves per-job scratch dirs that the sweep must reclaim.
+func TestRunnerShouldRunIdleCleanupRunsWithoutBindWorkdir(t *testing.T) {
+	now := time.Date(2026, time.April, 29, 20, 0, 0, 0, time.UTC)
 	r := &Runner{
 		cfg: &config.Config{
 			Runner: config.Runner{
@@ -143,10 +195,10 @@ func TestRunnerShouldRunIdleCleanupSkipsWhenBindWorkdirDisabled(t *testing.T) {
 				IdleCleanupInterval: time.Minute,
 			},
 		},
-		now: time.Now,
+		now: func() time.Time { return now },
 	}
 
-	assert.False(t, r.shouldRunIdleCleanup())
+	assert.True(t, r.shouldRunIdleCleanup())
 }
 
 func TestRunnerShouldRunIdleCleanupSkipsWhenDisabled(t *testing.T) {

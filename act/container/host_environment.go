@@ -429,6 +429,24 @@ func (e *HostEnvironment) UpdateFromEnv(srcPath string, env *map[string]string) 
 	return parseEnvFile(e, srcPath, env)
 }
 
+// removeAll is the filesystem delete used by removeAllWithContext. A package
+// var so tests can substitute a blocking stub without patching os.RemoveAll.
+var removeAll = os.RemoveAll
+
+// removeAllWithContext runs removeAll in a goroutine and returns once it
+// finishes or ctx is cancelled. On cancellation the goroutine is left running —
+// a delete blocked inside a syscall cannot be interrupted (see runWithTimeout).
+func removeAllWithContext(ctx context.Context, path string) error {
+	done := make(chan error, 1)
+	go func() { done <- removeAll(path) }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func removePathWithRetry(ctx context.Context, path string) error {
 	if path == "" {
 		return nil
@@ -448,9 +466,12 @@ func removePathWithRetry(ctx context.Context, path string) error {
 			case <-time.After(delay):
 			}
 		}
-		lastErr = os.RemoveAll(path)
+		lastErr = removeAllWithContext(ctx, path)
 		if lastErr == nil {
 			return nil
+		}
+		if errors.Is(lastErr, context.DeadlineExceeded) {
+			return lastErr
 		}
 	}
 	return lastErr
@@ -533,23 +554,61 @@ func (e *HostEnvironment) terminateRunningProcesses(ctx context.Context) {
 	}
 }
 
+// hostCleanupTimeout bounds each filesystem-teardown phase of the host
+// environment so a single stalled delete cannot wedge the runner slot forever.
+// A var (not const) so tests can shrink it.
+var hostCleanupTimeout = 30 * time.Second
+
+// runWithTimeout runs fn in a goroutine and returns once it finishes or timeout
+// elapses, whichever comes first. On timeout the goroutine is left running — an
+// os.RemoveAll blocked inside a delete syscall (AV/EDR filter drivers, an
+// unresponsive network mount, a dying disk) cannot be interrupted — and
+// context.DeadlineExceeded is returned. Leaking the goroutine and the scratch
+// state it was deleting is strictly better than blocking the caller forever and
+// permanently losing the runner's capacity slot; the leaked scratch dir is
+// reclaimed later by the runner's idle stale-dir sweep.
+func runWithTimeout(fn func(), timeout time.Duration) error {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fn()
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return nil
+	case <-timer.C:
+		return context.DeadlineExceeded
+	}
+}
+
 func (e *HostEnvironment) Remove() common.Executor {
 	return func(ctx context.Context) error {
+		logger := common.Logger(ctx)
+
 		// Ensure any lingering child processes are ended before attempting
 		// to remove the workspace (Windows file locks otherwise prevent cleanup).
 		e.terminateRunningProcesses(ctx)
 
 		// Only removes per-job misc state. Must not remove the cache/toolcache root.
+		// Bound it: CleanUp is a caller-supplied, typically unbounded os.RemoveAll,
+		// and a delete stalled by a filesystem filter driver would otherwise hang
+		// the job forever at "Cleaning up container" and hold the capacity slot.
 		if e.CleanUp != nil {
-			e.CleanUp()
+			logger.Debugf("running host environment cleanup callback")
+			if err := runWithTimeout(e.CleanUp, hostCleanupTimeout); err != nil {
+				logger.Warnf("host environment cleanup did not finish within %s; continuing job completion, scratch state may be leaked and is reclaimed by the idle stale-dir sweep", hostCleanupTimeout)
+			} else {
+				logger.Debugf("host environment cleanup callback finished")
+			}
 		}
 
 		// Detach: a cancelled ctx would skip removePathWithRetry's retries,
 		// which absorb Windows file-handle release lag after the kill above.
-		rmCtx, rmCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		rmCtx, rmCancel := context.WithTimeout(context.Background(), hostCleanupTimeout)
 		defer rmCancel()
 
-		logger := common.Logger(ctx)
 		var errs []error
 		if err := removePathWithRetry(rmCtx, e.Path); err != nil {
 			logger.Warnf("failed to remove host misc state %s: %v", e.Path, err)
@@ -561,7 +620,14 @@ func (e *HostEnvironment) Remove() common.Executor {
 				errs = append(errs, err)
 			}
 		}
-		return errors.Join(errs...)
+		for _, err := range errs {
+			if !errors.Is(err, context.DeadlineExceeded) {
+				return errors.Join(errs...)
+			}
+		}
+		// Bounded teardown timed out; warnings already logged above. Do not
+		// fail job completion — leaked scratch is reclaimed by the idle sweep.
+		return nil
 	}
 }
 

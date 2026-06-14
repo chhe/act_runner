@@ -127,15 +127,22 @@ func (r *Runner) OnIdle(ctx context.Context) {
 	if !r.shouldRunIdleCleanup() {
 		return
 	}
-	workdirParent := strings.TrimLeft(r.cfg.Container.WorkdirParent, "/")
-	workdirRoot := filepath.FromSlash("/" + workdirParent)
-	r.cleanupStaleTaskDirs(ctx, workdirRoot)
+	// Bind-workdir mode: reclaim stale per-task workspace dirs (numeric task IDs).
+	if r.cfg.Container.BindWorkdir {
+		workdirParent := strings.TrimLeft(r.cfg.Container.WorkdirParent, "/")
+		workdirRoot := filepath.FromSlash("/" + workdirParent)
+		r.cleanupStaleDirs(ctx, workdirRoot, isTaskIDDir)
+	}
+	// Host mode: reclaim per-job scratch dirs left behind when HostEnvironment
+	// cleanup timed out (e.g. a delete stalled by an AV/EDR filter driver). They
+	// sit under the host workdir parent alongside the shared tool_cache, which
+	// the name match leaves untouched. No-op when no host-mode job ever ran.
+	if hostRoot := filepath.FromSlash(r.cfg.Host.WorkdirParent); hostRoot != "" {
+		r.cleanupStaleDirs(ctx, hostRoot, isHostScratchDir)
+	}
 }
 
 func (r *Runner) shouldRunIdleCleanup() bool {
-	if !r.cfg.Container.BindWorkdir {
-		return false
-	}
 	if r.cfg.Runner.WorkdirCleanupAge <= 0 || r.cfg.Runner.IdleCleanupInterval <= 0 {
 		return false
 	}
@@ -155,18 +162,52 @@ func (r *Runner) shouldRunIdleCleanup() bool {
 	}
 }
 
+// cleanupStaleTaskDirs reclaims stale bind-workdir per-task directories under
+// workdirRoot. Retained as a thin wrapper so existing callers and tests keep a
+// stable entry point.
 func (r *Runner) cleanupStaleTaskDirs(ctx context.Context, workdirRoot string) {
-	entries, err := os.ReadDir(workdirRoot)
+	r.cleanupStaleDirs(ctx, workdirRoot, isTaskIDDir)
+}
+
+// isTaskIDDir reports whether name is a per-task workspace dir (numeric task
+// ID). Any other directory is skipped to avoid deleting operator-managed data
+// under workdir_root.
+func isTaskIDDir(name string) bool {
+	_, err := strconv.ParseUint(name, 10, 64)
+	return err == nil
+}
+
+// isHostScratchDir reports whether name is a per-job host-mode scratch dir:
+// hex.EncodeToString of 8 random bytes, i.e. exactly 16 lowercase hex chars
+// (see startHostEnvironment in act/runner/run_context.go). The narrow match
+// leaves the sibling shared "tool_cache" dir and any operator data untouched.
+func isHostScratchDir(name string) bool {
+	if len(name) != 16 {
+		return false
+	}
+	for _, c := range name {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// cleanupStaleDirs removes immediate child directories of root that match and
+// whose mtime is older than WorkdirCleanupAge. It is a no-op when root does not
+// exist yet (the runner has never written there).
+func (r *Runner) cleanupStaleDirs(ctx context.Context, root string, match func(name string) bool) {
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return
 		}
-		log.Warnf("failed to list task workspace root %s for stale cleanup: %v", workdirRoot, err)
+		log.Warnf("failed to list directory %s for stale cleanup: %v", root, err)
 		return
 	}
 
 	// A task may begin between shouldRunIdleCleanup's running-count check and
-	// the loop below. That is safe because new task dirs are created with the
+	// the loop below. That is safe because new dirs are created with the
 	// current mtime and therefore fall on the keep side of cutoff.
 	cutoff := r.now().Add(-r.cfg.Runner.WorkdirCleanupAge)
 	for _, entry := range entries {
@@ -176,25 +217,23 @@ func (r *Runner) cleanupStaleTaskDirs(ctx context.Context, workdirRoot string) {
 		if !entry.IsDir() {
 			continue
 		}
-		// Task workspaces are indexed by numeric task IDs; skip any other
-		// directories to avoid deleting operator-managed data under workdir_root.
-		if _, err := strconv.ParseUint(entry.Name(), 10, 64); err != nil {
+		if !match(entry.Name()) {
 			continue
 		}
 		info, err := entry.Info()
 		if err != nil {
-			log.Warnf("failed to stat task workspace %s: %v", filepath.Join(workdirRoot, entry.Name()), err)
+			log.Warnf("failed to stat %s: %v", filepath.Join(root, entry.Name()), err)
 			continue
 		}
 		if info.ModTime().After(cutoff) {
 			continue
 		}
-		taskDir := filepath.Join(workdirRoot, entry.Name())
-		if err := os.RemoveAll(taskDir); err != nil {
-			log.Warnf("failed to clean stale task workspace %s: %v", taskDir, err)
+		dir := filepath.Join(root, entry.Name())
+		if err := os.RemoveAll(dir); err != nil {
+			log.Warnf("failed to clean stale directory %s: %v", dir, err)
 			continue
 		}
-		log.Infof("cleaned stale task workspace %s", taskDir)
+		log.Infof("cleaned stale directory %s", dir)
 	}
 }
 
