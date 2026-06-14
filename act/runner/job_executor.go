@@ -462,6 +462,11 @@ func useStepLogger(rc *RunContext, stepModel *model.Step, stage stepStage, execu
 		oldout, olderr := rc.JobContainer.ReplaceLogWriter(logWriter, logWriter)
 		defer rc.JobContainer.ReplaceLogWriter(oldout, olderr)
 
+		// Flush any buffered, not-yet-newline-terminated trailing line once the
+		// step has finished, so the final line of the step's output is not lost
+		// when it is not newline-terminated.
+		defer common.FlushWriter(logWriter)
+
 		return executor(ctx)
 	}
 }

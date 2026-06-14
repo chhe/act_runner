@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"gitea.com/gitea/runner/act/common"
 	"gitea.com/gitea/runner/act/filecollector"
@@ -44,6 +45,13 @@ import (
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/spf13/pflag"
 )
+
+// drainGracePeriod bounds how long we wait for an output-copy goroutine to
+// finish draining a container's output before returning, so that neither a
+// cancellation (waitForCommand) nor a normal container exit (wait) truncates
+// the tail of the log. It is a safety bound: in the common case the stream
+// reaches EOF and the goroutine returns well before this elapses.
+const drainGracePeriod = 2 * time.Second
 
 // NewContainer creates a reference to a container
 func NewContainer(input *NewContainerInput) ExecutionsEnvironment {
@@ -229,6 +237,10 @@ type containerReference struct {
 	input *NewContainerInput
 	UID   int
 	GID   int
+	// attachDone is closed by the attach() streaming goroutine once it has
+	// drained and flushed the container's output. wait() blocks on it so the
+	// tail of the log lands before the step proceeds.
+	attachDone chan struct{}
 	LinuxContainerEnvironmentExtensions
 }
 
@@ -730,7 +742,9 @@ func (cr *containerReference) tryReadGID() common.Executor {
 func (cr *containerReference) waitForCommand(ctx context.Context, isTerminal bool, resp client.HijackedResponse, _ client.ExecCreateResult, _, _ string) error {
 	logger := common.Logger(ctx)
 
-	cmdResponse := make(chan error)
+	// Buffered so the copy goroutine never blocks on send if the grace-period
+	// drain below times out and no one is left to receive.
+	cmdResponse := make(chan error, 1)
 
 	go func() {
 		var outWriter io.Writer
@@ -749,6 +763,11 @@ func (cr *containerReference) waitForCommand(ctx context.Context, isTerminal boo
 		} else {
 			_, err = io.Copy(outWriter, resp.Reader)
 		}
+		// Flush any buffered, not-yet-newline-terminated trailing line so the
+		// final line of a command's output is not lost (e.g. an error message
+		// printed without a trailing newline before the process exits).
+		common.FlushWriter(outWriter)
+		common.FlushWriter(errWriter)
 		cmdResponse <- err
 	}()
 
@@ -758,6 +777,16 @@ func (cr *containerReference) waitForCommand(ctx context.Context, isTerminal boo
 		_, err := resp.Conn.Write([]byte{3})
 		if err != nil {
 			logger.Warnf("Failed to send CTRL+C: %+s", err)
+		}
+
+		// Give the copy goroutine a brief grace period to drain output already
+		// produced by the command before we return, so cancellation does not
+		// truncate the tail of the log. The goroutine exits once the hijacked
+		// stream is closed by resp.Close() in the caller's defer.
+		select {
+		case <-cmdResponse:
+		case <-time.After(drainGracePeriod):
+			logger.Warn("Timed out draining command output after cancellation")
 		}
 
 		// we return the context canceled error to prevent other steps
@@ -945,14 +974,23 @@ func (cr *containerReference) attach() common.Executor {
 		if errWriter == nil {
 			errWriter = os.Stderr
 		}
+		done := make(chan struct{})
+		cr.attachDone = done
 		go func() {
+			defer close(done)
+			var copyErr error
 			if !isTerminal || os.Getenv("NORAW") != "" {
-				_, err = stdcopy.StdCopy(outWriter, errWriter, out.Reader)
+				_, copyErr = stdcopy.StdCopy(outWriter, errWriter, out.Reader)
 			} else {
-				_, err = io.Copy(outWriter, out.Reader)
+				_, copyErr = io.Copy(outWriter, out.Reader)
 			}
-			if err != nil {
-				common.Logger(ctx).Error(err)
+			// Flush any buffered, not-yet-newline-terminated trailing line once
+			// the stream reaches EOF, so the final line of the container's
+			// output is not lost when it is not newline-terminated.
+			common.FlushWriter(outWriter)
+			common.FlushWriter(errWriter)
+			if copyErr != nil {
+				common.Logger(ctx).Error(copyErr)
 			}
 		}()
 		return nil
@@ -990,6 +1028,18 @@ func (cr *containerReference) wait() common.Executor {
 		}
 
 		logger.Debugf("Return status: %v", statusCode)
+
+		// The container has exited; wait for the attach() streaming goroutine to
+		// finish draining and flushing its output before returning, so the tail
+		// of the log is not lost. Bounded so a stuck stream cannot hang the step.
+		if cr.attachDone != nil {
+			select {
+			case <-cr.attachDone:
+			case <-time.After(drainGracePeriod):
+				logger.Warn("Timed out draining container output")
+			}
+			cr.attachDone = nil
+		}
 
 		if statusCode == 0 {
 			return nil

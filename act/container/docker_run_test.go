@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"net"
@@ -20,6 +21,7 @@ import (
 	"gitea.com/gitea/runner/act/common"
 
 	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	mobyclient "github.com/moby/moby/client"
 	"github.com/sirupsen/logrus/hooks/test"
@@ -87,6 +89,11 @@ func (m *mockDockerClient) ExecAttach(ctx context.Context, id string, opts mobyc
 func (m *mockDockerClient) ExecInspect(ctx context.Context, execID string, opts mobyclient.ExecInspectOptions) (mobyclient.ExecInspectResult, error) {
 	args := m.Called(ctx, execID, opts)
 	return args.Get(0).(mobyclient.ExecInspectResult), args.Error(1)
+}
+
+func (m *mockDockerClient) ContainerAttach(ctx context.Context, containerID string, opts mobyclient.ContainerAttachOptions) (mobyclient.ContainerAttachResult, error) {
+	args := m.Called(ctx, containerID, opts)
+	return args.Get(0).(mobyclient.ContainerAttachResult), args.Error(1)
 }
 
 func (m *mockDockerClient) ContainerWait(ctx context.Context, containerID string, opts mobyclient.ContainerWaitOptions) mobyclient.ContainerWaitResult {
@@ -203,6 +210,71 @@ func TestDockerExecFailure(t *testing.T) {
 	assert.Equal(t, "Process completed with exit code 1.", err.Error())
 
 	conn.AssertExpectations(t)
+	client.AssertExpectations(t)
+}
+
+// stdcopyFrame wraps payload in a single Docker multiplexed-stream frame, the
+// format StdCopy expects: an 8-byte header (stream type + 4-byte big-endian
+// length) followed by the payload.
+func stdcopyFrame(stream stdcopy.StdType, payload string) []byte {
+	b := make([]byte, 8+len(payload))
+	b[0] = byte(stream)
+	binary.BigEndian.PutUint32(b[4:8], uint32(len(payload)))
+	copy(b[8:], payload)
+	return b
+}
+
+// TestDockerAttachFlushesTrailingLine verifies that wait() blocks until the
+// attach() streaming goroutine has drained and flushed the container's output,
+// so a final line without a trailing newline is not lost.
+func TestDockerAttachFlushesTrailingLine(t *testing.T) {
+	ctx := context.Background()
+
+	framed := bytes.NewBuffer(stdcopyFrame(stdcopy.Stdout, "line one\nlast line without newline"))
+
+	var lines []string
+	logWriter := common.NewLineWriter(func(s string) bool {
+		lines = append(lines, s)
+		return true
+	})
+
+	client := &mockDockerClient{}
+	client.On("ContainerAttach", ctx, "123", mock.AnythingOfType("client.ContainerAttachOptions")).
+		Return(mobyclient.ContainerAttachResult{
+			HijackedResponse: mobyclient.HijackedResponse{
+				Conn:   &mockConn{},
+				Reader: bufio.NewReader(framed),
+			},
+		}, nil)
+
+	statusCh := make(chan container.WaitResponse, 1)
+	statusCh <- container.WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+	client.On("ContainerWait", ctx, "123", mobyclient.ContainerWaitOptions{Condition: container.WaitConditionNotRunning}).
+		Return(mobyclient.ContainerWaitResult{
+			Result: (<-chan container.WaitResponse)(statusCh),
+			Error:  (<-chan error)(errCh),
+		})
+
+	cr := &containerReference{
+		id:  "123",
+		cli: client,
+		input: &NewContainerInput{
+			Image:  "image",
+			Stdout: logWriter,
+			Stderr: logWriter,
+		},
+	}
+
+	require.NoError(t, cr.attach()(ctx))
+	require.NoError(t, cr.wait()(ctx))
+
+	// wait() must have blocked until the goroutine drained AND flushed; the
+	// trailing, non-newline-terminated line must therefore be present. Reading
+	// lines here is race-free because wait() synchronizes on attachDone, which
+	// the goroutine closes after the final append.
+	assert.Equal(t, []string{"line one\n", "last line without newline"}, lines)
+
 	client.AssertExpectations(t)
 }
 

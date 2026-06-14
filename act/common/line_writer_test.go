@@ -5,6 +5,7 @@
 package common
 
 import (
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -38,4 +39,34 @@ func TestLineWriter(t *testing.T) {
 	assert.Equal("extra line\n", lines[1])
 	assert.Equal(" and another\n", lines[2])
 	assert.Equal("last line\n", lines[3])
+}
+
+func TestLineWriterFlush(t *testing.T) {
+	lines := make([]string, 0)
+	lineHandler := func(s string) bool {
+		lines = append(lines, s)
+		return true
+	}
+
+	lineWriter := NewLineWriter(lineHandler)
+
+	assert := assert.New(t)
+	_, err := lineWriter.Write([]byte("complete line\npartial line without newline"))
+	assert.NoError(err) //nolint:testifylint // pre-existing pattern from nektos/act
+
+	// Only the newline-terminated line is emitted before flushing.
+	assert.Equal([]string{"complete line\n"}, lines)
+
+	// Flushing emits the buffered, not-yet-terminated trailing line.
+	FlushWriter(lineWriter)
+	assert.Equal([]string{"complete line\n", "partial line without newline"}, lines)
+
+	// Flushing again is a no-op: nothing is buffered.
+	FlushWriter(lineWriter)
+	assert.Len(lines, 2)
+}
+
+func TestFlushWriterIgnoresNonFlusher(t *testing.T) {
+	// FlushWriter must be a safe no-op for writers that do not buffer lines.
+	assert.NotPanics(t, func() { FlushWriter(io.Discard) })
 }

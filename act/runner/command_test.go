@@ -28,6 +28,29 @@ func TestSetEnv(t *testing.T) {
 	a.Equal("valz", rc.Env["x"])
 }
 
+func TestStopCommandsKeepsSuppressedLinesInLog(t *testing.T) {
+	a := assert.New(t)
+	ctx := context.Background()
+	rc := new(RunContext)
+	handler := rc.commandHandler(ctx)
+
+	// Stop command processing until the matching end token is seen.
+	a.True(handler("::stop-commands::my-end-token\n"))
+
+	// A command-shaped line while stopped must not be executed (env unchanged),
+	// but must still return true so it reaches the raw_output log handler and is
+	// not dropped from the step log.
+	a.True(handler("::set-env name=x::valz\n"))
+	a.NotContains(rc.Env, "x")
+
+	// The matching end token resumes command processing.
+	a.True(handler("::my-end-token::\n"))
+
+	// Commands are processed again after resuming.
+	a.True(handler("::set-env name=y::valy\n"))
+	a.Equal("valy", rc.Env["y"])
+}
+
 func TestSetOutput(t *testing.T) {
 	a := assert.New(t)
 	ctx := context.Background()

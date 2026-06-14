@@ -48,8 +48,11 @@ func (rc *RunContext) commandHandler(ctx context.Context) common.LineHandler {
 		if resumeCommand != "" && command != resumeCommand {
 			// There should not be any emojis in the log output for Gitea.
 			// The code in the switch statement is the same.
+			// Return true (not false) so the line still reaches the raw_output
+			// log handler; otherwise everything between ::stop-commands:: and
+			// its end token is silently dropped from the step log.
 			logger.Infof("%s", line)
-			return false
+			return true
 		}
 		arg = UnescapeCommandData(arg)
 		kvPairs = unescapeKvPairs(kvPairs)
