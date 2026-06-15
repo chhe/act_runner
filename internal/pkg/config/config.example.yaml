@@ -85,29 +85,30 @@ runner:
   allocate_pty: false
 
 cache:
-  # Enable cache server to use actions/cache.
+  # Enable the built-in cache server (used by actions/cache and similar actions).
   enabled: true
-  # The directory to store the cache data.
-  # If it's empty, the cache data will be stored in $HOME/.cache/actcache.
+  # Directory where cache blobs are stored on disk. Default: $HOME/.cache/actcache
+  # Ignored when external_server is set.
   dir: ""
-  # The host of the cache server.
-  # It's not for the address to listen, but the address to connect from job containers.
-  # So 0.0.0.0 is a bad choice, leave it empty to detect automatically.
+  # Outbound IP or hostname that job containers use to reach this runner's cache server.
+  # Leave empty to detect automatically. 0.0.0.0 is not valid here.
+  # Ignored when external_server is set.
   host: ""
-  # The port of the cache server.
-  # 0 means to use a random available port.
+  # Port for the built-in cache server. 0 picks a random free port.
+  # Ignored when external_server is set.
   port: 0
-  # The external cache server URL. Valid only when enable is true.
-  # If it's specified, runner will use this URL as the ACTIONS_CACHE_URL rather than start a server by itself.
-  # The URL should generally end with "/".
-  # Requires external_secret below to be set to the same value on both this runner and the cache-server.
+  # URL of a shared `gitea-runner cache-server` to use instead of starting a local one.
+  # Set on every runner that should share a cache pool. Must end with "/".
+  # Example: "http://cache-host:8088/"
+  # Requires external_secret (below) to match the value on the cache-server.
   external_server: ""
-  # Shared secret between this runner and the external `gitea-runner cache-server`. Required when external_server
-  # (or `gitea-runner cache-server`) is in use: the runner pre-registers each job's ACTIONS_RUNTIME_TOKEN with the
-  # cache-server, and the cache-server enforces bearer auth + per-repo cache isolation.
+  # Shared secret between this runner and the external cache-server.
+  # Required when external_server is set. Must be identical on every runner and the cache-server.
+  # Generate with: openssl rand -hex 32
   external_secret: ""
-  # When true, reuse a cached action instead of fetching from the remote on every job. Note: a moved tag
-  # (e.g. a re-tagged "v6") or an updated branch stays at the cached commit until its cache entry is removed.
+  # When true, reuse a cached action instead of fetching from the remote on every job.
+  # A moved tag (e.g. a re-tagged "v6") or an updated branch stays at the cached commit
+  # until its cache entry expires or is manually removed.
   offline_mode: false
 
 container:

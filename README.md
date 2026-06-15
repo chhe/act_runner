@@ -160,9 +160,42 @@ Prefer a YAML file for all settings.
 
 If `runner.labels` is set in the YAML file, those labels are used during `register` and the `--labels` CLI flag is ignored.
 
-#### External cache (`actions/cache`)
+#### Caching (`actions/cache`)
 
-If `cache.external_server` is set, you must set `cache.external_secret` to the same value on this runner and on the standalone cache server. Run the server with `gitea-runner cache-server` using a config that defines `cache.external_secret` (and matching `cache.dir` / host / port as needed). Flags `--dir`, `--host`, and `--port` on `cache-server` override the file.
+Each runner starts its own cache server automatically. Cache entries are local to that runner — runners do not share a cache by default.
+
+**Shared cache across multiple runners**
+
+Run one dedicated `gitea-runner cache-server` that all runners point at.
+
+1. Create a config file for the cache server host:
+
+   ```yaml
+   cache:
+     dir: /data/actcache
+     port: 8088
+     external_secret: "replace-with-a-strong-random-secret"
+   ```
+
+2. Start the server:
+
+   ```bash
+   gitea-runner -c cache-server-config.yaml cache-server
+   ```
+
+3. On every runner:
+
+   ```yaml
+   cache:
+     external_server: "http://<cache-server-host>:8088/"
+     external_secret: "replace-with-a-strong-random-secret"  # must match the server
+   ```
+
+Alternatively, mount the same NFS/CIFS share on every runner and point `cache.dir` at it — simpler, but with weaker isolation between repositories.
+
+**S3 / MinIO** — mount object storage as a FUSE filesystem (e.g. [s3fs](https://github.com/s3fs-fuse/s3fs-fuse) or [goofys](https://github.com/kahing/goofys)) and set `cache.dir` to the mount point.
+
+Flags `--dir`, `--host`, and `--port` on `cache-server` override the corresponding `cache.*` YAML keys; all other settings, including `external_secret`, require the config file.
 
 #### Official Docker image
 
