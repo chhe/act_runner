@@ -116,6 +116,13 @@ container:
   # If it's empty, runner will create a network automatically.
   # Deprecated: `network_mode` is still accepted for old configs; use `network` instead.
   network: ""
+  # network_create_options only apply when `network` is left empty and the runner
+  # auto-creates a per-job network that does not already exist. They have no effect
+  # when a custom `network` name is set, because that network is used as-is and never
+  # created by the runner. Omit the entire block to use Docker's defaults.
+  network_create_options:
+    enable_ipv4: true  # Omit to use Docker's default (IPv4 enabled). Set false to disable IPv4.
+    enable_ipv6: false # Omit to use Docker's default (IPv6 disabled). Enabling it requires dockerd started with --ipv6.
   # Whether to use privileged mode or not when launching task containers (privileged mode is required for Docker-in-Docker).
   privileged: false
   # Any other options to be used when the container is started (e.g., --add-host=my.gitea.url:host-gateway).

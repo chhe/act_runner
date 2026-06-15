@@ -58,18 +58,24 @@ type Cache struct {
 
 // Container represents the configuration for the container.
 type Container struct {
-	Network       string        `yaml:"network"`        // Network specifies the network for the container.
-	NetworkMode   string        `yaml:"network_mode"`   // Deprecated: use Network instead. Could be removed after Gitea 1.20
-	Privileged    bool          `yaml:"privileged"`     // Privileged indicates whether the container runs in privileged mode.
-	Options       string        `yaml:"options"`        // Options specifies additional options for the container.
-	WorkdirParent string        `yaml:"workdir_parent"` // WorkdirParent specifies the parent directory for the container's working directory.
-	ValidVolumes  []string      `yaml:"valid_volumes"`  // ValidVolumes specifies the volumes (including bind mounts) can be mounted to containers.
-	DockerHost    string        `yaml:"docker_host"`    // DockerHost specifies the Docker host. It overrides the value specified in environment variable DOCKER_HOST.
-	ForcePull     bool          `yaml:"force_pull"`     // Pull docker image(s) even if already present
-	ForceRebuild  bool          `yaml:"force_rebuild"`  // Rebuild docker image(s) even if already present
-	RequireDocker bool          `yaml:"require_docker"` // Always require a reachable docker daemon, even if not required by runner
-	DockerTimeout time.Duration `yaml:"docker_timeout"` // Timeout to wait for the docker daemon to be reachable, if docker is required by require_docker or runner
-	BindWorkdir   bool          `yaml:"bind_workdir"`   // BindWorkdir binds the workspace to the host filesystem instead of using Docker volumes. Required for DinD when jobs use docker compose with bind mounts.
+	Network              string                        `yaml:"network"`                // Network specifies the network for the container.
+	NetworkCreateOptions ContainerNetworkCreateOptions `yaml:"network_create_options"` // Add options when the network need to be created by the runner
+	NetworkMode          string                        `yaml:"network_mode"`           // Deprecated: use Network instead. Could be removed after Gitea 1.20
+	Privileged           bool                          `yaml:"privileged"`             // Privileged indicates whether the container runs in privileged mode.
+	Options              string                        `yaml:"options"`                // Options specifies additional options for the container.
+	WorkdirParent        string                        `yaml:"workdir_parent"`         // WorkdirParent specifies the parent directory for the container's working directory.
+	ValidVolumes         []string                      `yaml:"valid_volumes"`          // ValidVolumes specifies the volumes (including bind mounts) can be mounted to containers.
+	DockerHost           string                        `yaml:"docker_host"`            // DockerHost specifies the Docker host. It overrides the value specified in environment variable DOCKER_HOST.
+	ForcePull            bool                          `yaml:"force_pull"`             // Pull docker image(s) even if already present
+	ForceRebuild         bool                          `yaml:"force_rebuild"`          // Rebuild docker image(s) even if already present
+	RequireDocker        bool                          `yaml:"require_docker"`         // Always require a reachable docker daemon, even if not required by runner
+	DockerTimeout        time.Duration                 `yaml:"docker_timeout"`         // Timeout to wait for the docker daemon to be reachable, if docker is required by require_docker or runner
+	BindWorkdir          bool                          `yaml:"bind_workdir"`           // BindWorkdir binds the workspace to the host filesystem instead of using Docker volumes. Required for DinD when jobs use docker compose with bind mounts.
+}
+
+type ContainerNetworkCreateOptions struct {
+	EnableIPv4 *bool `yaml:"enable_ipv4"` // Enable or disable IPv4 for the network (true for docker by default)
+	EnableIPv6 *bool `yaml:"enable_ipv6"` // Enable or disable IPv6 for the network (false for docker by default)
 }
 
 // Host represents the configuration for the host.

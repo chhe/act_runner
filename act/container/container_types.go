@@ -84,6 +84,12 @@ type NewDockerBuildExecutorInput struct {
 	Platform     string
 }
 
+// NewDockerNetworkCreateExecutorInput the input for the NewDockerNetworkCreateExecutor function
+type NewDockerNetworkCreateExecutorInput struct {
+	EnableIPv4 *bool
+	EnableIPv6 *bool
+}
+
 // NewDockerPullExecutorInput the input for the NewDockerPullExecutor function
 type NewDockerPullExecutorInput struct {
 	Image     string

@@ -117,3 +117,50 @@ func TestLoadDefault_MalformedYAMLReturnsParseError(t *testing.T) {
 	assert.Contains(t, err.Error(), "parse config file")
 	assert.NotContains(t, err.Error(), "defaults metadata")
 }
+
+func TestContainerNetworkCreateOptions(t *testing.T) {
+	// Verify that the enable_ipv4/enable_ipv6 YAML keys unmarshal into the *bool fields,
+	// distinguishing an explicit true/false from an omitted key (nil). A nil here is
+	// forwarded as-is to Docker, which applies its own default.
+	loadOptions := func(t *testing.T, yaml string) ContainerNetworkCreateOptions {
+		t.Helper()
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(yaml), 0o600))
+
+		cfg, err := LoadDefault(path)
+		require.NoError(t, err)
+		return cfg.Container.NetworkCreateOptions
+	}
+
+	t.Run("enable_ipv6 true unmarshals to non-nil true", func(t *testing.T) {
+		opts := loadOptions(t, "container:\n  network_create_options:\n    enable_ipv6: true\n")
+		require.NotNil(t, opts.EnableIPv6)
+		assert.True(t, *opts.EnableIPv6)
+	})
+
+	t.Run("enable_ipv6 false unmarshals to non-nil false", func(t *testing.T) {
+		opts := loadOptions(t, "container:\n  network_create_options:\n    enable_ipv6: false\n")
+		require.NotNil(t, opts.EnableIPv6)
+		assert.False(t, *opts.EnableIPv6)
+	})
+
+	t.Run("enable_ipv4 false unmarshals to non-nil false", func(t *testing.T) {
+		opts := loadOptions(t, "container:\n  network_create_options:\n    enable_ipv4: false\n")
+		require.NotNil(t, opts.EnableIPv4)
+		assert.False(t, *opts.EnableIPv4)
+	})
+
+	t.Run("omitted keys stay nil", func(t *testing.T) {
+		opts := loadOptions(t, "container:\n  network_create_options:\n    enable_ipv4: true\n")
+		require.NotNil(t, opts.EnableIPv4)
+		assert.True(t, *opts.EnableIPv4)
+		assert.Nil(t, opts.EnableIPv6, "an omitted enable_ipv6 must remain nil so Docker's default applies")
+	})
+
+	t.Run("omitted block leaves both nil", func(t *testing.T) {
+		opts := loadOptions(t, "container:\n  network: \"\"\n")
+		assert.Nil(t, opts.EnableIPv4)
+		assert.Nil(t, opts.EnableIPv6)
+	})
+}
