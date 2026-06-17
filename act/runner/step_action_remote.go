@@ -312,7 +312,7 @@ func (ra *remoteAction) IsCheckout() bool {
 
 func newRemoteAction(action string) *remoteAction {
 	// support http(s)://host/owner/repo@v3
-	for _, schema := range []string{"https://", "http://"} {
+	for _, schema := range []string{"https://", "http://", "ssh://"} {
 		if after, ok := strings.CutPrefix(action, schema); ok {
 			splits := strings.SplitN(after, "/", 2)
 			if len(splits) != 2 {

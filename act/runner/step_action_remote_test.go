@@ -778,6 +778,32 @@ func Test_newRemoteAction(t *testing.T) {
 			},
 			wantCloneURL: "http://gitea.com/actions/aws",
 		},
+		{
+			action: "ssh://git@gitea.com/actions/heroku@main", // it's invalid for GitHub, but gitea supports it
+			want: &remoteAction{
+				URL:  "ssh://git@gitea.com",
+				Org:  "actions",
+				Repo: "heroku",
+				Path: "",
+				Ref:  "main",
+			},
+			wantCloneURL: "ssh://git@gitea.com/actions/heroku",
+		},
+		{
+			action: "ssh://git@gitea.com/actions/aws/ec2@main", // the ssh user is kept as part of the host segment
+			want: &remoteAction{
+				URL:  "ssh://git@gitea.com",
+				Org:  "actions",
+				Repo: "aws",
+				Path: "ec2",
+				Ref:  "main",
+			},
+			wantCloneURL: "ssh://git@gitea.com/actions/aws",
+		},
+		{
+			action: "ssh://gitea.com/onlyonesegment@main", // missing org/repo after the host
+			want:   nil,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.action, func(t *testing.T) {
