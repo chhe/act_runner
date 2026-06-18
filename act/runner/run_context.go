@@ -189,6 +189,9 @@ func (rc *RunContext) GetBindsAndMounts() ([]string, map[string]string) {
 	if job := rc.Run.Job(); job != nil {
 		if container := job.Container(); container != nil {
 			for _, v := range container.Volumes {
+				if rc.ExprEval != nil {
+					v = rc.ExprEval.Interpolate(context.Background(), v)
+				}
 				if !strings.Contains(v, ":") || filepath.IsAbs(v) {
 					// Bind anonymous volume or host file.
 					binds = append(binds, v)

@@ -276,6 +276,37 @@ func TestRunContext_GetBindsAndMounts(t *testing.T) {
 			{"MountExistingVolume", []string{"volume-id:/volume"}, "", map[string]string{"volume-id": "/volume"}},
 		}
 
+		t.Run("InterpolatedContainerVolumes", func(t *testing.T) {
+			job := &model.Job{}
+			err := job.RawContainer.Encode(map[string][]string{
+				"volumes": {"${{ secrets.MAME }}:/root/.mame/roms:ro"},
+			})
+			require.NoError(t, err)
+
+			rc := &RunContext{
+				Name: "TestRCName",
+				Run: &model.Run{
+					Workflow: &model.Workflow{
+						Name: "TestWorkflowName",
+					},
+				},
+				Config: &Config{
+					BindWorkdir: false,
+					Secrets: map[string]string{
+						"MAME": "/host/mame/roms",
+					},
+				},
+			}
+			rc.Run.JobID = "job1"
+			rc.Run.Workflow.Jobs = map[string]*model.Job{"job1": job}
+			rc.ExprEval = rc.NewExpressionEvaluator(context.Background())
+
+			gotbind, gotmount := rc.GetBindsAndMounts()
+			assert.Contains(t, gotbind, "/host/mame/roms:/root/.mame/roms:ro")
+			assert.NotContains(t, gotbind, "${{ secrets.MAME }}")
+			assert.NotContains(t, gotmount, "${{ secrets.MAME }}")
+		})
+
 		for _, testcase := range tests {
 			t.Run(testcase.name, func(t *testing.T) {
 				job := &model.Job{}
