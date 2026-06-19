@@ -3,7 +3,7 @@
 
 //go:build !windows && !plan9
 
-package container
+package process
 
 import (
 	"fmt"
@@ -47,11 +47,12 @@ func processAlive(pid int) bool {
 	return true
 }
 
-// TestProcessKillerKillsTree verifies that a process group captured by the
-// killer is terminated together with a child the step spawns afterwards. This
-// mirrors a step that launches a child which spawns further processes, where
-// cancelling the job must take down the whole tree, not just the direct child.
-func TestProcessKillerKillsTree(t *testing.T) {
+// TestKillerKillsTree verifies that a process group captured by the killer is
+// terminated together with a child the process spawns afterwards. This mirrors
+// a step or post-task script that launches a child which spawns further
+// processes, where cancelling must take down the whole tree, not just the
+// direct child.
+func TestKillerKillsTree(t *testing.T) {
 	dir := t.TempDir()
 	pidFile := filepath.Join(dir, "child.pid")
 
@@ -60,8 +61,8 @@ func TestProcessKillerKillsTree(t *testing.T) {
 	// child stays in the parent's process group, so the group kill must reach it.
 	script := fmt.Sprintf(`sleep 600 & echo $! > %q; sleep 600`, pidFile)
 	cmd := exec.Command("/bin/sh", "-c", script)
-	// Launch as its own process-group leader, exactly like a real step does (see
-	// getSysProcAttr), so the killer's PGID == the process PID.
+	// Launch as its own process-group leader, exactly like a real process does
+	// (see SysProcAttr), so the killer's PGID == the process PID.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	require.NoError(t, cmd.Start())
 	t.Cleanup(func() {
@@ -69,7 +70,7 @@ func TestProcessKillerKillsTree(t *testing.T) {
 		_ = cmd.Wait()
 	})
 
-	killer, err := newProcessKiller(cmd.Process)
+	killer, err := NewKiller(cmd.Process)
 	require.NoError(t, err)
 	defer killer.Close()
 

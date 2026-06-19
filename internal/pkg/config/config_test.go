@@ -107,6 +107,34 @@ runner:
 // TestLoadDefault_MalformedYAMLReturnsParseError pins the error surfaced for
 // invalid YAML to the canonical "parse config file" message rather than the
 // "for defaults metadata" variant — i.e. the main yaml.Unmarshal runs first.
+func TestLoadDefault_LoadsPostTaskScript(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+runner:
+  post_task_script: /usr/local/bin/post-task.sh
+  post_task_script_timeout: 2m
+`), 0o600))
+
+	cfg, err := LoadDefault(path)
+	require.NoError(t, err)
+	assert.Equal(t, "/usr/local/bin/post-task.sh", cfg.Runner.PostTaskScript)
+	assert.Equal(t, 2*time.Minute, cfg.Runner.PostTaskScriptTimeout)
+}
+
+func TestLoadDefault_DefaultsPostTaskScriptTimeout(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+runner:
+  post_task_script: /usr/local/bin/post-task.sh
+`), 0o600))
+
+	cfg, err := LoadDefault(path)
+	require.NoError(t, err)
+	assert.Equal(t, 5*time.Minute, cfg.Runner.PostTaskScriptTimeout)
+}
+
 func TestLoadDefault_MalformedYAMLReturnsParseError(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")

@@ -209,6 +209,16 @@ When `container.bind_workdir` is enabled, stale task workspace directories can b
 - only purely numeric subdirectories under `container.workdir_parent` are treated as task workspaces and may be removed
 - cleanup assumes `container.workdir_parent` is not shared across multiple runners
 
+#### Post-task script (`runner.post_task_script`)
+
+Optional host script that runs **after** each task's built-in cleanup (post-steps, container teardown, bind-workdir removal). Use it for extra machine housekeeping — Docker pruning, disk cleanup, and similar.
+
+**While the script runs, the runner stops task heartbeats and stays offline from Gitea's perspective until the script exits (or hits `runner.post_task_script_timeout`, default `5m`).** A script that blocks without exiting keeps the runner from taking new work for up to that timeout. Script output goes to the runner log, not the job log; a non-zero exit is warned but does not change the job result.
+
+On Windows, use `.exe`, `.bat`, or `.cmd` paths; **PowerShell (`.ps1`) is not supported yet** as the configured path — wrap commands in a `.cmd` file instead.
+
+See **[docs/post-task-script.md](docs/post-task-script.md)** for lifecycle details, environment variables, timeout interaction, and platform notes.
+
 ### Example Deployments
 
 Check out the [examples](examples) directory for sample deployment types.

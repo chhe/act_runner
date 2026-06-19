@@ -1,7 +1,7 @@
 // Copyright 2026 The Gitea Authors. All rights reserved.
 // SPDX-License-Identifier: MIT
 
-package container
+package process
 
 import (
 	"fmt"
@@ -32,11 +32,11 @@ func processAlive(pid int) bool {
 	return code == stillActive
 }
 
-// TestProcessKillerKillsTree verifies that a process assigned to the Job Object
-// is terminated together with a child it spawns afterwards. This mirrors a step
-// that launches a child which spawns further processes, where cancelling the
-// job must take down the whole tree, not just the direct child.
-func TestProcessKillerKillsTree(t *testing.T) {
+// TestKillerKillsTree verifies that a process assigned to the Job Object is
+// terminated together with a child it spawns afterwards. This mirrors a step or
+// post-task script that launches a child which spawns further processes, where
+// cancelling must take down the whole tree, not just the direct child.
+func TestKillerKillsTree(t *testing.T) {
 	dir := t.TempDir()
 	pidFile := filepath.Join(dir, "child.pid")
 
@@ -50,7 +50,7 @@ func TestProcessKillerKillsTree(t *testing.T) {
 	require.NoError(t, cmd.Start())
 	t.Cleanup(func() { _ = cmd.Process.Kill() })
 
-	killer, err := newProcessKiller(cmd.Process)
+	killer, err := NewKiller(cmd.Process)
 	require.NoError(t, err)
 	defer killer.Close()
 

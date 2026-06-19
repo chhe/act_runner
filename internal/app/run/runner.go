@@ -475,6 +475,9 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 		}
 	}
 
+	reporter.StopHeartbeats()
+	r.runPostTaskScript(ctx, reporter, task, workdir)
+
 	return execErr
 }
 

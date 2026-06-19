@@ -921,3 +921,65 @@ func TestReporter_CloseReportsCancelledOnCanceledCtx(t *testing.T) {
 	assert.True(t, foundCancelled, "final log must contain a 'Cancelled' row")
 	assert.False(t, foundEarlyTermination, "final log must not contain 'Early termination' on the cancel path")
 }
+
+// TestReporter_StopHeartbeats verifies that StopHeartbeats ends periodic
+// UpdateTask heartbeats while Close() still flushes the final state.
+func TestReporter_StopHeartbeats(t *testing.T) {
+	var updateTaskCalls atomic.Int64
+
+	client := mocks.NewClient(t)
+	client.On("UpdateLog", mock.Anything, mock.Anything).Maybe().Return(
+		func(_ context.Context, req *connect_go.Request[runnerv1.UpdateLogRequest]) (*connect_go.Response[runnerv1.UpdateLogResponse], error) {
+			return connect_go.NewResponse(&runnerv1.UpdateLogResponse{
+				AckIndex: req.Msg.Index + int64(len(req.Msg.Rows)),
+			}), nil
+		},
+	)
+	client.On("UpdateTask", mock.Anything, mock.Anything).Return(
+		func(_ context.Context, _ *connect_go.Request[runnerv1.UpdateTaskRequest]) (*connect_go.Response[runnerv1.UpdateTaskResponse], error) {
+			updateTaskCalls.Add(1)
+			return connect_go.NewResponse(&runnerv1.UpdateTaskResponse{}), nil
+		},
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	taskCtx, err := structpb.NewStruct(map[string]any{})
+	require.NoError(t, err)
+
+	cfg, err := config.LoadDefault("")
+	require.NoError(t, err)
+	cfg.Runner.StateReportInterval = 20 * time.Millisecond
+	cfg.Runner.LogReportInterval = time.Hour
+
+	reporter := NewReporter(ctx, cancel, client, &runnerv1.Task{Context: taskCtx}, cfg)
+	reporter.ResetSteps(1)
+	reporter.RunDaemon()
+
+	reporter.stateMu.Lock()
+	reporter.stateChanged = true
+	reporter.state.Result = runnerv1.Result_RESULT_SUCCESS
+	reporter.state.StoppedAt = timestamppb.Now()
+	reporter.stateMu.Unlock()
+
+	require.Eventually(t, func() bool {
+		return updateTaskCalls.Load() >= 1
+	}, time.Second, 5*time.Millisecond, "daemon must send at least one UpdateTask before StopHeartbeats")
+
+	beforeStop := updateTaskCalls.Load()
+	reporter.StopHeartbeats()
+
+	select {
+	case <-reporter.daemon:
+	case <-time.After(time.Second):
+		t.Fatal("StopHeartbeats must stop the daemon loop")
+	}
+
+	time.Sleep(3 * cfg.Runner.StateReportInterval)
+	assert.Equal(t, beforeStop, updateTaskCalls.Load(),
+		"UpdateTask must not be called after StopHeartbeats")
+
+	require.NoError(t, reporter.Close(""))
+	assert.Greater(t, updateTaskCalls.Load(), beforeStop,
+		"Close() must still send a final UpdateTask after StopHeartbeats")
+}

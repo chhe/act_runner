@@ -83,6 +83,21 @@ runner:
   # terminal; tools like `docker build` emit redrawing progress frames into the captured log
   # when a TTY is present.
   allocate_pty: false
+  # Optional executable on the host, run once after each task's built-in cleanup
+  # (post-steps, container teardown, bind-workdir removal). Additive only.
+  #
+  # IMPORTANT: While this script runs the runner stops task heartbeats and stays
+  # offline from Gitea's perspective until the script exits. A script that never
+  # returns blocks new work until post_task_script_timeout kills it (default 5m).
+  # Keep scripts short; set post_task_script_timeout to a safe upper bound.
+  #
+  # Output -> runner process log (not the job log). Non-zero exit -> warning only.
+  # Windows: use .exe, .bat, or .cmd. PowerShell (.ps1) is not supported yet as
+  # the configured path; wrap PowerShell commands in a .cmd file instead.
+  # Full guide: docs/post-task-script.md
+  post_task_script: ''
+  # Hard limit on post_task_script runtime. Default if omitted: 5m.
+  post_task_script_timeout: 5m
 
 cache:
   # Enable the built-in cache server (used by actions/cache and similar actions).

@@ -23,6 +23,7 @@ import (
 	"gitea.com/gitea/runner/act/common"
 	"gitea.com/gitea/runner/act/filecollector"
 	"gitea.com/gitea/runner/act/lookpath"
+	"gitea.com/gitea/runner/internal/pkg/process"
 
 	"github.com/go-git/go-billy/v5/helper/polyfill"
 	"github.com/go-git/go-billy/v5/osfs"
@@ -261,7 +262,7 @@ func setupPty(cmd *exec.Cmd, cmdline string) (*os.File, *os.File, error) {
 	cmd.Stdin = tty
 	cmd.Stdout = tty
 	cmd.Stderr = tty
-	cmd.SysProcAttr = getSysProcAttr(cmdline, true)
+	cmd.SysProcAttr = process.SysProcAttr(cmdline, true)
 	return ppty, tty, nil
 }
 
@@ -321,30 +322,14 @@ func (e *HostEnvironment) exec(ctx context.Context, command []string, cmdline st
 	cmd.Env = envList
 	cmd.Stderr = e.StdOut
 	cmd.Dir = wd
-	cmd.SysProcAttr = getSysProcAttr(cmdline, false)
+	cmd.SysProcAttr = process.SysProcAttr(cmdline, false)
 
-	// A step often launches a process tree (a shell that starts a child which
-	// spawns further background or GUI processes). The default context
-	// cancellation only kills the direct child, leaving the rest of the tree
-	// running; and because the orphans inherit cmd's stdout/stderr pipe,
-	// cmd.Wait() would block forever, hanging the runner. Kill the whole tree on
-	// cancellation — via a Job Object on Windows and the process group on Unix
-	// (see processKiller) — and bound the wait so a leftover pipe writer can
-	// never hang Wait indefinitely.
-	var killer atomic.Pointer[processKiller]
-	cmd.Cancel = func() error {
-		if k := killer.Load(); k != nil {
-			return k.Kill()
-		}
-		if cmd.Process != nil {
-			return cmd.Process.Kill()
-		}
-		return nil
-	}
-	// Once the step process has exited, give its I/O pipes at most this long to
-	// drain before Wait force-closes them and returns (Go's WaitDelay). This
-	// also covers a step that backgrounds a process holding the pipe open.
-	cmd.WaitDelay = 10 * time.Second
+	// Kill the step's whole process tree on cancellation (a step often launches a
+	// shell that spawns further background or GUI children) and bound the post-exit
+	// I/O wait, so an orphan inheriting cmd's stdout/stderr pipe can never hang
+	// cmd.Wait() and the runner. See process.TreeKill. The PTY path below may
+	// override SysProcAttr, but never touches Cancel/WaitDelay.
+	treeKill := process.NewTreeKill(cmd)
 
 	var ppty *os.File
 	var tty *os.File
@@ -375,15 +360,9 @@ func (e *HostEnvironment) exec(ctx context.Context, command []string, cmdline st
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	// Capture the started process for tree-kill on cancellation: a Job Object on
-	// Windows (children spawned afterwards are auto-included) and the process
-	// group on Unix. On failure (e.g. Windows nested-job restrictions) we fall
-	// back to the default single-process kill; WaitDelay + end-of-job cleanup
-	// still apply.
-	if k, kerr := newProcessKiller(cmd.Process); kerr != nil {
+	if k, kerr := treeKill.Capture(cmd.Process); kerr != nil {
 		common.Logger(ctx).Warnf("process tree kill setup failed, falling back to single-process kill: %v", kerr)
 	} else {
-		killer.Store(k)
 		defer k.Close()
 	}
 	err = cmd.Wait()
