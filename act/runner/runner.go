@@ -250,7 +250,10 @@ func (runner *runnerImpl) NewPlanExecutor(plan *model.Plan) common.Executor {
 							return err
 						}
 
-						return executor(common.WithJobErrorContainer(WithJobLogger(ctx, rc.Run.JobID, jobName, rc.Config, &rc.Masks, matrix)))
+						jobCtx := common.WithJobErrorContainer(WithJobLogger(ctx, rc.Run.JobID, jobName, rc.Config, &rc.Masks, matrix))
+						jobCtx, cancelTimeout := applyJobTimeout(jobCtx, rc, job)
+						defer cancelTimeout()
+						return executor(jobCtx)
 					})
 				}
 				// Run all matrix combinations of this job, then drop its aggregation mutex: the
@@ -305,7 +308,7 @@ func handleFailure(plan *model.Plan) common.Executor {
 	return func(ctx context.Context) error {
 		for _, stage := range plan.Stages {
 			for _, run := range stage.Runs {
-				if run.Job().Result == "failure" {
+				if run.Job().Result == "failure" && !run.Job().ContinueOnError {
 					return fmt.Errorf("Job '%s' failed", run.String())
 				}
 			}

@@ -56,7 +56,7 @@ func (rc *RunContext) NewExpressionEvaluatorWithEnv(ctx context.Context, env map
 		for _, needs := range jobNeeds {
 			using[needs] = exprparser.Needs{
 				Outputs: jobs[needs].Outputs,
-				Result:  jobs[needs].Result,
+				Result:  jobs[needs].NeedsResult(),
 			}
 		}
 
@@ -127,7 +127,7 @@ func (rc *RunContext) NewStepExpressionEvaluator(ctx context.Context, step step)
 	for _, needs := range jobNeeds {
 		using[needs] = exprparser.Needs{
 			Outputs: jobs[needs].Outputs,
-			Result:  jobs[needs].Result,
+			Result:  jobs[needs].NeedsResult(),
 		}
 	}
 

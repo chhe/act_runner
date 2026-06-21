@@ -32,6 +32,32 @@ func TestStepCloneIsolatesMutableFields(t *testing.T) {
 	assert.Equal(t, "original", orig.With["arg"], "With map must not be shared with the clone")
 }
 
+// TestJobNeedsResult guards the continue-on-error semantics exposed to dependent
+// jobs through the `needs` context: a failed-but-tolerated job reports "success"
+// so it does not block dependents gated on the default `if: success()`, matching
+// GitHub. A firm failure and any non-failure result are reported verbatim.
+func TestJobNeedsResult(t *testing.T) {
+	cases := []struct {
+		name            string
+		result          string
+		continueOnError bool
+		want            string
+	}{
+		{"tolerated failure reports success", "failure", true, "success"},
+		{"firm failure reports failure", "failure", false, "failure"},
+		{"success is unchanged", "success", false, "success"},
+		{"success with continue-on-error is unchanged", "success", true, "success"},
+		{"empty result is unchanged", "", true, ""},
+		{"skipped is unchanged", "skipped", true, "skipped"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			j := &Job{Result: tc.result, ContinueOnError: tc.continueOnError}
+			assert.Equal(t, tc.want, j.NeedsResult())
+		})
+	}
+}
+
 func TestReadWorkflow_ScheduleEvent(t *testing.T) {
 	yaml := `
 name: local-action-docker-url
