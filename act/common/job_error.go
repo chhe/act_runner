@@ -24,7 +24,9 @@ func JobError(ctx context.Context) error {
 }
 
 func SetJobError(ctx context.Context, err error) {
-	ctx.Value(jobErrorContextKeyVal).(map[string]error)["error"] = err
+	if container, ok := ctx.Value(jobErrorContextKeyVal).(map[string]error); ok {
+		container["error"] = err
+	}
 }
 
 // WithJobErrorContainer adds a value to the context as a container for an error
