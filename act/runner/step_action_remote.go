@@ -121,6 +121,7 @@ func (sar *stepActionRemote) prepareActionExecutor() common.Executor {
 			Dir:         actionDir,
 			Token:       token,
 			OfflineMode: sar.RunContext.Config.ActionOfflineMode,
+			Depth:       sar.RunContext.Config.ActionCloneDepth,
 
 			InsecureSkipTLS: sar.cloneSkipTLS(), // For Gitea
 		})

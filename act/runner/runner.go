@@ -33,6 +33,7 @@ type Config struct {
 	Workdir                            string                                        // path to working directory
 	ActionCacheDir                     string                                        // path used for caching action contents
 	ActionOfflineMode                  bool                                          // when offline, use cached action contents
+	ActionCloneDepth                   int                                           // limit history when cloning an action repo; 0 clones every branch in full
 	BindWorkdir                        bool                                          // bind the workdir to the job container
 	EventName                          string                                        // name of event to run
 	EventPath                          string                                        // path to JSON file to use for event.json in containers

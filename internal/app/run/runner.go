@@ -396,6 +396,12 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 		maxLifetime = time.Until(deadline)
 	}
 
+	// shallow clones the requested ref at depth 1, otherwise 0 means a full clone
+	actionCloneDepth := 1
+	if r.cfg.Runner.ActionShallowClone != nil && !*r.cfg.Runner.ActionShallowClone {
+		actionCloneDepth = 0
+	}
+
 	workdirParent := strings.TrimLeft(r.cfg.Container.WorkdirParent, "/")
 	if r.cfg.Container.BindWorkdir {
 		// Append the task ID to isolate concurrent jobs from the same repo.
@@ -418,6 +424,7 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 		ActionCacheDir:    filepath.FromSlash(r.cfg.Host.WorkdirParent),
 		AllocatePTY:       r.cfg.Runner.AllocatePTY,
 		ActionOfflineMode: r.cfg.Cache.OfflineMode,
+		ActionCloneDepth:  actionCloneDepth,
 
 		ReuseContainers:      false,
 		ForcePull:            r.cfg.Container.ForcePull,

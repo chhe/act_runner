@@ -141,6 +141,7 @@ func cloneRemoteReusableWorkflow(rc *RunContext, cloneURL, ref, targetDirectory,
 			Dir:         targetDirectory,
 			Token:       token,
 			OfflineMode: rc.Config.ActionOfflineMode,
+			Depth:       rc.Config.ActionCloneDepth,
 		})(ctx)
 	}
 }
