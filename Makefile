@@ -38,12 +38,15 @@ endif
 ifeq ($(OS), Windows_NT)
 	GOFLAGS := -v -buildmode=exe
 	EXECUTABLE ?= $(EXECUTABLE).exe
+	GO_ENV_WINDOWS := set GOOS=windows&&
 else ifeq ($(OS), Windows)
 	GOFLAGS := -v -buildmode=exe
 	EXECUTABLE ?= $(EXECUTABLE).exe
+	GO_ENV_WINDOWS := set GOOS=windows&&
 else
 	GOFLAGS := -v
 	EXECUTABLE ?= $(EXECUTABLE)
+	GO_ENV_WINDOWS := GOOS=windows
 endif
 
 STORED_VERSION_FILE := VERSION
@@ -108,11 +111,16 @@ deps-tools: ## install tool dependencies
 	wait
 
 .PHONY: lint
-lint: lint-go ## lint everything
+lint: lint-go lint-go-windows ## lint everything
 
 .PHONY: lint-go
 lint-go: ## lint go files
 	$(GO) run $(GOLANGCI_LINT_PACKAGE) run
+
+.PHONY: lint-go-windows
+lint-go-windows: ## lint Windows go files
+	$(GO) install $(GOLANGCI_LINT_PACKAGE)
+	$(GO_ENV_WINDOWS) golangci-lint run
 
 .PHONY: lint-go-fix
 lint-go-fix: ## lint go files and fix issues
