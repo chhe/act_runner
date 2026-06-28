@@ -73,6 +73,39 @@ type RunContext struct {
 	// captured before execution so each matrix combo interpolates from the originals rather
 	// than from a sibling's already-resolved values written into the shared Job.Outputs.
 	outputTemplate map[string]string
+	// jobCancelled records that this job's run was cancelled (context.Canceled). It makes
+	// getJobContext report the "cancelled" status so cancelled()/always() evaluate the way
+	// GitHub Actions does, letting cleanup and always() steps run while normal steps skip.
+	jobCancelled bool
+	// jobFailed records failures outside normal main-step results, such as action pre-step
+	// failures. Those failures must still make success() false and failure() true for later
+	// main-step if evaluation.
+	jobFailed bool
+}
+
+// markCancelled flags the job as cancelled so subsequent step `if` evaluations and the
+// job status context observe the "cancelled" state.
+func (rc *RunContext) markCancelled() {
+	rc.jobCancelled = true
+}
+
+// markFailed flags the job as failed so subsequent step `if` evaluations observe
+// failure even when the error happened outside a main step result.
+func (rc *RunContext) markFailed() {
+	rc.jobFailed = true
+}
+
+// markInterrupted records the job's interruption status from a context error so later step `if` evaluations and the job result observe it,
+// keeping the timeout path symmetric with the cancel path:
+//   - context.Canceled (server cancel) marks the job cancelled, matching GitHub's "only always()/cancelled() run on cancel".
+//   - context.DeadlineExceeded (job timeout-minutes) marks the job failed, matching the "Timeout -> FAILURE" reporting semantics.
+func (rc *RunContext) markInterrupted(err error) {
+	switch {
+	case errors.Is(err, context.Canceled):
+		rc.markCancelled()
+	case errors.Is(err, context.DeadlineExceeded):
+		rc.markFailed()
+	}
 }
 
 func (rc *RunContext) AddMask(mask string) {
@@ -904,11 +937,20 @@ func trimToLen(s string, l int) string {
 
 func (rc *RunContext) getJobContext() *model.JobContext {
 	jobStatus := "success"
+	if rc.jobFailed {
+		jobStatus = "failure"
+	}
 	for _, stepStatus := range rc.StepResults {
 		if stepStatus.Conclusion == model.StepStatusFailure {
 			jobStatus = "failure"
 			break
 		}
+	}
+	// A cancelled run takes precedence over success/failure so cancelled() is true and
+	// success()/failure() are false, matching GitHub Actions: on cancellation only
+	// always() and cancelled() steps run.
+	if rc.jobCancelled {
+		jobStatus = "cancelled"
 	}
 	return &model.JobContext{
 		Status: jobStatus,
