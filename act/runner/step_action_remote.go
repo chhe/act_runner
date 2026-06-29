@@ -114,9 +114,18 @@ func (sar *stepActionRemote) prepareActionExecutor() common.Executor {
 
 		actionDir := fmt.Sprintf("%s/%s", sar.RunContext.ActionCacheDir(), sar.Step.UsesHash())
 		defaultActionURL := sar.RunContext.Config.DefaultActionURL()
-		token := getGitCloneToken(sar.getRunContext().Config, sar.remoteAction.CloneURL(defaultActionURL))
+		// For Gitea
+		// A composite RunContext nils Config.Secrets, so getGitCloneToken would yield an
+		// empty token and clone the action anonymously (401 against the authenticated
+		// instance). github.Token survives the composite config copy and matches the
+		// top-level token; keep the shouldCloneURLUseToken host gate to avoid leaking it.
+		cloneURL := sar.remoteAction.CloneURL(defaultActionURL)
+		token := ""
+		if shouldCloneURLUseToken(sar.RunContext.Config.GitHubInstance, cloneURL) {
+			token = github.Token
+		}
 		gitClone := stepActionRemoteNewCloneExecutor(git.NewGitCloneExecutorInput{
-			URL:         sar.remoteAction.CloneURL(defaultActionURL),
+			URL:         cloneURL,
 			Ref:         sar.remoteAction.Ref,
 			Dir:         actionDir,
 			Token:       token,
