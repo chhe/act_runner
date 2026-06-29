@@ -455,3 +455,50 @@ func TestExecAsDockerHoldsCloneLockForRemoteUncached(t *testing.T) {
 		t.Fatal("execAsDocker did not return after inner was released and ctx was canceled")
 	}
 }
+
+func TestDockerActionImageTag(t *testing.T) {
+	// Remote actions already carry a unique, ref-scoped actionName (the uses
+	// hash), so the tag must be left untouched for backwards compatibility.
+	assert.Equal(t,
+		"act-abc123-dockeraction:latest",
+		dockerActionImageTag("owner/repo", "abc123", false),
+	)
+
+	// Local actions keep a human-readable, repository-namespaced prefix and gain a short hash suffix that makes the tag unique per (repository, actionName).
+	// See https://gitea.com/gitea/runner/issues/1039.
+	assert.Equal(t,
+		"act-owner-repo-baca2daaa2fe-dockeraction:latest",
+		dockerActionImageTag("owner/repo", "./", true),
+	)
+	assert.Equal(t,
+		"act-owner-repo-sub-e847b61255a8-dockeraction:latest",
+		dockerActionImageTag("owner/repo", "./sub", true),
+	)
+
+	// Sanitizing every non-alphanumeric character to "-" is lossy, so distinct inputs can collapse to the same readable prefix.
+	// The hash suffix must keep such cases apart, otherwise an image built for one repository is reused for another.
+	collisions := [][2]struct {
+		repoName   string
+		actionName string
+	}{
+		// Two different repositories, both `uses: ./`: "a/b-c" and "a-b/c" both sanitize to "a-b-c".
+		{{"a/b-c", "./"}, {"a-b/c", "./"}},
+		// A repository's root action vs another repository's sub-path action:
+		// "owner/repo-a" + "./" and "owner/repo" + "./a" both sanitize to "owner-repo-a".
+		{{"owner/repo-a", "./"}, {"owner/repo", "./a"}},
+	}
+	for _, c := range collisions {
+		assert.NotEqual(t,
+			dockerActionImageTag(c[0].repoName, c[0].actionName, true),
+			dockerActionImageTag(c[1].repoName, c[1].actionName, true),
+			"local docker action tags must differ for %q/%q vs %q/%q",
+			c[0].repoName, c[0].actionName, c[1].repoName, c[1].actionName,
+		)
+	}
+
+	// Distinct local actions within the same repository keep distinct tags.
+	assert.NotEqual(t,
+		dockerActionImageTag("owner/repo", "./", true),
+		dockerActionImageTag("owner/repo", "./sub", true),
+	)
+}
