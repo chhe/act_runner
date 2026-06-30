@@ -443,10 +443,11 @@ func runExec(ctx context.Context, execArgs *executeArgs) func(cmd *cobra.Command
 			NoSkipCheckout:        execArgs.noSkipCheckout,
 			// PresetGitHubContext:   preset,
 			// EventJSON:             string(eventJSON),
-			ContainerNamePrefix:   "GITEA-ACTIONS-TASK-" + eventName,
-			ContainerMaxLifetime:  maxLifetime,
-			ContainerNetworkMode:  container.NetworkMode(execArgs.network),
-			DefaultActionInstance: execArgs.defaultActionsURL,
+			ContainerNamePrefix:               "GITEA-ACTIONS-TASK-" + eventName,
+			ContainerMaxLifetime:              maxLifetime,
+			ContainerNetworkMode:              container.NetworkMode(execArgs.network),
+			DefaultActionInstance:             execArgs.defaultActionsURL,
+			DefaultActionInstanceIsSelfHosted: execArgs.defaultActionsURL != "" && execArgs.defaultActionsURL != "https://github.com",
 			PlatformPicker: func(_ []string) string {
 				return execArgs.image
 			},

@@ -136,12 +136,30 @@ func TestGetGitCloneTokenWithSchemalessGiteaInstance(t *testing.T) {
 	require.Equal(t, "token-value", token)
 }
 
+func TestGetGitCloneTokenSelfHostedActionsDifferentHost(t *testing.T) {
+	// The runner registered with one hostname while DEFAULT_ACTIONS_URL=self resolves
+	// actions against AppURL on a different hostname for the same instance.
+	conf := &Config{
+		GitHubInstance:                    "gitea.local",
+		DefaultActionInstance:             "https://gitea.my-nas.lan",
+		DefaultActionInstanceIsSelfHosted: true,
+		Secrets: map[string]string{
+			"GITEA_TOKEN": "token-value",
+		},
+	}
+
+	token := getGitCloneToken(conf, "https://gitea.my-nas.lan/owner/action")
+
+	require.Equal(t, "token-value", token)
+}
+
 func TestShouldCloneURLUseToken(t *testing.T) {
 	tests := []struct {
-		name        string
-		instanceURL string
-		cloneURL    string
-		want        bool
+		name                  string
+		instanceURL           string
+		trustedActionInstance string
+		cloneURL              string
+		want                  bool
 	}{
 		{
 			name:        "same host with schemaless instance",
@@ -173,11 +191,37 @@ func TestShouldCloneURLUseToken(t *testing.T) {
 			cloneURL:    "://gitea.example.net/actions/tools",
 			want:        false,
 		},
+		{
+			// self-hosted DEFAULT_ACTIONS_URL on a different hostname than the
+			// registered instance: the token must still be attached.
+			name:                  "self-hosted action instance on different host",
+			instanceURL:           "gitea.local",
+			trustedActionInstance: "https://gitea.my-nas.lan",
+			cloneURL:              "https://gitea.my-nas.lan/owner/action",
+			want:                  true,
+		},
+		{
+			// embedded basic auth must still be rejected even when the host matches
+			// the trusted action instance.
+			name:                  "self-hosted action instance with embedded basic auth",
+			instanceURL:           "gitea.local",
+			trustedActionInstance: "https://gitea.my-nas.lan",
+			cloneURL:              "https://user:pass@gitea.my-nas.lan/owner/action",
+			want:                  false,
+		},
+		{
+			// github.com / mirror hosts are never trusted: trustedActionInstance is
+			// empty in github mode, so an off-instance clone URL gets no token.
+			name:        "github mode does not trust mirror host",
+			instanceURL: "gitea.local",
+			cloneURL:    "https://mirror.example.com/owner/action",
+			want:        false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, shouldCloneURLUseToken(tt.instanceURL, tt.cloneURL))
+			require.Equal(t, tt.want, shouldCloneURLUseToken(tt.instanceURL, tt.trustedActionInstance, tt.cloneURL))
 		})
 	}
 }

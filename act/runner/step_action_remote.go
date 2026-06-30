@@ -121,7 +121,7 @@ func (sar *stepActionRemote) prepareActionExecutor() common.Executor {
 		// top-level token; keep the shouldCloneURLUseToken host gate to avoid leaking it.
 		cloneURL := sar.remoteAction.CloneURL(defaultActionURL)
 		token := ""
-		if shouldCloneURLUseToken(sar.RunContext.Config.GitHubInstance, cloneURL) {
+		if shouldCloneURLUseToken(sar.RunContext.Config.GitHubInstance, sar.RunContext.Config.trustedActionInstance(), cloneURL) {
 			token = github.Token
 		}
 		gitClone := stepActionRemoteNewCloneExecutor(git.NewGitCloneExecutorInput{

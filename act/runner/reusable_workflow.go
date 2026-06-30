@@ -305,30 +305,45 @@ func setReusedWorkflowCallerResult(rc *RunContext, runner Runner) common.Executo
 // getGitCloneToken returns GITEA_TOKEN when shouldCloneURLUseToken returns true,
 // otherwise returns an empty string
 func getGitCloneToken(conf *Config, cloneURL string) string {
-	if !shouldCloneURLUseToken(conf.GitHubInstance, cloneURL) {
+	if !shouldCloneURLUseToken(conf.GitHubInstance, conf.trustedActionInstance(), cloneURL) {
 		return ""
 	}
 	return conf.GetToken()
 }
 
 // For Gitea
+// trustedActionInstance returns the self-hosted DEFAULT_ACTIONS_URL host that may carry the
+// task token, or "" when actions resolve to github.com / a GithubMirror (never trusted).
+func (c Config) trustedActionInstance() string {
+	if c.DefaultActionInstanceIsSelfHosted {
+		return c.DefaultActionInstance
+	}
+	return ""
+}
+
+// For Gitea
 // shouldCloneURLUseToken returns true when the following conditions are met:
-// 1. cloneURL is from the same Gitea instance that the runner is registered to
-// 2. the cloneURL does not have basic auth embedded
-func shouldCloneURLUseToken(instanceURL, cloneURL string) bool {
-	if !strings.HasPrefix(instanceURL, "http://") &&
-		!strings.HasPrefix(instanceURL, "https://") {
-		instanceURL = "https://" + instanceURL
-	}
-
-	u1, err1 := url.Parse(instanceURL)
-	u2, err2 := url.Parse(cloneURL)
-	if err1 != nil || err2 != nil {
-		return false
-	}
-	if u2.User != nil {
+//  1. cloneURL's host matches this Gitea instance: either the registered instance
+//     (instanceURL) or, for DEFAULT_ACTIONS_URL=self on a different hostname, the
+//     self-hosted action instance (trustedActionInstance, "" when not trusted)
+//  2. the cloneURL does not have basic auth embedded
+func shouldCloneURLUseToken(instanceURL, trustedActionInstance, cloneURL string) bool {
+	u2, err := url.Parse(cloneURL)
+	if err != nil || u2.User != nil {
 		return false
 	}
 
-	return u1.Host == u2.Host
+	for _, candidate := range []string{instanceURL, trustedActionInstance} {
+		if candidate == "" {
+			continue
+		}
+		if !strings.HasPrefix(candidate, "http://") &&
+			!strings.HasPrefix(candidate, "https://") {
+			candidate = "https://" + candidate
+		}
+		if u1, err := url.Parse(candidate); err == nil && u1.Host == u2.Host {
+			return true
+		}
+	}
+	return false
 }

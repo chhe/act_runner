@@ -299,6 +299,15 @@ func (r *Runner) getDefaultActionsURL(task *runnerv1.Task) string {
 	return giteaDefaultActionsURL
 }
 
+// isSelfHostedActionsURL reports whether actions resolve to this self-hosted Gitea
+// (DEFAULT_ACTIONS_URL=self), i.e. gitea_default_actions_url is AppURL rather than
+// github.com (which may be mirror-substituted by getDefaultActionsURL). Only then may the
+// task token be attached to action clone URLs on the actions instance host.
+func (r *Runner) isSelfHostedActionsURL(task *runnerv1.Task) bool {
+	giteaDefaultActionsURL := task.Context.Fields["gitea_default_actions_url"].GetStringValue()
+	return giteaDefaultActionsURL != "" && giteaDefaultActionsURL != "https://github.com"
+}
+
 func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.Reporter) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -446,14 +455,15 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 			EnableIPv4: r.cfg.Container.NetworkCreateOptions.EnableIPv4,
 			EnableIPv6: r.cfg.Container.NetworkCreateOptions.EnableIPv6,
 		},
-		ContainerOptions:      r.cfg.Container.Options,
-		ContainerDaemonSocket: r.cfg.Container.DockerHost,
-		Privileged:            r.cfg.Container.Privileged,
-		DefaultActionInstance: r.getDefaultActionsURL(task),
-		PlatformPicker:        r.labels.PickPlatform,
-		Vars:                  task.Vars,
-		ValidVolumes:          r.cfg.Container.ValidVolumes,
-		InsecureSkipTLS:       r.cfg.Runner.Insecure,
+		ContainerOptions:                  r.cfg.Container.Options,
+		ContainerDaemonSocket:             r.cfg.Container.DockerHost,
+		Privileged:                        r.cfg.Container.Privileged,
+		DefaultActionInstance:             r.getDefaultActionsURL(task),
+		DefaultActionInstanceIsSelfHosted: r.isSelfHostedActionsURL(task),
+		PlatformPicker:                    r.labels.PickPlatform,
+		Vars:                              task.Vars,
+		ValidVolumes:                      r.cfg.Container.ValidVolumes,
+		InsecureSkipTLS:                   r.cfg.Runner.Insecure,
 	}
 
 	rr, err := runner.New(runnerConfig)

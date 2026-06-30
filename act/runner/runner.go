@@ -73,18 +73,24 @@ type Config struct {
 	ContainerNetworkCreateOptions      container.NewDockerNetworkCreateExecutorInput // the default network create options
 	ActionCache                        ActionCache                                   // Use a custom ActionCache Implementation
 
-	PresetGitHubContext   *model.GithubContext         // the preset github context, overrides some fields like DefaultBranch, Env, Secrets etc.
-	EventJSON             string                       // the content of JSON file to use for event.json in containers, overrides EventPath
-	ContainerNamePrefix   string                       // the prefix of container name
-	ContainerMaxLifetime  time.Duration                // the max lifetime of job containers
-	CleanWorkdir          bool                         // remove host executor workdir on teardown
-	DefaultActionInstance string                       // the default actions web site
-	PlatformPicker        func(labels []string) string // platform picker, it will take precedence over Platforms if isn't nil
-	JobLoggerLevel        *log.Level                   // the level of job logger
-	ValidVolumes          []string                     // only volumes (and bind mounts) in this slice can be mounted on the job container or service containers
-	InsecureSkipTLS       bool                         // whether to skip verifying TLS certificate of the Gitea instance
-	MaxParallel           int                          // max parallel jobs to run across all workflows (0 = no limit, uses CPU count)
-	AllocatePTY           bool                         // allocate a pseudo-TTY for each step's process
+	PresetGitHubContext   *model.GithubContext // the preset github context, overrides some fields like DefaultBranch, Env, Secrets etc.
+	EventJSON             string               // the content of JSON file to use for event.json in containers, overrides EventPath
+	ContainerNamePrefix   string               // the prefix of container name
+	ContainerMaxLifetime  time.Duration        // the max lifetime of job containers
+	CleanWorkdir          bool                 // remove host executor workdir on teardown
+	DefaultActionInstance string               // the default actions web site
+	// DefaultActionInstanceIsSelfHosted reports whether DefaultActionInstance is this
+	// self-hosted Gitea (DEFAULT_ACTIONS_URL=self). It gates token trust: only then may the
+	// task token be attached to action clone URLs on DefaultActionInstance's host, which can
+	// differ from GitHubInstance when the runner registered with a different hostname than
+	// AppURL. It is never set for github.com or a GithubMirror, so the token stays on-instance.
+	DefaultActionInstanceIsSelfHosted bool
+	PlatformPicker                    func(labels []string) string // platform picker, it will take precedence over Platforms if isn't nil
+	JobLoggerLevel                    *log.Level                   // the level of job logger
+	ValidVolumes                      []string                     // only volumes (and bind mounts) in this slice can be mounted on the job container or service containers
+	InsecureSkipTLS                   bool                         // whether to skip verifying TLS certificate of the Gitea instance
+	MaxParallel                       int                          // max parallel jobs to run across all workflows (0 = no limit, uses CPU count)
+	AllocatePTY                       bool                         // allocate a pseudo-TTY for each step's process
 }
 
 // GetToken: Adapt to Gitea
