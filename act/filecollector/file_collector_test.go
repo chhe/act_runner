@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-billy/v5/memfs"
@@ -221,3 +222,63 @@ func TestCopyCollectorWriteFileOverwritesFileWithSymlink(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "target", resolved)
 }
+
+func TestDefaultFsOpenReadlinkAndWalk(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks requires elevated privileges on Windows")
+	}
+
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "file.txt"), []byte("content"), 0o644))
+	require.NoError(t, os.Symlink("file.txt", filepath.Join(root, "link.txt")))
+
+	fsys := &DefaultFs{}
+	var walked []string
+	require.NoError(t, fsys.Walk(root, func(path string, info os.FileInfo, err error) error {
+		require.NoError(t, err)
+		walked = append(walked, info.Name())
+		return nil
+	}))
+	require.Contains(t, walked, "file.txt")
+	require.Contains(t, walked, "link.txt")
+
+	file, err := fsys.Open(filepath.Join(root, "file.txt"))
+	require.NoError(t, err)
+	data, err := io.ReadAll(file)
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+	require.Equal(t, "content", string(data))
+
+	link, err := fsys.Readlink(filepath.Join(root, "link.txt"))
+	require.NoError(t, err)
+	require.Equal(t, "file.txt", link)
+}
+
+func TestFileCollectorCancellationAndWalkError(t *testing.T) {
+	fc := &FileCollector{Fs: &memoryFs{Filesystem: memfs.New()}}
+	walk := fc.CollectFiles(cancelledContext(t), nil)
+
+	err := walk("file", fakeFileInfo{name: "file"}, nil)
+	require.EqualError(t, err, "copy cancelled")
+
+	err = walk("file", fakeFileInfo{name: "file"}, os.ErrPermission)
+	require.ErrorIs(t, err, os.ErrPermission)
+}
+
+func cancelledContext(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	return ctx
+}
+
+type fakeFileInfo struct {
+	name string
+}
+
+func (f fakeFileInfo) Name() string       { return f.name }
+func (f fakeFileInfo) Size() int64        { return 0 }
+func (f fakeFileInfo) Mode() os.FileMode  { return 0o644 }
+func (f fakeFileInfo) ModTime() time.Time { return time.Time{} }
+func (f fakeFileInfo) IsDir() bool        { return false }
+func (f fakeFileInfo) Sys() any           { return nil }

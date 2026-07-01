@@ -4,8 +4,12 @@
 package cmd
 
 import (
+	"os"
 	"testing"
 
+	"gitea.com/gitea/runner/internal/pkg/config"
+
+	"github.com/stretchr/testify/require"
 	"gotest.tools/v3/assert"
 )
 
@@ -16,4 +20,137 @@ func TestRegisterNonInteractiveReturnsLabelValidationError(t *testing.T) {
 		InstanceAddr: "http://localhost:3000",
 	})
 	assert.Error(t, err, "unsupported schema: invalid")
+}
+
+func TestRegisterInputsValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		inputs  registerInputs
+		wantErr string
+	}{
+		{
+			name:    "empty instance address",
+			inputs:  registerInputs{Token: "token"},
+			wantErr: "instance address is empty",
+		},
+		{
+			name:    "empty token",
+			inputs:  registerInputs{InstanceAddr: "http://localhost:3000"},
+			wantErr: "token is empty",
+		},
+		{
+			name:    "invalid label",
+			inputs:  registerInputs{InstanceAddr: "http://localhost:3000", Token: "token", Labels: []string{"ubuntu:vm:bad"}},
+			wantErr: "unsupported schema: vm",
+		},
+		{
+			name:   "valid",
+			inputs: registerInputs{InstanceAddr: "http://localhost:3000", Token: "token", Labels: []string{"ubuntu:host"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.inputs.validate()
+			if tt.wantErr != "" {
+				require.EqualError(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestValidateLabels(t *testing.T) {
+	require.NoError(t, validateLabels([]string{"ubuntu:host", "ubuntu:docker://node:18"}))
+	require.Error(t, validateLabels([]string{"ubuntu:host", "ubuntu:vm:bad"}))
+}
+
+func TestRegisterInputsStageValue(t *testing.T) {
+	inputs := &registerInputs{
+		InstanceAddr: "http://localhost:3000",
+		Token:        "token",
+		RunnerName:   "runner",
+		Labels:       []string{"ubuntu:host", "ubuntu:docker://node:18"},
+	}
+	require.Equal(t, "http://localhost:3000", inputs.stageValue(StageInputInstance))
+	require.Equal(t, "token", inputs.stageValue(StageInputToken))
+	require.Equal(t, "runner", inputs.stageValue(StageInputRunnerName))
+	require.Equal(t, "ubuntu:host,ubuntu:docker://node:18", inputs.stageValue(StageInputLabels))
+	require.Empty(t, (&registerInputs{}).stageValue(StageInputLabels))
+	require.Empty(t, inputs.stageValue(StageWaitingForRegistration))
+}
+
+func TestRegisterInputsAssignToNext(t *testing.T) {
+	emptyCfg := &config.Config{}
+
+	t.Run("instance and token stay on empty value", func(t *testing.T) {
+		inputs := &registerInputs{}
+		require.Equal(t, StageInputInstance, inputs.assignToNext(StageInputInstance, "", emptyCfg))
+		require.Equal(t, StageInputToken, inputs.assignToNext(StageInputToken, "", emptyCfg))
+	})
+
+	t.Run("instance then token then runner name", func(t *testing.T) {
+		inputs := &registerInputs{}
+		require.Equal(t, StageInputToken, inputs.assignToNext(StageInputInstance, "http://localhost:3000", emptyCfg))
+		require.Equal(t, "http://localhost:3000", inputs.InstanceAddr)
+		require.Equal(t, StageInputRunnerName, inputs.assignToNext(StageInputToken, "token", emptyCfg))
+		require.Equal(t, "token", inputs.Token)
+	})
+
+	t.Run("empty runner name falls back to hostname", func(t *testing.T) {
+		inputs := &registerInputs{}
+		require.Equal(t, StageInputLabels, inputs.assignToNext(StageInputRunnerName, "", emptyCfg))
+		hostname, _ := os.Hostname()
+		require.Equal(t, hostname, inputs.RunnerName)
+	})
+
+	t.Run("labels from config skip the labels stage", func(t *testing.T) {
+		cfg := &config.Config{}
+		cfg.Runner.Labels = []string{"ubuntu:host", "ubuntu:vm:bad"}
+		inputs := &registerInputs{}
+		require.Equal(t, StageWaitingForRegistration, inputs.assignToNext(StageInputRunnerName, "runner", cfg))
+		// only the valid label survives
+		require.Equal(t, []string{"ubuntu:host"}, inputs.Labels)
+	})
+
+	t.Run("blank labels input uses defaults", func(t *testing.T) {
+		inputs := &registerInputs{}
+		require.Equal(t, StageWaitingForRegistration, inputs.assignToNext(StageInputLabels, "", emptyCfg))
+		require.Equal(t, defaultLabels, inputs.Labels)
+	})
+
+	t.Run("invalid labels input loops back", func(t *testing.T) {
+		inputs := &registerInputs{}
+		require.Equal(t, StageInputLabels, inputs.assignToNext(StageInputLabels, "ubuntu:vm:bad", emptyCfg))
+		require.Nil(t, inputs.Labels)
+	})
+
+	t.Run("overwrite local config", func(t *testing.T) {
+		inputs := &registerInputs{}
+		require.Equal(t, StageInputInstance, inputs.assignToNext(StageOverwriteLocalConfig, "Y", emptyCfg))
+		require.Equal(t, StageInputInstance, inputs.assignToNext(StageOverwriteLocalConfig, "y", emptyCfg))
+		require.Equal(t, StageExit, inputs.assignToNext(StageOverwriteLocalConfig, "n", emptyCfg))
+	})
+
+	t.Run("unknown stage", func(t *testing.T) {
+		inputs := &registerInputs{}
+		require.Equal(t, StageUnknown, inputs.assignToNext(StageWaitingForRegistration, "x", emptyCfg))
+	})
+}
+
+func TestInitInputs(t *testing.T) {
+	inputs := initInputs(&registerArgs{
+		InstanceAddr: "http://localhost:3000",
+		Token:        "token",
+		RunnerName:   "runner",
+		Ephemeral:    true,
+		Labels:       " ubuntu:host , ubuntu:docker://node:18 ",
+	})
+	require.Equal(t, "http://localhost:3000", inputs.InstanceAddr)
+	require.Equal(t, "token", inputs.Token)
+	require.Equal(t, "runner", inputs.RunnerName)
+	require.True(t, inputs.Ephemeral)
+	require.Equal(t, []string{"ubuntu:host ", " ubuntu:docker://node:18"}, inputs.Labels)
+
+	require.Nil(t, initInputs(&registerArgs{Labels: "  "}).Labels)
 }

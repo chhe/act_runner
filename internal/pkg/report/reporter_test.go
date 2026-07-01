@@ -983,3 +983,75 @@ func TestReporter_StopHeartbeats(t *testing.T) {
 	assert.Greater(t, updateTaskCalls.Load(), beforeStop,
 		"Close() must still send a final UpdateTask after StopHeartbeats")
 }
+
+func TestAppendIfNotNil(t *testing.T) {
+	var s []*int
+	s = appendIfNotNil(s, nil)
+	assert.Empty(t, s)
+
+	v := 7
+	s = appendIfNotNil(s, &v)
+	require.Len(t, s, 1)
+	assert.Equal(t, &v, s[0])
+
+	s = appendIfNotNil(s, nil)
+	require.Len(t, s, 1)
+}
+
+func TestReporter_Levels(t *testing.T) {
+	assert.Equal(t, log.AllLevels, (&Reporter{}).Levels())
+}
+
+func TestReporter_Result(t *testing.T) {
+	r := &Reporter{state: &runnerv1.TaskState{Result: runnerv1.Result_RESULT_SUCCESS}}
+	assert.Equal(t, runnerv1.Result_RESULT_SUCCESS, r.Result())
+}
+
+func TestReporter_SetOutputs(t *testing.T) {
+	r := &Reporter{state: &runnerv1.TaskState{}}
+
+	r.SetOutputs(map[string]string{"foo": "bar"})
+	got, ok := r.outputs.Load("foo")
+	require.True(t, ok)
+	assert.Equal(t, "bar", got)
+
+	// first value wins: a later write to the same key is ignored
+	r.SetOutputs(map[string]string{"foo": "baz"})
+	got, _ = r.outputs.Load("foo")
+	assert.Equal(t, "bar", got)
+
+	// keys longer than 255 chars are dropped
+	longKey := strings.Repeat("k", 256)
+	r.SetOutputs(map[string]string{longKey: "v"})
+	_, ok = r.outputs.Load(longKey)
+	assert.False(t, ok)
+}
+
+func TestReporter_EffectiveCloseTimeout(t *testing.T) {
+	assert.Equal(t, 10*time.Second, (&Reporter{}).effectiveCloseTimeout())
+	assert.Equal(t, 5*time.Second, (&Reporter{closeTimeout: 5 * time.Second}).effectiveCloseTimeout())
+}
+
+func TestReporter_ParseResult(t *testing.T) {
+	r := &Reporter{}
+
+	tests := []struct {
+		name   string
+		input  any
+		want   runnerv1.Result
+		wantOk bool
+	}{
+		{"job result string", "success", runnerv1.Result_RESULT_SUCCESS, true},
+		{"failure string", "failure", runnerv1.Result_RESULT_FAILURE, true},
+		{"step result stringer", runnerv1.Result_RESULT_SKIPPED, runnerv1.Result_RESULT_UNSPECIFIED, false},
+		{"unknown string", "bogus", runnerv1.Result_RESULT_UNSPECIFIED, false},
+		{"unsupported type", 123, runnerv1.Result_RESULT_UNSPECIFIED, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := r.parseResult(tt.input)
+			assert.Equal(t, tt.wantOk, ok)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

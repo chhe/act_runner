@@ -42,3 +42,7 @@ jobs:
       # after `make test` so the images it needs are already present on the host daemon.
       - name: test against dind image
         run: make test-dind
+      - name: coverage report
+        run: |
+          make coverage-report
+          cat .tmp/coverage.md >> "$GITHUB_STEP_SUMMARY"

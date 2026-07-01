@@ -7,6 +7,8 @@ package common
 import (
 	"context"
 	"errors"
+	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -169,4 +171,44 @@ func TestNewParallelExecutorCanceled(t *testing.T) {
 	err := NewParallelExecutor(3, errorWorkflow, successWorkflow, successWorkflow)(ctx)
 	assert.Equal(int32(3), count.Load())
 	assert.Error(errExpected, err) //nolint:testifylint // pre-existing issue from nektos/act
+}
+
+func TestExecutorConditionalsAndFinally(t *testing.T) {
+	ctx := context.Background()
+	var calls []string
+	record := func(name string) Executor {
+		return func(ctx context.Context) error {
+			calls = append(calls, name)
+			return nil
+		}
+	}
+
+	require.NoError(t, record("if-true").If(func(context.Context) bool { return true })(ctx))
+	require.NoError(t, record("if-false").If(func(context.Context) bool { return false })(ctx))
+	require.NoError(t, record("if-not").IfNot(func(context.Context) bool { return false })(ctx))
+	require.NoError(t, record("if-bool").IfBool(true)(ctx))
+	require.NoError(t, record("main").Finally(record("finally"))(ctx))
+
+	want := []string{"if-true", "if-not", "if-bool", "main", "finally"}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %v, want %v", calls, want)
+	}
+}
+
+func TestExecutorFinallyReturnsFinallyErrorWithOriginal(t *testing.T) {
+	mainErr := errors.New("main failed")
+	finalErr := errors.New("cleanup failed")
+
+	err := NewErrorExecutor(mainErr).Finally(NewErrorExecutor(finalErr))(context.Background())
+	require.Error(t, err)
+	if !strings.Contains(err.Error(), "cleanup failed") || !strings.Contains(err.Error(), "main failed") {
+		t.Fatalf("finally error = %q, want both cleanup and original error", err)
+	}
+}
+
+func TestConditionalNot(t *testing.T) {
+	cond := Conditional(func(context.Context) bool { return false })
+	if !cond.Not()(context.Background()) {
+		t.Fatal("inverted conditional should be true")
+	}
 }

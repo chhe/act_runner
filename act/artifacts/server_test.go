@@ -390,6 +390,43 @@ func TestMkdirFsImplSafeResolve(t *testing.T) {
 	}
 }
 
+func TestReadWriteFSWritableAndAppendable(t *testing.T) {
+	fsys := readWriteFSImpl{}
+	name := filepath.Join(t.TempDir(), "nested", "artifact.txt")
+
+	w, err := fsys.OpenWritable(name)
+	require.NoError(t, err)
+	_, err = w.Write([]byte("first"))
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	w, err = fsys.OpenAppendable(name)
+	require.NoError(t, err)
+	_, err = w.Write([]byte("-second"))
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	got, err := os.ReadFile(name)
+	require.NoError(t, err)
+	require.Equal(t, "first-second", string(got))
+
+	w, err = fsys.OpenWritable(name)
+	require.NoError(t, err)
+	_, err = w.Write([]byte("replaced"))
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	got, err = os.ReadFile(name)
+	require.NoError(t, err)
+	require.Equal(t, "replaced", string(got))
+}
+
+func TestServeEmptyArtifactPathReturnsCancelableNoop(t *testing.T) {
+	cancel := Serve(t.Context(), "", "127.0.0.1", "0")
+	require.NotNil(t, cancel)
+	cancel()
+}
+
 func TestDownloadArtifactFileUnsafePath(t *testing.T) {
 	assert := assert.New(t)
 

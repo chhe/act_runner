@@ -5,6 +5,7 @@
 package model
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -56,6 +57,190 @@ func TestJobNeedsResult(t *testing.T) {
 			assert.Equal(t, tc.want, j.NeedsResult())
 		})
 	}
+}
+
+func TestJobSetContinueOnErrorFirmFailureWins(t *testing.T) {
+	job := &Job{}
+	job.SetContinueOnError(true)
+	assert.True(t, job.ContinueOnError)
+
+	job.SetContinueOnError(false)
+	assert.False(t, job.ContinueOnError)
+
+	job.SetContinueOnError(true)
+	assert.False(t, job.ContinueOnError, "a later tolerated failure must not hide an earlier firm failure")
+}
+
+func TestStepStatusText(t *testing.T) {
+	for _, tc := range []struct {
+		status stepStatus
+		text   string
+	}{
+		{StepStatusSuccess, "success"},
+		{StepStatusFailure, "failure"},
+		{StepStatusSkipped, "skipped"},
+	} {
+		t.Run(tc.text, func(t *testing.T) {
+			got, err := tc.status.MarshalText()
+			require.NoError(t, err)
+			assert.Equal(t, tc.text, string(got))
+
+			var parsed stepStatus
+			require.NoError(t, parsed.UnmarshalText(got))
+			assert.Equal(t, tc.status, parsed)
+			assert.Equal(t, tc.text, parsed.String())
+		})
+	}
+
+	var parsed stepStatus
+	require.Error(t, parsed.UnmarshalText([]byte("cancelled")))
+	assert.Empty(t, stepStatus(99).String())
+}
+
+func TestWorkflowCallConfig(t *testing.T) {
+	workflow, err := ReadWorkflow(strings.NewReader(`
+on:
+  workflow_call:
+    inputs:
+      name:
+        required: true
+        type: string
+    outputs:
+      digest:
+        value: ${{ jobs.build.outputs.digest }}
+jobs: {}
+`))
+	require.NoError(t, err)
+
+	config := workflow.WorkflowCallConfig()
+	require.NotNil(t, config)
+	require.Contains(t, config.Inputs, "name")
+	assert.True(t, config.Inputs["name"].Required)
+	assert.Equal(t, "string", config.Inputs["name"].Type)
+	assert.Equal(t, "${{ jobs.build.outputs.digest }}", config.Outputs["digest"].Value)
+
+	listWorkflow, err := ReadWorkflow(strings.NewReader("on: [workflow_call]\njobs: {}\n"))
+	require.NoError(t, err)
+	assert.NotNil(t, listWorkflow.WorkflowCallConfig())
+	assert.Empty(t, listWorkflow.WorkflowCallConfig().Inputs)
+}
+
+func TestJobSecretsAndEnvironment(t *testing.T) {
+	inheritJob := readJob(t, `
+secrets: inherit
+env:
+  A: one
+  B: two
+`)
+	assert.True(t, inheritJob.InheritSecrets())
+	assert.Nil(t, inheritJob.Secrets())
+	assert.Equal(t, map[string]string{"A": "one", "B": "two"}, inheritJob.Environment())
+
+	mappingJob := readJob(t, `
+secrets:
+  TOKEN: ${{ secrets.TOKEN }}
+`)
+	assert.False(t, mappingJob.InheritSecrets())
+	assert.Equal(t, map[string]string{"TOKEN": "${{ secrets.TOKEN }}"}, mappingJob.Secrets())
+}
+
+func TestJobTypeAndString(t *testing.T) {
+	tests := []struct {
+		job     Job
+		want    JobType
+		wantErr bool
+	}{
+		{job: Job{}, want: JobTypeDefault},
+		{job: Job{Uses: "./.github/workflows/reuse.yml"}, want: JobTypeReusableWorkflowLocal},
+		{job: Job{Uses: "owner/repo/.github/workflows/reuse.yaml@v1"}, want: JobTypeReusableWorkflowRemote},
+		{job: Job{Uses: "owner/repo/.github/workflows/reuse.yaml"}, want: JobTypeInvalid, wantErr: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(fmt.Sprintf("%s/%s", tc.job.Uses, tc.want), func(t *testing.T) {
+			got, err := tc.job.Type()
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tc.want, got)
+		})
+	}
+
+	assert.Equal(t, "default", JobTypeDefault.String())
+	assert.Equal(t, "local-reusable-workflow", JobTypeReusableWorkflowLocal.String())
+	assert.Equal(t, "remote-reusable-workflow", JobTypeReusableWorkflowRemote.String())
+	assert.Equal(t, "unknown", JobType(99).String())
+}
+
+func TestStepStringEnvironmentEnvAndType(t *testing.T) {
+	step := readStep(t, `
+id: example
+env:
+  DIRECT: value
+with:
+  mixed-key: input
+`)
+	assert.Equal(t, "example", step.String())
+	assert.Equal(t, map[string]string{"DIRECT": "value"}, step.Environment())
+	assert.Equal(t, map[string]string{"DIRECT": "value", "INPUT_MIXED-KEY": "input"}, step.GetEnv())
+
+	for _, tc := range []struct {
+		step Step
+		want StepType
+	}{
+		{step: Step{}, want: StepTypeInvalid},
+		{step: Step{Run: "echo hi"}, want: StepTypeRun},
+		{step: Step{Run: "echo hi", Uses: "actions/checkout@v4"}, want: StepTypeInvalid},
+		{step: Step{Uses: "docker://alpine:latest"}, want: StepTypeUsesDockerURL},
+		{step: Step{Uses: "./.github/workflows/reuse.yml"}, want: StepTypeReusableWorkflowLocal},
+		{step: Step{Uses: "owner/repo/.github/workflows/reuse.yml@v1"}, want: StepTypeReusableWorkflowRemote},
+		{step: Step{Uses: "./actions/local"}, want: StepTypeUsesActionLocal},
+		{step: Step{Uses: "actions/checkout@v4"}, want: StepTypeUsesActionRemote},
+	} {
+		t.Run(tc.want.String(), func(t *testing.T) {
+			assert.Equal(t, tc.want, tc.step.Type())
+		})
+	}
+
+	assert.Equal(t, "invalid", StepTypeInvalid.String())
+	assert.Equal(t, "run", StepTypeRun.String())
+	assert.Equal(t, "local-action", StepTypeUsesActionLocal.String())
+	assert.Equal(t, "remote-action", StepTypeUsesActionRemote.String())
+	assert.Equal(t, "docker", StepTypeUsesDockerURL.String())
+	assert.Equal(t, "local-reusable-workflow", StepTypeReusableWorkflowLocal.String())
+	assert.Equal(t, "remote-reusable-workflow", StepTypeReusableWorkflowRemote.String())
+	assert.Equal(t, "unknown", StepType(99).String())
+	assert.NotEmpty(t, (&Step{Uses: "actions/checkout@v4"}).UsesHash())
+}
+
+func TestWorkflowGetJobAndIDs(t *testing.T) {
+	workflow := &Workflow{Jobs: map[string]*Job{"build": {}}}
+	assert.Equal(t, []string{"build"}, workflow.GetJobIDs())
+
+	job := workflow.GetJob("build")
+	require.NotNil(t, job)
+	assert.Equal(t, "build", job.Name)
+	assert.Equal(t, "success()", job.If.Value)
+	assert.Nil(t, workflow.GetJob("missing"))
+}
+
+func TestRawConcurrencyYaml(t *testing.T) {
+	var expr RawConcurrency
+	require.NoError(t, yaml.Unmarshal([]byte("group-${{ github.ref }}"), &expr))
+	assert.Equal(t, "group-${{ github.ref }}", expr.RawExpression)
+	marshaled, err := expr.MarshalYAML()
+	require.NoError(t, err)
+	assert.Equal(t, "group-${{ github.ref }}", marshaled)
+
+	var object RawConcurrency
+	require.NoError(t, yaml.Unmarshal([]byte("group: ci\ncancel-in-progress: true\n"), &object))
+	assert.Equal(t, "ci", object.Group)
+	assert.Equal(t, "true", object.CancelInProgress)
+	marshaled, err = object.MarshalYAML()
+	require.NoError(t, err)
+	assert.Equal(t, (*objectConcurrency)(&object), marshaled)
 }
 
 func TestReadWorkflow_ScheduleEvent(t *testing.T) {
@@ -951,4 +1136,20 @@ func TestJobMatrixValidation(t *testing.T) {
 		// Should return nil due to validation error
 		assert.Nil(t, matrix, "matrix with nested map should return nil")
 	})
+}
+
+func readJob(t *testing.T, content string) *Job {
+	t.Helper()
+
+	var job Job
+	require.NoError(t, yaml.Unmarshal([]byte(content), &job))
+	return &job
+}
+
+func readStep(t *testing.T, content string) *Step {
+	t.Helper()
+
+	var step Step
+	require.NoError(t, yaml.Unmarshal([]byte(content), &step))
+	return &step
 }

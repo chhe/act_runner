@@ -50,6 +50,13 @@ func TestFindGitSlug(t *testing.T) {
 	}
 }
 
+func TestErrorWrapsCommitAndCause(t *testing.T) {
+	err := &Error{err: ErrShortRef, commit: "abc123"}
+	require.Equal(t, ErrShortRef.Error(), err.Error())
+	require.ErrorIs(t, err, ErrShortRef)
+	require.Equal(t, "abc123", err.Commit())
+}
+
 func cleanGitHooks(dir string) error {
 	hooksDir := filepath.Join(dir, ".git", "hooks")
 	files, err := os.ReadDir(hooksDir)
@@ -94,6 +101,22 @@ func TestFindGitRemoteURL(t *testing.T) {
 	u, err = findGitRemoteURL(context.Background(), basedir, "upstream")
 	assert.NoError(err) //nolint:testifylint // pre-existing issue from nektos/act
 	assert.Equal(remoteURL, u)
+}
+
+func TestFindGithubRepoUsesOriginAndCustomRemote(t *testing.T) {
+	basedir := t.TempDir()
+	require.NoError(t, gitCmd("init", basedir))
+	require.NoError(t, cleanGitHooks(basedir))
+	require.NoError(t, gitCmd("-C", basedir, "remote", "add", "origin", "https://github.com/owner/repo.git"))
+	require.NoError(t, gitCmd("-C", basedir, "remote", "add", "ghe", "git@git.example.com:team/project.git"))
+
+	slug, err := FindGithubRepo(context.Background(), basedir, "github.com", "")
+	require.NoError(t, err)
+	require.Equal(t, "owner/repo", slug)
+
+	slug, err = FindGithubRepo(context.Background(), basedir, "git.example.com", "ghe")
+	require.NoError(t, err)
+	require.Equal(t, "team/project", slug)
 }
 
 func TestGitFindRef(t *testing.T) {

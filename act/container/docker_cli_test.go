@@ -498,6 +498,79 @@ func TestParseDevice(t *testing.T) {
 	}
 }
 
+func TestParseDeviceByServerOS(t *testing.T) {
+	tests := []struct {
+		name     string
+		device   string
+		serverOS string
+		want     container.DeviceMapping
+		wantErr  string
+	}{
+		{
+			name:     "linux source only",
+			device:   "/dev/snd",
+			serverOS: "linux",
+			want: container.DeviceMapping{
+				PathOnHost:        "/dev/snd",
+				PathInContainer:   "/dev/snd",
+				CgroupPermissions: "rwm",
+			},
+		},
+		{
+			name:     "linux source and mode",
+			device:   "/dev/snd:rw",
+			serverOS: "linux",
+			want: container.DeviceMapping{
+				PathOnHost:        "/dev/snd",
+				PathInContainer:   "/dev/snd",
+				CgroupPermissions: "rw",
+			},
+		},
+		{
+			name:     "linux source target and mode",
+			device:   "/dev/snd:/container/snd:m",
+			serverOS: "linux",
+			want: container.DeviceMapping{
+				PathOnHost:        "/dev/snd",
+				PathInContainer:   "/container/snd",
+				CgroupPermissions: "m",
+			},
+		},
+		{
+			name:     "windows passes value through",
+			device:   `class/GUID`,
+			serverOS: "windows",
+			want: container.DeviceMapping{
+				PathOnHost: `class/GUID`,
+			},
+		},
+		{
+			name:     "invalid server OS",
+			device:   "/dev/snd",
+			serverOS: "plan9",
+			wantErr:  "unknown server OS: plan9",
+		},
+		{
+			name:     "too many linux fields",
+			device:   "/dev/snd:/container/snd:rw:extra",
+			serverOS: "linux",
+			wantErr:  "invalid device specification: /dev/snd:/container/snd:rw:extra",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseDevice(tc.device, tc.serverOS)
+			if tc.wantErr != "" {
+				assert.Error(t, err, tc.wantErr)
+				return
+			}
+			assert.NilError(t, err)
+			assert.Equal(t, got, tc.want)
+		})
+	}
+}
+
 func TestParseNetworkConfig(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -928,6 +1001,82 @@ func TestValidateDevice(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestValidateDeviceByServerOS(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     string
+		serverOS  string
+		want      string
+		wantError string
+	}{
+		{
+			name:     "linux preserves three-field container path",
+			value:    "/host:/container/../device:rw",
+			serverOS: "linux",
+			want:     "/host:/container/../device:rw",
+		},
+		{
+			name:     "linux source path can be relative when target is absolute",
+			value:    "relative-host:/container/device",
+			serverOS: "linux",
+			want:     "relative-host:/container/device",
+		},
+		{
+			name:     "windows defers validation",
+			value:    `class/GUID`,
+			serverOS: "windows",
+			want:     `class/GUID`,
+		},
+		{
+			name:      "linux rejects bad mode",
+			value:     "/host:/container:ro",
+			serverOS:  "linux",
+			wantError: "bad mode specified: ro",
+		},
+		{
+			name:      "linux target must be absolute",
+			value:     "/host:relative",
+			serverOS:  "linux",
+			wantError: "relative is not an absolute path",
+		},
+		{
+			name:      "unknown server OS",
+			value:     "/dev/snd",
+			serverOS:  "plan9",
+			wantError: "unknown server OS: plan9",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := validateDevice(tc.value, tc.serverOS)
+			if tc.wantError != "" {
+				assert.Error(t, err, tc.wantError)
+				return
+			}
+			assert.NilError(t, err)
+			assert.Equal(t, got, tc.want)
+		})
+	}
+}
+
+func TestDeviceCgroupRulesAndInvalidParameter(t *testing.T) {
+	got, err := validateDeviceCgroupRule("c 1:3 rwm")
+	assert.NilError(t, err)
+	assert.Equal(t, got, "c 1:3 rwm")
+
+	_, err = validateDeviceCgroupRule("invalid")
+	assert.Error(t, err, "invalid device cgroup format 'invalid'")
+
+	if invalidParameter(nil) != nil {
+		t.Fatal("invalidParameter(nil) should be nil")
+	}
+	err = invalidParameter(errors.New("bad input"))
+	assert.Assert(t, err != nil)
+	var invalid interface{ InvalidParameter() }
+	assert.Assert(t, errors.As(err, &invalid))
 }
 
 func TestParseSystemPaths(t *testing.T) {
