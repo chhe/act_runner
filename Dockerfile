@@ -24,7 +24,7 @@ ARG VERSION=dev
 LABEL org.opencontainers.image.source="https://gitea.com/gitea/runner"
 LABEL org.opencontainers.image.version="${VERSION}"
 
-RUN apk add --no-cache s6 bash git tzdata
+RUN apk add --no-cache s6 bash git tzdata nftables
 
 COPY --from=builder /opt/src/runner/gitea-runner /usr/local/bin/gitea-runner
 COPY scripts/run.sh /usr/local/bin/run.sh
@@ -45,7 +45,7 @@ LABEL org.opencontainers.image.source="https://gitea.com/gitea/runner"
 LABEL org.opencontainers.image.version="${VERSION}"
 
 USER root
-RUN apk add --no-cache s6 bash git tzdata
+RUN apk add --no-cache s6 bash git tzdata nftables
 
 COPY --from=builder /opt/src/runner/gitea-runner /usr/local/bin/gitea-runner
 COPY scripts/run.sh /usr/local/bin/run.sh
