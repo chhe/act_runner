@@ -110,6 +110,11 @@ cache:
   dir: ""
   # Outbound IP or hostname that job containers use to reach this runner's cache server.
   # Leave empty to detect automatically. 0.0.0.0 is not valid here.
+  # If the runner itself runs in Docker, automatic detection can choose an
+  # address on the runner container's network that job containers cannot reach
+  # when the runner creates a separate per-job network. In that case, set this
+  # to a hostname/IP reachable from job containers, and set port to a fixed
+  # published port or put the job containers on a shared Docker network.
   # Ignored when external_server is set.
   host: ""
   # Port for the built-in cache server. 0 picks a random free port.
@@ -133,6 +138,8 @@ container:
   # Specifies the network to which the container will connect.
   # Could be host, bridge or the name of a custom network.
   # If it's empty, runner will create a network automatically.
+  # For dockerized runners using the built-in cache server, a custom shared
+  # network can be required so job containers can reach cache.host/cache.port.
   # Deprecated: `network_mode` is still accepted for old configs; use `network` instead.
   network: ""
   # network_create_options only apply when `network` is left empty and the runner
