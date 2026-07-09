@@ -303,6 +303,7 @@ func TestRunEvent(t *testing.T) {
 		// services
 		{workdir, "services", "push", "", platforms, secrets},
 		{workdir, "services-with-container", "push", "", platforms, secrets},
+		{workdir, "services-empty-image", "push", "", platforms, secrets},
 
 		// local remote action overrides
 		{workdir, "local-remote-action-overrides", "push", "", platforms, secrets},
