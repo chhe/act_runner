@@ -75,6 +75,7 @@ type registerArgs struct {
 	NoInteractive bool
 	InstanceAddr  string
 	Token         string
+	TokenFile     string
 	RunnerName    string
 	Labels        string
 	Ephemeral     bool
@@ -92,6 +93,8 @@ const (
 	StageWaitingForRegistration
 	StageExit
 )
+
+const registerTokenEnvVar = "GITEA_RUNNER_REGISTRATION_TOKEN"
 
 var defaultLabels = []string{
 	"ubuntu-latest:docker://docker.gitea.com/runner-images:ubuntu-latest",
@@ -207,10 +210,27 @@ func (r *registerInputs) assignToNext(stage registerStage, value string, cfg *co
 	return StageUnknown
 }
 
-func initInputs(regArgs *registerArgs) *registerInputs {
+func initInputs(regArgs *registerArgs) (*registerInputs, error) {
+	var token string
+	switch {
+	case regArgs.TokenFile != "":
+		tokenBytes, err := os.ReadFile(regArgs.TokenFile)
+		if err != nil {
+			return nil, fmt.Errorf("cannot read the token file: %s, %v", regArgs.TokenFile, err)
+		}
+		token = string(tokenBytes)
+	case regArgs.Token != "":
+		token = regArgs.Token
+	default:
+		envToken, ok := os.LookupEnv(registerTokenEnvVar)
+		if !ok || envToken == "" {
+			return nil, fmt.Errorf("missing token, token-file argument, or %s environment variable", registerTokenEnvVar)
+		}
+		token = envToken
+	}
 	inputs := &registerInputs{
 		InstanceAddr: regArgs.InstanceAddr,
-		Token:        regArgs.Token,
+		Token:        token,
 		RunnerName:   regArgs.RunnerName,
 		Ephemeral:    regArgs.Ephemeral,
 	}
@@ -219,7 +239,7 @@ func initInputs(regArgs *registerArgs) *registerInputs {
 	if regArgs.Labels != "" {
 		inputs.Labels = strings.Split(regArgs.Labels, ",")
 	}
-	return inputs
+	return inputs, nil
 }
 
 func registerInteractive(ctx context.Context, configFile string, regArgs *registerArgs) error {
@@ -235,7 +255,10 @@ func registerInteractive(ctx context.Context, configFile string, regArgs *regist
 	if f, err := os.Stat(cfg.Runner.File); err == nil && !f.IsDir() {
 		stage = StageOverwriteLocalConfig
 	}
-	inputs := initInputs(regArgs)
+	inputs, err := initInputs(regArgs)
+	if err != nil {
+		return err
+	}
 
 	for {
 		cmdString := inputs.stageValue(stage)
@@ -292,7 +315,10 @@ func registerNoInteractive(ctx context.Context, configFile string, regArgs *regi
 	if err != nil {
 		return err
 	}
-	inputs := initInputs(regArgs)
+	inputs, err := initInputs(regArgs)
+	if err != nil {
+		return err
+	}
 	// specify labels in config file.
 	if len(cfg.Runner.Labels) > 0 {
 		if regArgs.Labels != "" {
