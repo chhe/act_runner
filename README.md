@@ -143,22 +143,15 @@ Every option is described in [config.example.yaml](internal/pkg/config/config.ex
 
 #### Without a config file
 
-If you omit `-c`, built-in defaults apply (same as an empty YAML document). A small set of **deprecated** environment variables can still override parts of that default config, but **only when no `-c` path was given**; they are ignored if you use a config file:
+If you omit `-c`, built-in defaults apply (same as an empty YAML document).
 
-| Variable | Effect |
-| --- | --- |
-| `GITEA_DEBUG` | If true, sets log level to `debug` |
-| `GITEA_TRACE` | If true, sets log level to `trace` |
-| `GITEA_RUNNER_CAPACITY` | Concurrent jobs (integer) |
-| `GITEA_RUNNER_FILE` | Registration state file path (default `.runner`) |
-| `GITEA_RUNNER_ENVIRON` | Extra job env vars as comma-separated `KEY:VALUE` pairs |
-| `GITEA_RUNNER_ENV_FILE` | Path to an env file merged into job env (same idea as `runner.env_file` in YAML) |
-
-Prefer a YAML file for all settings.
+Earlier releases let a small set of environment variables (`GITEA_DEBUG`, `GITEA_TRACE`, `GITEA_RUNNER_CAPACITY`, `GITEA_RUNNER_FILE`, `GITEA_RUNNER_ENVIRON`, `GITEA_RUNNER_ENV_FILE`) override parts of the default config. Those overrides have been removed — use a YAML config file for all settings instead. For the Docker images, the entrypoint still understands a separate set of variables (such as `RUNNER_STATE_FILE`); see [scripts/run.sh](scripts/run.sh) and the container documentation below.
 
 #### Registration vs config labels
 
 If `runner.labels` is set in the YAML file, those labels are used during `register` and the `--labels` CLI flag is ignored.
+
+> **Note:** A runner that only exposes `host` labels still needs access to a Docker daemon (e.g. a mounted `/var/run/docker.sock`) whenever a job uses a `docker://` action or a service container. `host` labels only change where the job's own steps run; container-based steps and actions are still executed with Docker.
 
 #### Caching (`actions/cache`)
 

@@ -49,6 +49,7 @@ type Runner struct {
 	Labels                []string          `yaml:"labels"`                   // Labels specify the labels of the runner. Labels are declared on each startup
 	GithubMirror          string            `yaml:"github_mirror"`            // GithubMirror defines what mirrors should be used when using github
 	ActionShallowClone    *bool             `yaml:"action_shallow_clone"`     // ActionShallowClone fetches only the requested ref of an action repository at depth 1 instead of cloning every branch's full history. It is a pointer to distinguish between false and not set; if not set, it defaults to true.
+	SetActEnv             *bool             `yaml:"set_act_env"`              // SetActEnv controls whether the ACT=true environment variable is injected into jobs. It is a pointer to distinguish between false and not set; if not set, it defaults to true. Set it to false so workflows gated on `if: ${{ !env.ACT }}` behave like on GitHub.
 	AllocatePTY           bool              `yaml:"allocate_pty"`             // AllocatePTY allocates a pseudo-TTY for each step's process. Default is false, matching GitHub's actions/runner. Enable only for jobs that need an interactive terminal; tools like docker build emit redrawing progress frames into the captured log when a TTY is present. Applies to both host and docker backends.
 	PostTaskScript        string            `yaml:"post_task_script"`         // PostTaskScript is the path to an executable script run on the host after each task's cleanup completes. Empty disables the hook. On Windows use .exe/.bat/.cmd; PowerShell (.ps1) is not supported yet as the configured path.
 	PostTaskScriptTimeout time.Duration     `yaml:"post_task_script_timeout"` // PostTaskScriptTimeout caps how long the post-task script may run. Default is 5m when post_task_script is set.
@@ -156,13 +157,20 @@ func LoadDefault(file string) (*Config, error) {
 		b := true
 		cfg.Runner.ActionShallowClone = &b
 	}
+	if cfg.Runner.SetActEnv == nil {
+		b := true
+		cfg.Runner.SetActEnv = &b
+	}
 	if cfg.Cache.Enabled == nil {
 		b := true
 		cfg.Cache.Enabled = &b
 	}
 	if *cfg.Cache.Enabled {
 		if cfg.Cache.Dir == "" {
-			home, _ := os.UserHomeDir()
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return nil, fmt.Errorf("cache.dir is unset and the user home directory could not be determined: %w", err)
+			}
 			cfg.Cache.Dir = filepath.Join(home, ".cache", "actcache")
 		}
 		if cfg.Cache.ExternalServer != "" && cfg.Cache.ExternalSecret == "" {
@@ -173,7 +181,10 @@ func LoadDefault(file string) (*Config, error) {
 		cfg.Container.WorkdirParent = "workspace"
 	}
 	if cfg.Host.WorkdirParent == "" {
-		home, _ := os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("host.workdir_parent is unset and the user home directory could not be determined: %w", err)
+		}
 		cfg.Host.WorkdirParent = filepath.Join(home, ".cache", "act")
 	}
 	if cfg.Runner.FetchTimeout <= 0 {

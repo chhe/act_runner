@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"gitea.com/gitea/runner/internal/pkg/ver"
+
 	"connectrpc.com/connect"
 	"gitea.dev/actions-proto-go/ping/v1/pingv1connect"
 	"gitea.dev/actions-proto-go/runner/v1/runnerv1connect"
@@ -36,6 +38,7 @@ func New(endpoint string, insecure bool, uuid, token string, opts ...connect.Cli
 
 	opts = append(opts, connect.WithInterceptors(connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
 		return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+			req.Header().Set("User-Agent", "gitea-runner/"+ver.Version())
 			if uuid != "" {
 				req.Header().Set(UUIDHeader, uuid)
 			}

@@ -78,6 +78,35 @@ func TestPoller_FetchErrorIncrementsErrorsOnly(t *testing.T) {
 	assert.Equal(t, int64(0), s.consecutiveEmpty)
 }
 
+// TestPoller_FetchUnauthenticatedStopsPolling verifies that an Unauthenticated
+// response marks the runner as unregistered and cancels the polling context so
+// the daemon can exit instead of retrying forever.
+func TestPoller_FetchUnauthenticatedStopsPolling(t *testing.T) {
+	client := mocks.NewClient(t)
+	client.On("FetchTask", mock.Anything, mock.Anything).Return(
+		func(_ context.Context, _ *connect_go.Request[runnerv1.FetchTaskRequest]) (*connect_go.Response[runnerv1.FetchTaskResponse], error) {
+			return nil, connect_go.NewError(connect_go.CodeUnauthenticated, errors.New("unregistered runner"))
+		},
+	)
+
+	cfg, err := config.LoadDefault("")
+	require.NoError(t, err)
+	p := New(cfg, client, nil)
+
+	s := &workerState{}
+	_, ok := p.fetchTask(context.Background(), s)
+	require.False(t, ok)
+
+	assert.True(t, p.Unregistered(), "runner should be marked unregistered")
+	assert.Equal(t, int64(0), s.consecutiveErrors, "unauthenticated must not drive error backoff")
+
+	select {
+	case <-p.pollingCtx.Done():
+	default:
+		t.Fatal("expected polling context to be cancelled after an Unauthenticated response")
+	}
+}
+
 // TestPoller_CalculateInterval verifies the exponential backoff math is
 // correctly driven by the workerState counters.
 func TestPoller_CalculateInterval(t *testing.T) {

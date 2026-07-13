@@ -56,6 +56,9 @@ func Execute(ctx context.Context) {
 	// ./gitea-runner exec
 	rootCmd.AddCommand(loadExecCmd(ctx))
 
+	// ./gitea-runner bug-report
+	rootCmd.AddCommand(loadBugReportCmd())
+
 	// ./gitea-runner config
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "generate-config",

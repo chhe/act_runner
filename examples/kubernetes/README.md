@@ -13,3 +13,6 @@ Files in this directory:
 
 - [`rootless-docker.yaml`](rootless-docker.yaml)
   How to create a rootless Deployment and Persistent Volume for Kubernetes to act as a runner. The Docker credentials are re-generated each time the pod connects and does not need to be persisted.
+
+- [`statefulset-dind.yaml`](statefulset-dind.yaml)
+  StatefulSet variant of the dind example. Each replica gets a stable identity and its own persistent volume via `volumeClaimTemplates`, so the runner keeps its `.runner` registration across restarts and reschedules instead of trying to register again.

@@ -176,7 +176,12 @@ func runDaemon(ctx context.Context, daemArgs *daemonArgs, configFile *string) fu
 		} else {
 			go poller.Poll()
 
-			<-ctx.Done()
+			// Stop either on an external cancellation or when the poller shuts
+			// itself down (e.g. after the runner has been unregistered).
+			select {
+			case <-ctx.Done():
+			case <-poller.Done():
+			}
 		}
 
 		log.Infof("runner: %s shutdown initiated, waiting %s for running jobs to complete before shutting down", resp.Msg.Runner.Name, cfg.Runner.ShutdownTimeout)
@@ -187,6 +192,10 @@ func runDaemon(ctx context.Context, daemArgs *daemonArgs, configFile *string) fu
 		err = poller.Shutdown(ctx)
 		if err != nil {
 			log.Warnf("runner: %s cancelled in progress jobs during shutdown", resp.Msg.Runner.Name)
+		}
+
+		if poller.Unregistered() {
+			return errors.New("runner is no longer registered with the server; please register it again")
 		}
 
 		return nil

@@ -45,6 +45,10 @@ type Poller struct {
 	shutdownJobs context.CancelFunc
 
 	done chan struct{}
+
+	// unregistered is set when the server rejects the runner with an
+	// Unauthenticated response, meaning the runner is no longer registered.
+	unregistered atomic.Bool
 }
 
 // workerState holds the single poller's backoff state. Consecutive empty or
@@ -135,6 +139,19 @@ func (p *Poller) PollOnce() {
 		p.runTaskWithRecover(p.jobsCtx, task)
 		return
 	}
+}
+
+// Done returns a channel that is closed once polling has fully stopped,
+// allowing callers to react when the poller shuts itself down (e.g. after the
+// runner has been unregistered) rather than only on an external cancellation.
+func (p *Poller) Done() <-chan struct{} {
+	return p.done
+}
+
+// Unregistered reports whether polling stopped because the server rejected the
+// runner as unregistered (an Unauthenticated response).
+func (p *Poller) Unregistered() bool {
+	return p.unregistered.Load()
 }
 
 func (p *Poller) runIdleMaintenance() {
@@ -264,6 +281,15 @@ func (p *Poller) fetchTask(ctx context.Context, s *workerState) (*runnerv1.Task,
 	metrics.PollFetchDuration.Observe(time.Since(start).Seconds())
 
 	if err != nil {
+		// An Unauthenticated response means the server no longer knows this
+		// runner (e.g. it was deleted). Retrying forever is pointless, so stop
+		// polling and let the daemon exit with an error instead of spinning.
+		if connect.CodeOf(err) == connect.CodeUnauthenticated {
+			log.WithError(err).Error("server rejected the runner as unregistered, stopping poller")
+			p.unregistered.Store(true)
+			p.shutdownPolling()
+			return nil, false
+		}
 		log.WithError(err).Error("failed to fetch task")
 		s.consecutiveErrors++
 		metrics.PollFetchTotal.WithLabelValues(metrics.LabelResultError).Inc()

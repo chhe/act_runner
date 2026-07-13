@@ -445,6 +445,7 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 		GitHubInstance:       strings.TrimSuffix(r.client.Address(), "/"),
 		AutoRemove:           true,
 		NoSkipCheckout:       true,
+		DisableActEnv:        r.cfg.Runner.SetActEnv != nil && !*r.cfg.Runner.SetActEnv,
 		PresetGitHubContext:  preset,
 		EventJSON:            string(eventJSON),
 		ContainerNamePrefix:  fmt.Sprintf("GITEA-ACTIONS-TASK-%d", task.Id),

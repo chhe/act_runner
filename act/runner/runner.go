@@ -65,6 +65,7 @@ type Config struct {
 	ArtifactServerAddr                 string                                        // the address the artifact server binds to
 	ArtifactServerPort                 string                                        // the port the artifact server binds to
 	NoSkipCheckout                     bool                                          // do not skip actions/checkout
+	DisableActEnv                      bool                                          // do not inject the ACT=true environment variable into jobs
 	RemoteName                         string                                        // remote name in local git repo config
 	ReplaceGheActionWithGithubCom      []string                                      // Use actions from GitHub Enterprise instance to GitHub
 	ReplaceGheActionTokenWithGithubCom string                                        // Token of private action repo on GitHub.
