@@ -6,12 +6,14 @@ package runner
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"gitea.com/gitea/runner/act/exprparser"
 	"gitea.com/gitea/runner/act/model"
 
 	assert "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	yaml "go.yaml.in/yaml/v4"
 )
 
@@ -319,5 +321,84 @@ func TestRewriteSubExpressionForceFormat(t *testing.T) {
 			}
 			assertObject.Equal(table.out, out, table.in)
 		})
+	}
+}
+
+func TestGetEvaluatorInputsBoolean(t *testing.T) {
+	workflows := map[string]string{
+		"workflow_call": `
+on:
+  workflow_call:
+    inputs:
+      flag:
+        type: boolean
+        default: true
+      name:
+        type: string
+        default: gitea
+`,
+		"workflow_dispatch": `
+on:
+  workflow_dispatch:
+    inputs:
+      flag:
+        type: boolean
+        default: true
+      name:
+        type: string
+        default: gitea
+`,
+	}
+
+	tables := []struct {
+		name  string
+		event map[string]any
+		flag  any
+	}{
+		{
+			// Gitea >= 1.27 resolves the inputs server-side and sends native JSON types
+			name:  "native bool true",
+			event: map[string]any{"inputs": map[string]any{"flag": true}},
+			flag:  true,
+		},
+		{
+			name:  "native bool false",
+			event: map[string]any{"inputs": map[string]any{"flag": false}},
+			flag:  false,
+		},
+		{
+			name:  "string true",
+			event: map[string]any{"inputs": map[string]any{"flag": "true"}},
+			flag:  true,
+		},
+		{
+			name:  "string false",
+			event: map[string]any{"inputs": map[string]any{"flag": "false"}},
+			flag:  false,
+		},
+		{
+			name:  "default is used when the event carries no inputs",
+			event: map[string]any{},
+			flag:  true,
+		},
+	}
+
+	for eventName, workflow := range workflows {
+		for _, table := range tables {
+			t.Run(eventName+"/"+table.name, func(t *testing.T) {
+				wf, err := model.ReadWorkflow(strings.NewReader(workflow))
+				require.NoError(t, err)
+
+				rc := &RunContext{
+					Config: &Config{Workdir: "."},
+					Run:    &model.Run{JobID: "job1", Workflow: wf},
+				}
+				ghc := &model.GithubContext{EventName: eventName, Event: table.event}
+
+				inputs := getEvaluatorInputs(context.Background(), rc, nil, ghc)
+				assert.Equal(t, table.flag, inputs["flag"])
+				assert.Equal(t, "gitea", inputs["name"])
+			})
+		}
 	}
 }
