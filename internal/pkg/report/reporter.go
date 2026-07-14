@@ -26,6 +26,12 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// Size limits for the outputs reported to the server.
+const (
+	maxOutputKeyLen   = 255
+	maxOutputValueLen = 1024 * 1024 // 1 MiB
+)
+
 type Reporter struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -390,13 +396,15 @@ func (r *Reporter) SetOutputs(outputs map[string]string) {
 	defer r.stateMu.Unlock()
 
 	for k, v := range outputs {
-		if len(k) > 255 {
-			r.logf("ignore output because the key is too long: %q", k)
+		if l := len(k); l > maxOutputKeyLen {
+			log.Warnf("ignore output %q because the key is too long: %d > %d", k, l, maxOutputKeyLen)
+			r.logf("ignore output %q because the key is too long: %d > %d", k, l, maxOutputKeyLen)
 			continue
 		}
-		if l := len(v); l > 1024*1024 {
-			log.Println("ignore output because the value is too long:", k, l)
-			r.logf("ignore output because the value %q is too long: %d", k, l)
+		if l := len(v); l > maxOutputValueLen {
+			log.Warnf("ignore output %q because the value is too long: %d > %d", k, l, maxOutputValueLen)
+			r.logf("ignore output %q because the value is too long: %d > %d", k, l, maxOutputValueLen)
+			continue
 		}
 		if _, ok := r.outputs.Load(k); ok {
 			continue

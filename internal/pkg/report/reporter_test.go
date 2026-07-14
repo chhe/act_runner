@@ -1020,11 +1020,24 @@ func TestReporter_SetOutputs(t *testing.T) {
 	got, _ = r.outputs.Load("foo")
 	assert.Equal(t, "bar", got)
 
-	// keys longer than 255 chars are dropped
-	longKey := strings.Repeat("k", 256)
+	// keys longer than maxOutputKeyLen are dropped
+	longKey := strings.Repeat("k", maxOutputKeyLen+1)
 	r.SetOutputs(map[string]string{longKey: "v"})
 	_, ok = r.outputs.Load(longKey)
 	assert.False(t, ok)
+
+	// values longer than maxOutputValueLen are dropped
+	longValue := strings.Repeat("v", maxOutputValueLen+1)
+	r.SetOutputs(map[string]string{"big": longValue})
+	_, ok = r.outputs.Load("big")
+	assert.False(t, ok)
+
+	// a value at exactly the limit is still stored
+	maxValue := strings.Repeat("v", maxOutputValueLen)
+	r.SetOutputs(map[string]string{"atlimit": maxValue})
+	got, ok = r.outputs.Load("atlimit")
+	require.True(t, ok)
+	assert.Len(t, got, maxOutputValueLen)
 }
 
 func TestReporter_EffectiveCloseTimeout(t *testing.T) {
