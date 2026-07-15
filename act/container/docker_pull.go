@@ -72,7 +72,9 @@ func NewDockerPullExecutor(input NewDockerPullExecutorInput) common.Executor {
 
 				_ = logDockerResponse(logger, reader, err != nil)
 			}
-			return err
+			if err != nil {
+				return fmt.Errorf("failed to pull image '%s' (%s): %w", imageRef, input.Platform, err)
+			}
 		}
 		return nil
 	}

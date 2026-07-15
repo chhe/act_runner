@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/act/container"
 	"gitea.com/gitea/runner/act/exprparser"
 	"gitea.com/gitea/runner/act/model"
 
@@ -200,6 +201,93 @@ jobs:
 	require.NoError(t, err)
 	assert.Empty(t, username)
 	assert.Empty(t, password)
+}
+
+// fakeContainer turns every container operation into a no-op, so startJobContainer
+// runs without a Docker daemon. The embedded interface is nil, so any method the
+// test does not exercise panics rather than silently doing the wrong thing.
+type fakeContainer struct {
+	container.ExecutionsEnvironment
+}
+
+func (fakeContainer) Pull(bool) common.Executor  { return func(context.Context) error { return nil } }
+func (fakeContainer) Start(bool) common.Executor { return func(context.Context) error { return nil } }
+func (fakeContainer) Remove() common.Executor    { return func(context.Context) error { return nil } }
+func (fakeContainer) Close() common.Executor     { return func(context.Context) error { return nil } }
+func (fakeContainer) GetActPath() string         { return "/var/run/act" }
+func (fakeContainer) Create([]string, []string) common.Executor {
+	return func(context.Context) error { return nil }
+}
+
+func (fakeContainer) Copy(string, ...*container.FileEntry) common.Executor {
+	return func(context.Context) error { return nil }
+}
+
+// Regression test: a service without a `credentials:` block resolves to empty
+// credentials, which used to overwrite the job container's own credentials.
+func TestStartJobContainerKeepsJobCredentialsWithServices(t *testing.T) {
+	workflow, err := model.ReadWorkflow(strings.NewReader(`
+name: test
+on: push
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    container:
+      image: registry.example/private:latest
+      credentials:
+        username: job-user
+        password: job-password
+    services:
+      redis:
+        image: redis:latest
+      db:
+        image: postgres:latest
+        credentials:
+          username: db-user
+          password: db-password
+    steps: []
+`))
+	require.NoError(t, err)
+
+	var inputs []*container.NewContainerInput
+	origNewContainer := newContainer
+	newContainer = func(input *container.NewContainerInput) container.ExecutionsEnvironment {
+		inputs = append(inputs, input)
+		return fakeContainer{}
+	}
+	t.Cleanup(func() { newContainer = origNewContainer })
+
+	rc := &RunContext{
+		Name: "test",
+		Config: &Config{
+			Workdir: "/tmp",
+			// no daemon: an explicit network mode creates no network, and
+			// reusing containers short-circuits the volume cleanup executors
+			ContainerNetworkMode: "host",
+			ReuseContainers:      true,
+			Env:                  map[string]string{},
+			Secrets:              map[string]string{},
+		},
+		Env: map[string]string{},
+		Run: &model.Run{
+			JobID:    "job",
+			Workflow: workflow,
+		},
+	}
+	rc.ExprEval = rc.NewExpressionEvaluator(t.Context())
+
+	require.NoError(t, rc.startJobContainer()(t.Context()))
+
+	credentials := map[string][2]string{}
+	for _, in := range inputs {
+		credentials[in.Image] = [2]string{in.Username, in.Password}
+	}
+
+	// the job container keeps its own credentials, whichever services exist
+	require.Equal(t, [2]string{"job-user", "job-password"}, credentials["registry.example/private:latest"])
+	// each service keeps its own, and a service without credentials gets none
+	require.Equal(t, [2]string{"db-user", "db-password"}, credentials["postgres:latest"])
+	require.Equal(t, [2]string{"", ""}, credentials["redis:latest"])
 }
 
 func TestRunContext_GetBindsAndMounts(t *testing.T) {
