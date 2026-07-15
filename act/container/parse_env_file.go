@@ -13,6 +13,9 @@ import (
 	"strings"
 
 	"gitea.com/gitea/runner/act/common"
+
+	"golang.org/x/text/encoding/unicode"
+	"golang.org/x/text/transform"
 )
 
 func parseEnvFile(e Container, srcPath string, env *map[string]string) common.Executor {
@@ -28,11 +31,19 @@ func parseEnvFile(e Container, srcPath string, env *map[string]string) common.Ex
 		if err != nil && err != io.EOF {
 			return err
 		}
-		s := bufio.NewScanner(reader)
+		// Decode by BOM: Windows PowerShell 5.1 redirection writes UTF-16, and some
+		// tools emit a UTF-8 BOM. Without a BOM the file is read as UTF-8, as before.
+		decoded := transform.NewReader(reader, unicode.BOMOverride(unicode.UTF8.NewDecoder()))
+
+		s := bufio.NewScanner(decoded)
 		// Default 64 KiB max token size is too small for realistic env-file lines; allow up to 16 MiB.
 		s.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 		for s.Scan() {
 			line := s.Text()
+			// GitHub's runner ignores blank lines
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
 			singleLineEnv := strings.Index(line, "=")
 			multiLineEnv := strings.Index(line, "<<")
 			if singleLineEnv != -1 && (multiLineEnv == -1 || singleLineEnv < multiLineEnv) {

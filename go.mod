@@ -40,6 +40,7 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0-rc.3
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0
+	golang.org/x/text v0.37.0
 	google.golang.org/protobuf v1.36.11
 	gotest.tools/v3 v3.5.2
 	tags.cncf.io/container-device-interface v1.1.0
