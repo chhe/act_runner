@@ -12,6 +12,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestResolveLabels(t *testing.T) {
+	var (
+		cfgLabels = []string{"cfg:host"}
+		regLabels = []string{"reg:host"}
+	)
+
+	tests := []struct {
+		name string
+		arg  string
+		cfg  []string
+		reg  []string
+		want []string
+	}{
+		{"flag wins", "flag:host,other", cfgLabels, regLabels, []string{"flag:host", "other"}},
+		{"config wins over registration", "", cfgLabels, regLabels, cfgLabels},
+		{"registration is the fallback", "", nil, regLabels, regLabels},
+		{"blank flag is ignored", " , ", cfgLabels, regLabels, cfgLabels},
+		{"nothing configured", "", nil, nil, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, resolveLabels(tt.arg, tt.cfg, tt.reg))
+		})
+	}
+}
+
 func TestGetDockerSocketPathUsesConfigAndEnvironment(t *testing.T) {
 	got, err := getDockerSocketPath("tcp://docker.example:2376")
 	require.NoError(t, err)

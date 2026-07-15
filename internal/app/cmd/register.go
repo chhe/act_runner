@@ -387,7 +387,10 @@ func doRegister(ctx context.Context, cfg *config.Config, inputs *registerInputs)
 
 	ls := make([]string, len(reg.Labels))
 	for i, v := range reg.Labels {
-		l, _ := labels.Parse(v)
+		l, err := labels.Parse(v)
+		if err != nil {
+			return fmt.Errorf("failed to parse label %q: %w", v, err)
+		}
 		ls[i] = l.Name
 	}
 	// register new runner.

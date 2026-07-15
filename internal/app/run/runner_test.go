@@ -75,7 +75,7 @@ func TestNewRunnerInitializesLabelsAndEnvironment(t *testing.T) {
 	cfg.Runner.Envs = map[string]string{"EXISTING": "value"}
 	reg := &config.Registration{
 		Name:   "runner",
-		Labels: []string{"ubuntu:host", "bad:vm:label"},
+		Labels: []string{"ubuntu:host", "", "pool:e57e18d4"},
 	}
 	cli := clientmocks.NewClient(t)
 	cli.On("Address").Return("https://gitea.example/").Maybe()
@@ -83,7 +83,8 @@ func TestNewRunnerInitializesLabelsAndEnvironment(t *testing.T) {
 	r := NewRunner(cfg, reg, cli)
 
 	require.Equal(t, "runner", r.name)
-	require.Len(t, r.labels, 1)
+	require.Len(t, r.labels, 2)
+	require.Equal(t, []string{"ubuntu", "pool:e57e18d4"}, r.labels.Names())
 	require.Equal(t, "value", r.envs["EXISTING"])
 	require.Equal(t, "https://gitea.example/api/actions_pipeline/", r.envs["ACTIONS_RUNTIME_URL"])
 	require.Equal(t, "https://gitea.example", r.envs["ACTIONS_RESULTS_URL"])

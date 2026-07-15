@@ -15,11 +15,11 @@ import (
 
 func TestRegisterNonInteractiveReturnsLabelValidationError(t *testing.T) {
 	err := registerNoInteractive(t.Context(), "", &registerArgs{
-		Labels:       "label:invalid",
+		Labels:       "ubuntu:host,,broken",
 		Token:        "token",
 		InstanceAddr: "http://localhost:3000",
 	})
-	assert.Error(t, err, "unsupported schema: invalid")
+	assert.ErrorContains(t, err, "empty label")
 }
 
 func TestRegisterInputsValidate(t *testing.T) {
@@ -40,8 +40,8 @@ func TestRegisterInputsValidate(t *testing.T) {
 		},
 		{
 			name:    "invalid label",
-			inputs:  registerInputs{InstanceAddr: "http://localhost:3000", Token: "token", Labels: []string{"ubuntu:vm:bad"}},
-			wantErr: "unsupported schema: vm",
+			inputs:  registerInputs{InstanceAddr: "http://localhost:3000", Token: "token", Labels: []string{""}},
+			wantErr: "empty label",
 		},
 		{
 			name:   "valid",
@@ -62,7 +62,9 @@ func TestRegisterInputsValidate(t *testing.T) {
 
 func TestValidateLabels(t *testing.T) {
 	require.NoError(t, validateLabels([]string{"ubuntu:host", "ubuntu:docker://node:18"}))
-	require.Error(t, validateLabels([]string{"ubuntu:host", "ubuntu:vm:bad"}))
+	// a colon that is not a supported schema is part of the label name
+	require.NoError(t, validateLabels([]string{"pool:e57e18d4-10d4-406f-93bf-60f127221bdd"}))
+	require.Error(t, validateLabels([]string{"ubuntu:host", ""}))
 }
 
 func TestRegisterInputsStageValue(t *testing.T) {
@@ -106,11 +108,10 @@ func TestRegisterInputsAssignToNext(t *testing.T) {
 
 	t.Run("labels from config skip the labels stage", func(t *testing.T) {
 		cfg := &config.Config{}
-		cfg.Runner.Labels = []string{"ubuntu:host", "ubuntu:vm:bad"}
+		cfg.Runner.Labels = []string{"ubuntu:host", "", "pool:e57e18d4"}
 		inputs := &registerInputs{}
 		require.Equal(t, StageWaitingForRegistration, inputs.assignToNext(StageInputRunnerName, "runner", cfg))
-		// only the valid label survives
-		require.Equal(t, []string{"ubuntu:host"}, inputs.Labels)
+		require.Equal(t, []string{"ubuntu:host", "pool:e57e18d4"}, inputs.Labels)
 	})
 
 	t.Run("blank labels input uses defaults", func(t *testing.T) {
@@ -121,8 +122,14 @@ func TestRegisterInputsAssignToNext(t *testing.T) {
 
 	t.Run("invalid labels input loops back", func(t *testing.T) {
 		inputs := &registerInputs{}
-		require.Equal(t, StageInputLabels, inputs.assignToNext(StageInputLabels, "ubuntu:vm:bad", emptyCfg))
+		require.Equal(t, StageInputLabels, inputs.assignToNext(StageInputLabels, "ubuntu:host,,bad", emptyCfg))
 		require.Nil(t, inputs.Labels)
+	})
+
+	t.Run("labels containing a colon are accepted", func(t *testing.T) {
+		inputs := &registerInputs{}
+		require.Equal(t, StageWaitingForRegistration, inputs.assignToNext(StageInputLabels, "pool:e57e18d4,ubuntu:host", emptyCfg))
+		require.Equal(t, []string{"pool:e57e18d4", "ubuntu:host"}, inputs.Labels)
 	})
 
 	t.Run("overwrite local config", func(t *testing.T) {

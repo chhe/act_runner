@@ -199,6 +199,14 @@ Labels are chosen at registration time (`--labels`, or the interactive prompt) a
 
 If `runner.labels` is set in the YAML file, those labels are used during `register` and the `--labels` CLI flag is ignored.
 
+The `daemon` command also accepts `--labels` (which defaults to the `GITEA_RUNNER_LABELS` environment variable), so the labels of an already registered runner can be changed without deleting its registration file. The most explicit source wins:
+
+```
+--labels / GITEA_RUNNER_LABELS   >   runner.labels in the config file   >   labels in the .runner file
+```
+
+Whenever the resulting labels differ from the ones in the registration file, they are written back to it and re-declared to the Gitea instance on startup.
+
 > **Note:** A runner that only exposes `host` labels still needs access to a Docker daemon (e.g. a mounted `/var/run/docker.sock`) whenever a job uses a `docker://` action or a service container. `host` labels only change where the job's own steps run; container-based steps and actions are still executed with Docker.
 
 #### Caching (`actions/cache`)

@@ -4,7 +4,7 @@
 package labels
 
 import (
-	"fmt"
+	"errors"
 	"strings"
 )
 
@@ -17,13 +17,20 @@ type Label struct {
 	Name   string
 	Schema string
 	Arg    string
+	// Opaque marks a label whose name contains a colon but no supported schema,
+	// like "pool:e57e18d4-...". It is kept verbatim and behaves like a host label.
+	Opaque bool
 }
 
 func Parse(str string) (*Label, error) {
+	if str == "" {
+		return nil, errors.New("empty label")
+	}
+
 	splits := strings.SplitN(str, ":", 3)
 	label := &Label{
 		Name:   splits[0],
-		Schema: "host",
+		Schema: SchemeHost,
 		Arg:    "",
 	}
 	if len(splits) >= 2 {
@@ -33,7 +40,12 @@ func Parse(str string) (*Label, error) {
 		label.Arg = splits[2]
 	}
 	if label.Schema != SchemeHost && label.Schema != SchemeDocker {
-		return nil, fmt.Errorf("unsupported schema: %s", label.Schema)
+		// Not a schema we know: the colon belongs to the label name itself.
+		return &Label{
+			Name:   str,
+			Schema: SchemeHost,
+			Opaque: true,
+		}, nil
 	}
 	return label, nil
 }
@@ -59,7 +71,7 @@ func (l Labels) PickPlatform(runsOn []string) string {
 		case SchemeHost:
 			platforms[label.Name] = "-self-hosted"
 		default:
-			// It should not happen, because Parse has checked it.
+			// unreachable: Parse only produces host or docker schemas
 			continue
 		}
 	}
@@ -94,7 +106,7 @@ func (l Labels) ToStrings() []string {
 	ls := make([]string, 0, len(l))
 	for _, label := range l {
 		lbl := label.Name
-		if label.Schema != "" {
+		if !label.Opaque && label.Schema != "" {
 			lbl += ":" + label.Schema
 			if label.Arg != "" {
 				lbl += ":" + label.Arg

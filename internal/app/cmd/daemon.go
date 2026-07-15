@@ -49,10 +49,7 @@ func runDaemon(ctx context.Context, daemArgs *daemonArgs, configFile *string) fu
 			return fmt.Errorf("failed to load registration file: %w", err)
 		}
 
-		lbls := reg.Labels
-		if len(cfg.Runner.Labels) > 0 {
-			lbls = cfg.Runner.Labels
-		}
+		lbls := resolveLabels(daemArgs.Labels, cfg.Runner.Labels, reg.Labels)
 
 		ls := labels.Labels{}
 		for _, l := range lbls {
@@ -203,7 +200,30 @@ func runDaemon(ctx context.Context, daemArgs *daemonArgs, configFile *string) fu
 }
 
 type daemonArgs struct {
-	Once bool
+	Once   bool
+	Labels string
+}
+
+// resolveLabels picks the labels to run with: --labels/GITEA_RUNNER_LABELS > config > .runner.
+// The flag lets a registered runner change its labels without deleting the .runner file.
+func resolveLabels(argLabels string, cfgLabels, regLabels []string) []string {
+	if lbls := splitLabels(argLabels); len(lbls) > 0 {
+		return lbls
+	}
+	if len(cfgLabels) > 0 {
+		return cfgLabels
+	}
+	return regLabels
+}
+
+func splitLabels(s string) []string {
+	var lbls []string
+	for l := range strings.SplitSeq(s, ",") {
+		if l = strings.TrimSpace(l); l != "" {
+			lbls = append(lbls, l)
+		}
+	}
+	return lbls
 }
 
 // initLogging setup the global logrus logger.

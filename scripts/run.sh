@@ -12,14 +12,18 @@ CONFIG_ARG=""
 if [[ ! -z "${CONFIG_FILE}" ]]; then
   CONFIG_ARG="--config ${CONFIG_FILE}"
 fi
-EXTRA_ARGS=""
+LABEL_ARGS=""
 if [[ ! -z "${GITEA_RUNNER_LABELS}" ]]; then
-  EXTRA_ARGS="${EXTRA_ARGS} --labels ${GITEA_RUNNER_LABELS}"
+  LABEL_ARGS="--labels ${GITEA_RUNNER_LABELS}"
 fi
+EXTRA_ARGS="${LABEL_ARGS}"
 if [[ ! -z "${GITEA_RUNNER_EPHEMERAL}" ]]; then
   EXTRA_ARGS="${EXTRA_ARGS} --ephemeral"
 fi
-RUN_ARGS=""
+# Also pass the labels to the daemon, so that an already registered runner
+# picks up changes to GITEA_RUNNER_LABELS instead of keeping the labels it
+# was first registered with.
+RUN_ARGS="${LABEL_ARGS}"
 if [[ ! -z "${GITEA_RUNNER_ONCE}" ]]; then
   RUN_ARGS="${RUN_ARGS} --once"
 fi
