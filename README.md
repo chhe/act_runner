@@ -85,6 +85,8 @@ docker run -e GITEA_INSTANCE_URL=https://your_gitea.com -e GITEA_RUNNER_REGISTRA
 
 Mount a volume on `/data` if you want the registration file and optional config to survive container recreation (see [scripts/run.sh](scripts/run.sh)).
 
+> **`/data` does not hold the image cache.** It is the runner's working directory and contains only the `.runner` registration file and, optionally, your config file. Images pulled for jobs live in the *Docker daemon's* data root, which for the `dind` flavours is inside the container (`/var/lib/docker`, or `/home/rootless/.local/share/docker` for `dind-rootless`). To keep the image cache across restarts, give that path its own volume as well — otherwise every new container re-pulls the job images. With the `basic` flavour the images live on whichever daemon you point the runner at, so there is nothing extra to persist.
+
 ### Image flavours
 
 The image is published in three flavours, all built from the single multi-stage [Dockerfile](Dockerfile) in this repository. They differ only in how a Docker daemon is made available to the jobs the runner executes; the `gitea-runner` binary inside them is identical.
@@ -121,6 +123,8 @@ Two processes have to run side by side here (the Docker daemon and the runner), 
 
 Same idea as `dind`, but built on `docker:dind-rootless` so the bundled daemon and the runner run as an unprivileged user (`rootless`, UID 1000) rather than `root`. `DOCKER_HOST` is preset to `unix:///run/user/1000/docker.sock` so the runner talks to the rootless daemon. This reduces the blast radius compared to the privileged `dind` flavour, but rootless Docker carries the usual rootless limitations (networking, cgroups, storage drivers, and some operations that need additional host configuration such as `/etc/subuid` / `/etc/subgid` mappings and unprivileged user-namespace support).
 
+> **The UID is fixed at 1000.** It comes from the `rootless` user baked into the upstream `docker:dind-rootless` base image, and the bundled daemon always listens on `/run/user/1000/docker.sock` inside the container, so running this flavour as a different user (`--user 1001`) does not work. If you need the runner to talk to a *host* rootless daemon that runs under some other UID, use the `basic` flavour instead and bind-mount that daemon's socket (see [examples/vm/rootless-docker.md](examples/vm/rootless-docker.md)); pointing `DOCKER_HOST` at a host socket from inside `dind-rootless` will not work. Changing the UID otherwise means rebuilding the image from a base with a different `rootless` user.
+
 > **Note on Podman:** these images target the Docker daemon. The bundled `dind`/`dind-rootless` daemons are `dockerd`, not Podman, and the `basic` flavour expects a Docker-compatible socket. Running them under rootless Podman is not a supported configuration, though pointing the `basic` flavour at a Podman socket that emulates the Docker API may work for some workloads.
 
 ### Configuration
@@ -146,6 +150,50 @@ Every option is described in [config.example.yaml](internal/pkg/config/config.ex
 If you omit `-c`, built-in defaults apply (same as an empty YAML document).
 
 Earlier releases let a small set of environment variables (`GITEA_DEBUG`, `GITEA_TRACE`, `GITEA_RUNNER_CAPACITY`, `GITEA_RUNNER_FILE`, `GITEA_RUNNER_ENVIRON`, `GITEA_RUNNER_ENV_FILE`) override parts of the default config. Those overrides have been removed — use a YAML config file for all settings instead. For the Docker images, the entrypoint still understands a separate set of variables (such as `RUNNER_STATE_FILE`); see [scripts/run.sh](scripts/run.sh) and the container documentation below.
+
+### Labels
+
+Labels decide **which jobs a runner accepts** and **how it runs them**. A job's `runs-on` is matched against the runner's label names; the first match wins and selects the execution environment for that job.
+
+A label is written as:
+
+```text
+<name>[:<schema>[:<args>]]
+```
+
+| Part | Meaning |
+| --- | --- |
+| `name` | The name a workflow refers to in `runs-on`, e.g. `ubuntu-latest`. |
+| `schema` | Either `docker` or `host`. Defaults to `host` when omitted. |
+| `args` | Only used by the `docker` schema: the image to run the job in. |
+
+Two schemas are supported:
+
+- **`docker://<image>`** — the job runs inside a container created from `<image>`:
+
+  ```text
+  ubuntu-latest:docker://docker.gitea.com/runner-images:ubuntu-latest
+  ```
+
+- **`host`** — the job's steps run directly on the machine the runner is on, using the tools installed there:
+
+  ```text
+  macos:host
+  ```
+
+So with the labels
+
+```text
+ubuntu-latest:docker://docker.gitea.com/runner-images:ubuntu-latest,macos:host
+```
+
+a workflow with `runs-on: ubuntu-latest` is executed in the `runner-images:ubuntu-latest` container, and one with `runs-on: macos` is executed directly on the host.
+
+Names may themselves contain a colon (for example `pool:e57e18d4-10d4-406f-93bf-60f127221bdd`); only `host` and `docker` are treated as schemas.
+
+If a job's `runs-on` matches none of the runner's labels, the job still runs, in the default `docker.gitea.com/runner-images:ubuntu-latest` image. Images maintained for this purpose are listed at [gitea/runner-images](https://gitea.com/gitea/runner-images).
+
+Labels are chosen at registration time (`--labels`, or the interactive prompt) and can be changed afterwards by editing `runner.labels` in the config file, or in the Gitea UI under the runner's settings.
 
 #### Registration vs config labels
 

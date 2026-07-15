@@ -1,3 +1,5 @@
+# Holds the runner's working directory (/data): the .runner registration file
+# and, optionally, the config file.
 kind: PersistentVolumeClaim
 apiVersion: v1
 metadata:
@@ -8,6 +10,21 @@ spec:
   resources:
     requests:
       storage: 1Gi
+  storageClassName: standard
+---
+# Holds the Docker daemon's data root (/var/lib/docker), i.e. the images pulled
+# for jobs. Without it, the image cache is lost whenever the pod is recreated
+# and every job re-pulls its images. Size it for the images you expect to cache.
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: docker-vol
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
   storageClassName: standard
 ---
 apiVersion: v1
@@ -45,6 +62,9 @@ spec:
       - name: runner-data
         persistentVolumeClaim:
           claimName: runner-vol
+      - name: docker-data
+        persistentVolumeClaim:
+          claimName: docker-vol
       initContainers:
       - name: docker
         image: docker:28.2.2-dind
@@ -53,6 +73,8 @@ spec:
         volumeMounts:
         - name: docker-socket
           mountPath: /var/run
+        - name: docker-data
+          mountPath: /var/lib/docker
         startupProbe:
           exec:
             command: ["/usr/bin/test", "-S", "/var/run/docker.sock"]

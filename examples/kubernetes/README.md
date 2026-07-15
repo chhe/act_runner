@@ -6,6 +6,11 @@ NOTE: `dind-docker.yaml` uses the native sidecar pattern (init container with `r
 
 NOTE: A helm chart for `gitea-runner` also exists for easier deployments https://gitea.com/gitea/helm-actions
 
+Each example persists **two** things, and it is worth knowing which is which:
+
+- `/data` is the runner's working directory. It holds the `.runner` registration file and, optionally, the config file — so the runner re-attaches to the server instead of registering again.
+- The Docker daemon's data root holds the images pulled for jobs (`/var/lib/docker` for the dind sidecar, `/home/rootless/.local/share/docker` for `dind-rootless`). It is *not* under `/data`. If you drop this volume, the examples still work, but the image cache is discarded whenever the pod is recreated and every job re-pulls its images.
+
 Files in this directory:
 
 - [`dind-docker.yaml`](dind-docker.yaml)

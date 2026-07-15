@@ -1,3 +1,5 @@
+# Holds the runner's working directory (/data): the .runner registration file
+# and, optionally, the config file.
 kind: PersistentVolumeClaim
 apiVersion: v1
 metadata:
@@ -8,6 +10,21 @@ spec:
   resources:
     requests:
       storage: 1Gi
+  storageClassName: standard
+---
+# Holds the rootless Docker daemon's data root, i.e. the images pulled for jobs.
+# Without it, the image cache is lost whenever the pod is recreated and every job
+# re-pulls its images. Size it for the images you expect to cache.
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: docker-vol
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
   storageClassName: standard
 ---
 apiVersion: v1
@@ -43,7 +60,12 @@ spec:
       - name: runner-data
         persistentVolumeClaim:
           claimName: runner-vol
+      - name: docker-data
+        persistentVolumeClaim:
+          claimName: docker-vol
       securityContext:
+        # The dind-rootless image runs as the `rootless` user (UID/GID 1000);
+        # fsGroup makes both volumes writable for it.
         fsGroup: 1000
       containers:
       - name: runner
@@ -68,4 +90,7 @@ spec:
         volumeMounts:
         - name: runner-data
           mountPath: /data
+        # The rootless daemon keeps its images here, not under /data.
+        - name: docker-data
+          mountPath: /home/rootless/.local/share/docker
 

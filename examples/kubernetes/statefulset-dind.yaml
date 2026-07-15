@@ -44,6 +44,10 @@ spec:
         volumeMounts:
         - name: docker-socket
           mountPath: /var/run
+        # Keeps the images pulled for jobs across restarts. Without this, the
+        # daemon's data root is ephemeral and every job re-pulls its images.
+        - name: docker-data
+          mountPath: /var/lib/docker
         startupProbe:
           exec:
             command: ["/usr/bin/test", "-S", "/var/run/docker.sock"]
@@ -68,6 +72,8 @@ spec:
         - name: docker-socket
           mountPath: /var/run
   volumeClaimTemplates:
+  # The runner's working directory: the .runner registration file and, optionally,
+  # the config file.
   - metadata:
       name: runner-data
     spec:
@@ -76,4 +82,15 @@ spec:
       resources:
         requests:
           storage: 1Gi
+      storageClassName: standard
+  # The Docker daemon's data root: the images pulled for jobs. Size it for the
+  # images you expect to cache.
+  - metadata:
+      name: docker-data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 20Gi
       storageClassName: standard
