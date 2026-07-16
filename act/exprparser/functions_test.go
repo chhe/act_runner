@@ -254,3 +254,27 @@ func TestFunctionFormat(t *testing.T) {
 		})
 	}
 }
+
+func TestStatusFunctionsNilJob(t *testing.T) {
+	// A nil Job context must not panic: the status-check functions should treat
+	// it as an empty status and return false rather than dereferencing nil.
+	env := &EvaluationEnvironment{}
+
+	table := []struct {
+		input   string
+		context string
+		name    string
+	}{
+		{"cancelled()", "job", "cancelled-nil-job"},
+		{"success()", "step", "step-success-nil-job"},
+		{"failure()", "step", "step-failure-nil-job"},
+	}
+
+	for _, tt := range table {
+		t.Run(tt.name, func(t *testing.T) {
+			output, err := NewInterpeter(env, Config{Context: tt.context}).Evaluate(tt.input, DefaultStatusCheckNone)
+			assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
+			assert.Equal(t, false, output)
+		})
+	}
+}

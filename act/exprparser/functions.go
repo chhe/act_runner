@@ -274,8 +274,17 @@ func (impl *interperterImpl) jobSuccess() (bool, error) { //nolint:unparam // pr
 	return true, nil
 }
 
+// jobStatus returns the current job status, treating a nil Job context as an
+// empty status so status-check functions never panic on a nil dereference.
+func (impl *interperterImpl) jobStatus() string {
+	if impl.env.Job == nil {
+		return ""
+	}
+	return impl.env.Job.Status
+}
+
 func (impl *interperterImpl) stepSuccess() (bool, error) { //nolint:unparam // pre-existing issue from nektos/act
-	return impl.env.Job.Status == "success", nil
+	return impl.jobStatus() == "success", nil
 }
 
 func (impl *interperterImpl) jobFailure() (bool, error) { //nolint:unparam // pre-existing issue from nektos/act
@@ -292,9 +301,9 @@ func (impl *interperterImpl) jobFailure() (bool, error) { //nolint:unparam // pr
 }
 
 func (impl *interperterImpl) stepFailure() (bool, error) { //nolint:unparam // pre-existing issue from nektos/act
-	return impl.env.Job.Status == "failure", nil
+	return impl.jobStatus() == "failure", nil
 }
 
 func (impl *interperterImpl) cancelled() (bool, error) { //nolint:unparam // pre-existing issue from nektos/act
-	return impl.env.Job.Status == "cancelled", nil
+	return impl.jobStatus() == "cancelled", nil
 }
