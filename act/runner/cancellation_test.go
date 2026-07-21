@@ -283,3 +283,30 @@ func TestPostStepsContextDeadlinePreservesJobError(t *testing.T) {
 	require.NoError(t, postCtx.Err(), "post context must not carry the expired deadline")
 	assert.ErrorIs(t, common.JobError(postCtx), assert.AnError, "the timeout job error must be preserved")
 }
+
+// reportStepError must treat a context.Canceled (e.g. a teardown-cancelled read) as an
+// interruption, never a job failure.
+func TestReportStepErrorTreatsCancelAsInterruption(t *testing.T) {
+	rc := &RunContext{}
+
+	// stray read cancellation while the job context is live: ignored, not a failure
+	live := common.WithJobErrorContainer(context.Background())
+	reportStepError(live, rc, context.Canceled)
+	require.NoError(t, common.JobError(live))
+	assert.False(t, rc.jobFailed)
+	assert.False(t, rc.jobCancelled)
+
+	// genuine job cancellation: recorded as cancelled, still not a failure
+	cancelled, cancel := context.WithCancel(common.WithJobErrorContainer(context.Background()))
+	cancel()
+	reportStepError(cancelled, rc, context.Canceled)
+	require.NoError(t, common.JobError(cancelled))
+	assert.False(t, rc.jobFailed)
+	assert.True(t, rc.jobCancelled)
+
+	// a real error still fails the job
+	failed := common.WithJobErrorContainer(context.Background())
+	reportStepError(failed, rc, assert.AnError)
+	require.ErrorIs(t, common.JobError(failed), assert.AnError)
+	assert.True(t, rc.jobFailed)
+}

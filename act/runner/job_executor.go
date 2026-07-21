@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -56,9 +57,15 @@ type jobInfo interface {
 	result(result string)
 }
 
-// reportStepError emits the GitHub Actions ##[error] annotation and records
-// the error against the job so the job is reported as failed.
+// reportStepError records a step error so the job is reported failed — except a
+// cancellation, which is an interruption, not a failure.
 func reportStepError(ctx context.Context, rc *RunContext, err error) {
+	if errors.Is(err, context.Canceled) {
+		// Defer to the job context: a genuine cancel reports cancelled, a stray teardown
+		// cancellation on a live ctx is ignored — never a step FAILURE.
+		rc.markInterrupted(ctx.Err())
+		return
+	}
 	common.Logger(ctx).Errorf("##[error]%v", err)
 	common.SetJobError(ctx, err)
 	rc.markFailed()
