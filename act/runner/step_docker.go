@@ -85,7 +85,7 @@ func (sd *stepDocker) runUsesContainer() common.Executor {
 			stepContainer.Create(rc.Config.ContainerCapAdd, rc.Config.ContainerCapDrop),
 			stepContainer.Start(true),
 		).Finally(
-			stepContainer.Remove().IfBool(!rc.Config.ReuseContainers),
+			stepContainer.Remove().IfBool(!rc.Config.ReuseContainers && !rc.Config.AutoRemove),
 		).Finally(stepContainer.Close())(ctx)
 	}
 }

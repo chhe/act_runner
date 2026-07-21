@@ -116,6 +116,11 @@ func (m *mockDockerClient) ContainerList(ctx context.Context, opts mobyclient.Co
 	return args.Get(0).(mobyclient.ContainerListResult), args.Error(1)
 }
 
+func (m *mockDockerClient) ContainerRemove(ctx context.Context, id string, opts mobyclient.ContainerRemoveOptions) (mobyclient.ContainerRemoveResult, error) {
+	args := m.Called(ctx, id, opts)
+	return args.Get(0).(mobyclient.ContainerRemoveResult), args.Error(1)
+}
+
 type endlessReader struct {
 	io.Reader
 }
@@ -379,6 +384,40 @@ func TestDockerCopyTarStreamErrorInMkdir(t *testing.T) {
 	assert.ErrorIs(t, err, merr) //nolint:testifylint // pre-existing issue from nektos/act
 
 	client.AssertExpectations(t)
+}
+
+// A remove that raced the daemon's AutoRemove teardown is not a failure and must not
+// be logged as one.
+func TestRemoveIgnoresAutoRemoveRace(t *testing.T) {
+	removeOpts := mobyclient.ContainerRemoveOptions{RemoveVolumes: true, Force: true}
+	for _, tc := range []struct {
+		name     string
+		err      error
+		wantLogs bool
+	}{
+		{name: "removal in progress", err: cerrdefs.ErrConflict.WithMessage("removal of container abc is already in progress")},
+		{name: "already removed", err: cerrdefs.ErrNotFound.WithMessage("No such container: abc")},
+		{name: "removed cleanly", err: nil},
+		{name: "real failure", err: errors.New("driver failed to remove root filesystem"), wantLogs: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logger, hook := test.NewNullLogger()
+			ctx := common.WithLogger(context.Background(), logger)
+			client := &mockDockerClient{}
+			client.On("ContainerRemove", ctx, "abc", removeOpts).Return(mobyclient.ContainerRemoveResult{}, tc.err)
+			cr := &containerReference{id: "abc", cli: client}
+
+			require.NoError(t, cr.remove()(ctx))
+			assert.Empty(t, cr.id)
+
+			if tc.wantLogs {
+				assert.Len(t, hook.AllEntries(), 1)
+			} else {
+				assert.Empty(t, hook.AllEntries())
+			}
+			client.AssertExpectations(t)
+		})
+	}
 }
 
 // find() must drop a stale cached id so later Copy/Exec don't hit the

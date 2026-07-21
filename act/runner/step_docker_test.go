@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func TestStepDockerMain(t *testing.T) {
@@ -116,6 +117,43 @@ func TestStepDockerMain(t *testing.T) {
 	assert.Empty(t, input.Password)
 
 	cm.AssertExpectations(t)
+}
+
+// With AutoRemove the daemon reaps the container on exit, so act must not remove it afterwards.
+func TestStepDockerAutoRemove(t *testing.T) {
+	orig := ContainerNewContainer
+	defer func() { ContainerNewContainer = orig }()
+
+	for _, tc := range []struct {
+		autoRemove bool
+		removes    int
+	}{
+		{false, 2}, // stale + post-run
+		{true, 1},  // post-run skipped
+	} {
+		cm := &containerMock{}
+		ContainerNewContainer = func(*container.NewContainerInput) container.ExecutionsEnvironment { return cm }
+
+		sd := &stepDocker{
+			RunContext: &RunContext{
+				Config:       &Config{AutoRemove: tc.autoRemove},
+				Run:          &model.Run{JobID: "1", Workflow: &model.Workflow{Jobs: map[string]*model.Job{"1": {}}}},
+				JobContainer: cm,
+			},
+			Step: &model.Step{ID: "1", Uses: "docker://node:14"},
+		}
+
+		removes := 0
+		cm.On("Pull", false).Return(func(context.Context) error { return nil })
+		cm.On("Remove").Return(func(context.Context) error { removes++; return nil })
+		cm.On("Create", []string(nil), []string(nil)).Return(func(context.Context) error { return nil })
+		cm.On("Start", true).Return(func(context.Context) error { return nil })
+		cm.On("Close").Return(func(context.Context) error { return nil })
+
+		require.NoError(t, sd.runUsesContainer()(context.Background()))
+		cm.AssertExpectations(t)
+		assert.Equal(t, tc.removes, removes)
+	}
 }
 
 func TestStepDockerNewStepContainerAllocatePTY(t *testing.T) {
