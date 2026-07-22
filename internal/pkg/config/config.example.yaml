@@ -199,11 +199,29 @@ host:
   # If it's empty, $HOME/.cache/act/ will be used.
   workdir_parent:
 
+# Optional local task-admission checks. Disabled by default. When enabled, low
+# disk space or a failing script pauses new task fetching; existing jobs continue.
+# No health checks run while any job is active; the last result is reused until idle.
+health_check:
+  enabled: false
+  # Minimum free space required on the filesystem holding runner workspaces.
+  # Defaults to 1024 MiB when omitted or set to zero.
+  min_free_disk_space_mb: 1024
+  # Optional additional executable. A non-zero exit, timeout, or startup failure
+  # marks the runner unavailable.
+  script: ''
+  # How long a script result is cached and its maximum execution time.
+  interval: 30s
+  timeout: 10s
+
 metrics:
   # Enable the Prometheus metrics endpoint.
-  # When enabled, metrics are served at http://<addr>/metrics and a liveness check at /healthz.
+  # When enabled, metrics are served at /metrics, liveness at /healthz, and
+  # task-admission readiness at /readyz.
   enabled: false
   # The address for the metrics HTTP server to listen on.
   # Defaults to localhost only. Set to ":9101" to allow external access,
   # but ensure the port is firewall-protected as there is no authentication.
   addr: "127.0.0.1:9101"
+  # Consecutive polling failures may last this long before /readyz returns 503.
+  readiness_grace: 30s

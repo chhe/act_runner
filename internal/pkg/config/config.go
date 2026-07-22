@@ -95,18 +95,30 @@ type Host struct {
 
 // Metrics represents the configuration for the Prometheus metrics endpoint.
 type Metrics struct {
-	Enabled bool   `yaml:"enabled"` // Enabled indicates whether the metrics endpoint is exposed.
-	Addr    string `yaml:"addr"`    // Addr specifies the listen address for the metrics HTTP server (e.g., ":9101").
+	Enabled        bool          `yaml:"enabled"`         // Enabled indicates whether the metrics endpoint is exposed.
+	Addr           string        `yaml:"addr"`            // Addr specifies the listen address for the metrics HTTP server (e.g., ":9101").
+	ReadinessGrace time.Duration `yaml:"readiness_grace"` // ReadinessGrace permits transient polling errors before /readyz becomes unhealthy.
+}
+
+// HealthCheck represents local checks that control whether the runner accepts
+// new tasks. The entire feature is opt-in through Enabled.
+type HealthCheck struct {
+	Enabled            bool          `yaml:"enabled"`                // Enabled activates local task-admission health checks.
+	MinFreeDiskSpaceMB int64         `yaml:"min_free_disk_space_mb"` // MinFreeDiskSpaceMB is the minimum free space required on the work volume.
+	Script             string        `yaml:"script"`                 // Script is an optional executable used as an additional health check.
+	Interval           time.Duration `yaml:"interval"`               // Interval controls how long a script result is cached.
+	Timeout            time.Duration `yaml:"timeout"`                // Timeout caps one health-check script invocation.
 }
 
 // Config represents the overall configuration.
 type Config struct {
-	Log       Log       `yaml:"log"`       // Log represents the configuration for logging.
-	Runner    Runner    `yaml:"runner"`    // Runner represents the configuration for the runner.
-	Cache     Cache     `yaml:"cache"`     // Cache represents the configuration for caching.
-	Container Container `yaml:"container"` // Container represents the configuration for the container.
-	Host      Host      `yaml:"host"`      // Host represents the configuration for the host.
-	Metrics   Metrics   `yaml:"metrics"`   // Metrics represents the configuration for the Prometheus metrics endpoint.
+	Log         Log         `yaml:"log"`          // Log represents the configuration for logging.
+	Runner      Runner      `yaml:"runner"`       // Runner represents the configuration for the runner.
+	Cache       Cache       `yaml:"cache"`        // Cache represents the configuration for caching.
+	Container   Container   `yaml:"container"`    // Container represents the configuration for the container.
+	Host        Host        `yaml:"host"`         // Host represents the configuration for the host.
+	Metrics     Metrics     `yaml:"metrics"`      // Metrics represents the configuration for the Prometheus metrics endpoint.
+	HealthCheck HealthCheck `yaml:"health_check"` // HealthCheck controls opt-in local task-admission checks.
 }
 
 // LoadDefault returns the default configuration.
@@ -220,8 +232,20 @@ func LoadDefault(file string) (*Config, error) {
 	if cfg.Runner.PostTaskScript != "" && cfg.Runner.PostTaskScriptTimeout <= 0 {
 		cfg.Runner.PostTaskScriptTimeout = DefaultPostTaskScriptTimeout
 	}
+	if cfg.HealthCheck.MinFreeDiskSpaceMB <= 0 {
+		cfg.HealthCheck.MinFreeDiskSpaceMB = 1024
+	}
+	if cfg.HealthCheck.Interval <= 0 {
+		cfg.HealthCheck.Interval = 30 * time.Second
+	}
+	if cfg.HealthCheck.Timeout <= 0 {
+		cfg.HealthCheck.Timeout = 10 * time.Second
+	}
 	if cfg.Metrics.Addr == "" {
 		cfg.Metrics.Addr = "127.0.0.1:9101"
+	}
+	if cfg.Metrics.ReadinessGrace <= 0 {
+		cfg.Metrics.ReadinessGrace = 30 * time.Second
 	}
 
 	// Validate and fix invalid config combinations to prevent confusing behavior.

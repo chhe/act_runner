@@ -48,6 +48,41 @@ func TestLoadDefault_DefaultsWorkdirCleanupAge(t *testing.T) {
 	assert.Equal(t, 10*time.Minute, cfg.Runner.IdleCleanupInterval)
 }
 
+func TestLoadDefault_HealthChecksAreOptIn(t *testing.T) {
+	cfg, err := LoadDefault("")
+	require.NoError(t, err)
+	assert.False(t, cfg.HealthCheck.Enabled)
+	assert.Equal(t, int64(1024), cfg.HealthCheck.MinFreeDiskSpaceMB)
+	assert.Empty(t, cfg.HealthCheck.Script)
+	assert.Equal(t, 30*time.Second, cfg.HealthCheck.Interval)
+	assert.Equal(t, 10*time.Second, cfg.HealthCheck.Timeout)
+	assert.False(t, cfg.Metrics.Enabled)
+}
+
+func TestLoadDefault_DiskAndReadinessSettings(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+health_check:
+  enabled: true
+  min_free_disk_space_mb: 4096
+  script: /usr/local/bin/runner-health
+  interval: 15s
+  timeout: 3s
+metrics:
+  readiness_grace: 45s
+`), 0o600))
+
+	cfg, err := LoadDefault(path)
+	require.NoError(t, err)
+	assert.True(t, cfg.HealthCheck.Enabled)
+	assert.Equal(t, int64(4096), cfg.HealthCheck.MinFreeDiskSpaceMB)
+	assert.Equal(t, "/usr/local/bin/runner-health", cfg.HealthCheck.Script)
+	assert.Equal(t, 15*time.Second, cfg.HealthCheck.Interval)
+	assert.Equal(t, 3*time.Second, cfg.HealthCheck.Timeout)
+	assert.Equal(t, 45*time.Second, cfg.Metrics.ReadinessGrace)
+}
+
 func TestLoadDefault_UsesConfiguredWorkdirCleanupAge(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")

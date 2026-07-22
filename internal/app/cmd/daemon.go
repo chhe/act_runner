@@ -147,16 +147,18 @@ func runDaemon(ctx context.Context, daemArgs *daemonArgs, configFile *string) fu
 		}
 		runner.SetCapabilitiesFromDeclare(resp)
 
+		poller := poll.New(cfg, cli, runner)
+
 		if cfg.Metrics.Enabled {
 			metrics.Init()
 			metrics.RunnerInfo.WithLabelValues(ver.Version(), resp.Msg.Runner.Name).Set(1)
 			metrics.RunnerCapacity.Set(float64(cfg.Runner.Capacity))
 			metrics.RegisterUptimeFunc(time.Now())
 			metrics.RegisterRunningJobsFunc(runner.RunningCount, cfg.Runner.Capacity)
-			metrics.StartServer(ctx, cfg.Metrics.Addr)
+			metrics.StartServer(ctx, cfg.Metrics.Addr, func() (bool, string) {
+				return poller.Ready(cfg.Metrics.ReadinessGrace)
+			})
 		}
-
-		poller := poll.New(cfg, cli, runner)
 
 		if daemArgs.Once || reg.Ephemeral {
 			done := make(chan struct{})
