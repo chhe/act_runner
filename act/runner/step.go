@@ -107,7 +107,13 @@ func runStepExecutor(step step, stage stepStage, executor common.Executor) commo
 		if strings.Contains(stepString, "::add-mask::") {
 			stepString = "add-mask command"
 		}
-		logger.Infof("Run %s %s", stage, stepString)
+		if stage == stepStageMain {
+			// Main steps print their own raw "Run <title>" header, so this line is redundant and
+			// only leaks into the "Set up job" section for the first step; keep it as a debug trace.
+			logger.Debugf("Run %s %s", stage, stepString)
+		} else {
+			logger.Infof("Run %s %s", stage, stepString)
+		}
 
 		// Prepare and clean Runner File Commands
 		actPath := rc.JobContainer.GetActPath()

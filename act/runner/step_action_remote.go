@@ -131,6 +131,8 @@ func (sar *stepActionRemote) prepareActionExecutor() common.Executor {
 			Token:       token,
 			OfflineMode: sar.RunContext.Config.ActionOfflineMode,
 			Depth:       sar.RunContext.Config.ActionCloneDepth,
+			// printPrepareActions reports the download with its resolved commit.
+			Quiet: true,
 
 			InsecureSkipTLS: sar.cloneSkipTLS(), // For Gitea
 		})
@@ -144,6 +146,13 @@ func (sar *stepActionRemote) prepareActionExecutor() common.Executor {
 			} else {
 				return err
 			}
+		}
+
+		// Best effort: the download report falls back to the ref alone when the commit is unknown.
+		if _, sha, err := git.FindGitRevision(ctx, actionDir); err != nil {
+			common.Logger(ctx).Debugf("unable to resolve the commit of %s: %v", sar.remoteAction.Reference(), err)
+		} else {
+			sar.resolvedSha = sha
 		}
 
 		remoteReader := func(ctx context.Context) actionYamlReader { //nolint:unparam // pre-existing issue from nektos/act
@@ -163,6 +172,15 @@ func (sar *stepActionRemote) prepareActionExecutor() common.Executor {
 			},
 		)(ctx)
 	}
+}
+
+// actionDownloadInfo reports the action this step downloaded and the commit it resolved to. ok is
+// false when nothing was fetched, as for the local checkout of the workflow's own repository.
+func (sar *stepActionRemote) actionDownloadInfo() (reference, sha string, ok bool) {
+	if sar.remoteAction == nil || sar.action == nil {
+		return "", "", false
+	}
+	return sar.remoteAction.Reference(), sar.resolvedSha, true
 }
 
 func (sar *stepActionRemote) pre() common.Executor {
@@ -311,6 +329,16 @@ func (ra *remoteAction) CloneURL(u string) string {
 	}
 
 	return fmt.Sprintf("%s/%s/%s", u, ra.Org, ra.Repo)
+}
+
+// Reference renders the action as {org}/{repo}[/path]@{ref}, omitting the download source, which
+// can be interpolated from a secret.
+func (ra *remoteAction) Reference() string {
+	repo := fmt.Sprintf("%s/%s", ra.Org, ra.Repo)
+	if ra.Path != "" {
+		repo = fmt.Sprintf("%s/%s", repo, ra.Path)
+	}
+	return fmt.Sprintf("%s@%s", repo, ra.Ref)
 }
 
 func (ra *remoteAction) IsCheckout() bool {

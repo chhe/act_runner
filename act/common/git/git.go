@@ -261,6 +261,10 @@ type NewGitCloneExecutorInput struct {
 	// 0 for full clone.
 	Depth int
 
+	// Quiet drops the informational clone line to debug level, for callers that log their own
+	// download summary (the setup section's action report).
+	Quiet bool
+
 	// For Gitea
 	InsecureSkipTLS bool
 }
@@ -347,7 +351,11 @@ func gitOptions(token string) (fetchOptions git.FetchOptions, pullOptions git.Pu
 func NewGitCloneExecutor(input NewGitCloneExecutorInput) common.Executor {
 	return func(ctx context.Context) error {
 		logger := common.Logger(ctx)
-		logger.Infof("git clone '%s' # ref=%s", input.URL, input.Ref)
+		if input.Quiet {
+			logger.Debugf("git clone '%s' # ref=%s", input.URL, input.Ref)
+		} else {
+			logger.Infof("git clone '%s' # ref=%s", input.URL, input.Ref)
+		}
 		logger.Debugf("  cloning %s to %s", input.URL, input.Dir)
 
 		defer AcquireCloneLock(input.Dir)()

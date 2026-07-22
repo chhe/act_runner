@@ -315,7 +315,7 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 		}
 	}()
 
-	reporter.Logf("%s(version:%s) received task %v of job %v, be triggered by event: %s", r.name, ver.Version(), task.Id, task.Context.Fields["job"].GetStringValue(), task.Context.Fields["event_name"].GetStringValue())
+	r.reportSetup(reporter, task)
 
 	workflow, jobID, err := generateWorkflow(task)
 	if err != nil {

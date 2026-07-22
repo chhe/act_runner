@@ -24,6 +24,7 @@ import (
 	"gitea.com/gitea/runner/act/container"
 	"gitea.com/gitea/runner/act/model"
 
+	log "github.com/sirupsen/logrus"
 	logrustest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -109,6 +110,182 @@ type stepFactoryMock struct {
 func (sfm *stepFactoryMock) newStep(model *model.Step, rc *RunContext) (step, error) {
 	args := sfm.Called(model, rc)
 	return args.Get(0).(step), args.Error(1)
+}
+
+// actionPreparerMock stands in for a step whose action is downloaded before the job's first step.
+type actionPreparerMock struct {
+	reference string
+	sha       string
+	ok        bool
+	err       error
+	prepared  int
+}
+
+func (apm *actionPreparerMock) prepareActionExecutor() common.Executor {
+	return func(context.Context) error {
+		apm.prepared++
+		return apm.err
+	}
+}
+
+func (apm *actionPreparerMock) actionDownloadInfo() (string, string, bool) {
+	return apm.reference, apm.sha, apm.ok
+}
+
+func TestPrintPrepareActionsGolden(t *testing.T) {
+	buf := &bytes.Buffer{}
+	logger := log.New()
+	logger.SetOutput(buf)
+	logger.SetLevel(log.InfoLevel)
+	logger.SetFormatter(&jobLogFormatter{color: cyan})
+	ctx := common.WithLogger(context.Background(), logger.WithFields(log.Fields{"job": "j1"}))
+
+	preparers := []actionPreparer{
+		&actionPreparerMock{reference: "actions/checkout@v7", sha: "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", ok: true},
+		// A resolved commit is best effort; the ref alone is reported when it is unknown.
+		&actionPreparerMock{reference: "actions/setup-go@v6", ok: true},
+		// A step that downloads nothing, such as the checkout of the workflow's own repository.
+		&actionPreparerMock{ok: false},
+	}
+	require.NoError(t, printPrepareActions(&RunContext{}, preparers)(ctx))
+
+	want := strings.Join([]string{
+		"[j1]   | Prepare all required actions",
+		"[j1]   | Download action repository 'actions/checkout@v7' (SHA:9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0)",
+		"[j1]   | Download action repository 'actions/setup-go@v6'",
+		"",
+	}, "\n")
+	assert.Equal(t, want, buf.String())
+}
+
+func TestPrintPrepareActionsSkipsWithoutActions(t *testing.T) {
+	buf := &bytes.Buffer{}
+	logger := log.New()
+	logger.SetOutput(buf)
+	logger.SetFormatter(&jobLogFormatter{color: cyan})
+	ctx := common.WithLogger(context.Background(), logger.WithFields(log.Fields{"job": "j1"}))
+
+	require.NoError(t, printPrepareActions(&RunContext{}, nil)(ctx))
+
+	assert.Empty(t, buf.String())
+}
+
+func TestPrintPrepareActionsFailsJobOnDownloadError(t *testing.T) {
+	logger, _ := logrustest.NewNullLogger()
+	ctx := common.WithJobErrorContainer(common.WithLogger(context.Background(), logger.WithField("job", "j1")))
+
+	downloadErr := errors.New("failed to fetch \"actions/checkout\"")
+	rc := &RunContext{}
+	remaining := &actionPreparerMock{reference: "actions/setup-go@v6", ok: true}
+
+	err := printPrepareActions(rc, []actionPreparer{
+		&actionPreparerMock{err: downloadErr},
+		remaining,
+	})(ctx)
+
+	require.ErrorIs(t, err, downloadErr)
+	// No step has run yet, so the failure has to be recorded against the job itself.
+	assert.Equal(t, downloadErr, common.JobError(ctx))
+	assert.True(t, rc.jobFailed)
+	assert.Zero(t, remaining.prepared)
+}
+
+func TestPrintCompleteJobName(t *testing.T) {
+	for name, tt := range map[string]struct {
+		rc   *RunContext
+		want string
+	}{
+		"job name":            {rc: &RunContext{JobName: "lint", Name: "lint-1"}, want: "lint"},
+		"falls back to name":  {rc: &RunContext{Name: "lint-1"}, want: "lint-1"},
+		"falls back to jobID": {rc: &RunContext{Run: &model.Run{JobID: "lint"}}, want: "lint"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			buf := &bytes.Buffer{}
+			logger := log.New()
+			logger.SetOutput(buf)
+			logger.SetFormatter(&jobLogFormatter{color: cyan})
+			ctx := common.WithLogger(context.Background(), logger.WithFields(log.Fields{"job": "j1"}))
+
+			require.NoError(t, printCompleteJobName(tt.rc)(ctx))
+
+			assert.Equal(t, "[j1]   | Complete job name: "+tt.want+"\n", buf.String())
+		})
+	}
+}
+
+// actionStepMock is a step whose action has to be downloaded before it can run.
+type actionStepMock struct {
+	*stepMock
+	*actionPreparerMock
+}
+
+// TestNewJobExecutorDownloadsAllActionsBeforeTheFirstStep pins the shape of the setup section:
+// every action is downloaded before any step runs, and the job name closes the section. A pre
+// step that downloaded its own action would leave the log interleaved with the downloads.
+func TestNewJobExecutorDownloadsAllActionsBeforeTheFirstStep(t *testing.T) {
+	ctx := common.WithJobErrorContainer(context.Background())
+	jim := &jobInfoMock{}
+	sfm := &stepFactoryMock{}
+	rc := &RunContext{
+		JobContainer: &jobContainerMock{},
+		Run: &model.Run{
+			JobID: "test",
+			Workflow: &model.Workflow{
+				Jobs: map[string]*model.Job{"test": {}},
+			},
+		},
+		Config: &Config{},
+	}
+	rc.ExprEval = rc.NewExpressionEvaluator(ctx)
+
+	steps := []*model.Step{{ID: "1"}, {ID: "2"}}
+	executorOrder := make([]string, 0)
+
+	jim.On("steps").Return(steps)
+	jim.On("matrix").Return(map[string]any{})
+	jim.On("startContainer").Return(func(context.Context) error { return nil })
+	jim.On("stopContainer").Return(func(context.Context) error { return nil })
+	jim.On("closeContainer").Return(func(context.Context) error { return nil })
+	jim.On("interpolateOutputs").Return(func(context.Context) error { return nil })
+	jim.On("result", "success")
+
+	for _, stepModel := range steps {
+		sm := &stepMock{}
+		apm := &actionPreparerMock{reference: "actions/checkout@v" + stepModel.ID, ok: true}
+		sfm.On("newStep", stepModel, rc).Return(&actionStepMock{stepMock: sm, actionPreparerMock: apm}, nil)
+
+		sm.On("pre").Return(func(context.Context) error {
+			executorOrder = append(executorOrder, "pre"+stepModel.ID)
+			return nil
+		})
+		sm.On("main").Return(func(context.Context) error {
+			executorOrder = append(executorOrder, "step"+stepModel.ID)
+			return nil
+		})
+		sm.On("post").Return(func(context.Context) error { return nil })
+
+		defer sm.AssertExpectations(t)
+	}
+
+	logger, hook := logrustest.NewNullLogger()
+	err := newJobExecutor(jim, sfm, rc)(common.WithLogger(ctx, logger.WithField("job", "test")))
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"pre1", "pre2", "step1", "step2"}, executorOrder)
+
+	setup := make([]string, 0)
+	for _, entry := range hook.AllEntries() {
+		if strings.HasPrefix(entry.Message, "Prepare all required actions") || strings.HasPrefix(entry.Message, "Download action") ||
+			strings.HasPrefix(entry.Message, "Complete job name") {
+			setup = append(setup, entry.Message)
+		}
+	}
+	assert.Equal(t, []string{
+		"Prepare all required actions",
+		"Download action repository 'actions/checkout@v1'",
+		"Download action repository 'actions/checkout@v2'",
+		"Complete job name: test",
+	}, setup)
 }
 
 func TestNewJobExecutor(t *testing.T) {

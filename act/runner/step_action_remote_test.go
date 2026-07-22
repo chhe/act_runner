@@ -10,6 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -816,6 +819,97 @@ func Test_newRemoteAction(t *testing.T) {
 			assert.Equalf(t, tt.wantCloneURL, cloneURL, "newRemoteAction(%v).CloneURL()", tt.action)
 		})
 	}
+}
+
+func Test_remoteActionReference(t *testing.T) {
+	tests := []struct {
+		uses string
+		want string
+	}{
+		{uses: "actions/checkout@v7", want: "actions/checkout@v7"},
+		{uses: "actions/aws/ec2@main", want: "actions/aws/ec2@main"},
+		// The download source can be interpolated from a secret and must stay out of the log.
+		{uses: "https://gitea.example.com/actions/checkout@v7", want: "actions/checkout@v7"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.uses, func(t *testing.T) {
+			assert.Equal(t, tt.want, newRemoteAction(tt.uses).Reference())
+		})
+	}
+}
+
+// TestStepActionRemotePreResolvesDownloadedCommit runs the real download path against a local
+// git repository standing in for the actions instance, so the reported commit is the one the
+// clone actually checked out.
+func TestStepActionRemotePreResolvesDownloadedCommit(t *testing.T) {
+	instance := t.TempDir()
+	actionDir := filepath.Join(instance, "actions", "setup-go")
+	require.NoError(t, os.MkdirAll(actionDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(actionDir, "action.yml"),
+		[]byte("name: setup-go\nruns:\n  using: node20\n  main: index.js\n"), 0o600))
+
+	// Supply an identity on the commit so the test does not depend on a
+	// git identity being configured in the environment; a CI runner without
+	// user.name/user.email would otherwise fail "commit" with exit code 128.
+	for _, args := range [][]string{
+		{"init", "--initial-branch=main", actionDir},
+		{"-C", actionDir, "add", "action.yml"},
+		{"-C", actionDir, "-c", "user.name=runner", "-c", "user.email=runner@example.com", "-c", "commit.gpgsign=false", "commit", "-m", "action"},
+	} {
+		cmd := exec.Command("git", args...)
+		require.NoError(t, cmd.Run(), "git %v", args)
+	}
+	out, err := exec.Command("git", "-C", actionDir, "rev-parse", "HEAD").Output()
+	require.NoError(t, err)
+	wantSha := strings.TrimSpace(string(out))
+
+	sar := &stepActionRemote{
+		Step: &model.Step{Uses: "actions/setup-go@main"},
+		RunContext: &RunContext{
+			Config: &Config{
+				GitHubInstance:        "https://gitea.example.com",
+				DefaultActionInstance: instance,
+				ActionCacheDir:        t.TempDir(),
+			},
+			Run: &model.Run{
+				JobID:    "1",
+				Workflow: &model.Workflow{Jobs: map[string]*model.Job{"1": {}}},
+			},
+		},
+		readAction: readActionImpl,
+	}
+
+	require.NoError(t, sar.prepareActionExecutor()(context.Background()))
+
+	reference, sha, ok := sar.actionDownloadInfo()
+	assert.True(t, ok)
+	assert.Equal(t, "actions/setup-go@main", reference)
+	assert.Equal(t, wantSha, sha)
+}
+
+func TestStepActionRemoteActionDownloadInfo(t *testing.T) {
+	t.Run("reports the action and its resolved commit", func(t *testing.T) {
+		sar := &stepActionRemote{
+			remoteAction: newRemoteAction("actions/checkout@v7"),
+			action:       &model.Action{},
+			resolvedSha:  "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+		}
+
+		reference, sha, ok := sar.actionDownloadInfo()
+
+		assert.True(t, ok)
+		assert.Equal(t, "actions/checkout@v7", reference)
+		assert.Equal(t, "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", sha)
+	})
+
+	t.Run("reports nothing when no action was downloaded", func(t *testing.T) {
+		// The local checkout of the workflow's own repository resolves no action.
+		sar := &stepActionRemote{remoteAction: newRemoteAction("actions/checkout@v7")}
+
+		_, _, ok := sar.actionDownloadInfo()
+
+		assert.False(t, ok)
+	})
 }
 
 func Test_safeFilename(t *testing.T) {
