@@ -227,3 +227,91 @@ func TestContainerNetworkCreateOptions(t *testing.T) {
 		assert.Nil(t, opts.EnableIPv6)
 	})
 }
+
+func TestLoadDefault_ReadsExternalSecretFromFile(t *testing.T) {
+	dir := t.TempDir()
+	secretPath := filepath.Join(dir, "cache.secret")
+	require.NoError(t, os.WriteFile(secretPath, []byte("  s3cr3t\n"), 0o600))
+
+	path := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+cache:
+  enabled: true
+  external_server: "http://cache.invalid/"
+  external_secret_file: "`+secretPath+`"
+`), 0o600))
+
+	cfg, err := LoadDefault(path)
+	require.NoError(t, err)
+	assert.Equal(t, "s3cr3t", cfg.Cache.ExternalSecret)
+}
+
+func TestLoadDefault_ReadsExternalSecretFromFileWhenCacheDisabled(t *testing.T) {
+	dir := t.TempDir()
+	secretPath := filepath.Join(dir, "cache.secret")
+	require.NoError(t, os.WriteFile(secretPath, []byte("s3cr3t"), 0o600))
+
+	// the file has to be resolved even when cache is disabled
+	path := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+cache:
+  enabled: false
+  external_secret_file: "`+secretPath+`"
+`), 0o600))
+
+	cfg, err := LoadDefault(path)
+	require.NoError(t, err)
+	assert.Equal(t, "s3cr3t", cfg.Cache.ExternalSecret)
+}
+
+func TestLoadDefault_RejectsBothExternalSecretAndFile(t *testing.T) {
+	dir := t.TempDir()
+	secretPath := filepath.Join(dir, "cache.secret")
+	require.NoError(t, os.WriteFile(secretPath, []byte("s3cr3t"), 0o600))
+
+	path := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+cache:
+  enabled: true
+  external_server: "http://cache.invalid/"
+  external_secret: "inline"
+  external_secret_file: "`+secretPath+`"
+`), 0o600))
+
+	_, err := LoadDefault(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "both set")
+}
+
+func TestLoadDefault_RejectsMissingExternalSecretFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+cache:
+  enabled: true
+  external_server: "http://cache.invalid/"
+  external_secret_file: "`+filepath.Join(dir, "absent.secret")+`"
+`), 0o600))
+
+	_, err := LoadDefault(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "read cache.external_secret_file")
+}
+
+func TestLoadDefault_RejectsEmptyExternalSecretFile(t *testing.T) {
+	dir := t.TempDir()
+	secretPath := filepath.Join(dir, "cache.secret")
+	require.NoError(t, os.WriteFile(secretPath, []byte("\n  \n"), 0o600))
+
+	path := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+cache:
+  enabled: true
+  external_server: "http://cache.invalid/"
+  external_secret_file: "`+secretPath+`"
+`), 0o600))
+
+	_, err := LoadDefault(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "contains no secret")
+}

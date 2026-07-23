@@ -50,7 +50,7 @@ func runCacheServer(configFile *string, cacheArgs *cacheServerArgs) func(cmd *co
 
 		secret := cfg.Cache.ExternalSecret
 		if secret == "" {
-			return errors.New("cache.external_secret must be set for cache-server; configure the same value on each runner that points at this server via cache.external_server")
+			return errors.New("cache.external_secret (or cache.external_secret_file) must be set for cache-server; configure the same value on each runner that points at this server via cache.external_server")
 		}
 		cacheHandler, err := artifactcache.StartHandler(
 			dir,

@@ -224,6 +224,7 @@ Run one dedicated `gitea-runner cache-server` that all runners point at.
      dir: /data/actcache
      port: 8088
      external_secret: "replace-with-a-strong-random-secret"
+     # external_secret_file: /path/to/secret # secret can also be passed via a file
    ```
 
 2. Start the server:
@@ -238,6 +239,7 @@ Run one dedicated `gitea-runner cache-server` that all runners point at.
    cache:
      external_server: "http://<cache-server-host>:8088/"
      external_secret: "replace-with-a-strong-random-secret"  # must match the server
+     # external_secret_file: /path/to/secret # secret can also be passed via a file
    ```
 
 Alternatively, mount the same NFS/CIFS share on every runner and point `cache.dir` at it — simpler, but with weaker isolation between repositories.

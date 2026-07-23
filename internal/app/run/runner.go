@@ -89,6 +89,7 @@ func NewRunner(cfg *config.Config, reg *config.Registration, cli client.Client) 
 		if cfg.Cache.ExternalServer != "" {
 			envs["ACTIONS_CACHE_URL"] = cfg.Cache.ExternalServer
 		} else {
+			warnIgnoredCacheSecret(cfg)
 			handler, err := artifactcache.StartHandler(
 				cfg.Cache.Dir,
 				cfg.Cache.Host,
@@ -512,14 +513,11 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 // function the caller must invoke (typically via defer) to revoke the
 // credential when the task finishes.
 //
-// Three modes:
+// Two modes:
 //   - Embedded handler: register in-process via RegisterJob.
-//   - external_server + external_secret: POST to the remote server's
-//     /_internal/register, defer a POST to /_internal/revoke. This is what
-//     enables full per-job auth and repo scoping over the network.
-//   - external_server alone (no secret): no-op revoker. The remote server is
-//     in legacy openMode and ignores the runtime token; trust is at the
-//     network layer.
+//   - external_server: POST to the remote server's /_internal/register, defer a
+//     POST to /_internal/revoke. This is what enables full per-job auth and
+//     repo scoping over the network.
 //
 // Safe with an empty token (older Gitea did not issue one).
 func (r *Runner) registerCacheForTask(token, repo string, reporter *report.Reporter) func() {
@@ -532,6 +530,7 @@ func (r *Runner) registerCacheForTask(token, repo string, reporter *report.Repor
 	if r.cfg.Cache.ExternalServer != "" && r.cfg.Cache.ExternalSecret != "" {
 		return r.registerExternalCacheJob(token, repo, reporter)
 	}
+	// No cache server to register against: caching is disabled, or the built-in server failed to start.
 	return func() {}
 }
 
@@ -654,4 +653,21 @@ func (r *Runner) Declare(ctx context.Context, labels []string) (*connect.Respons
 		Labels:       labels,
 		Capabilities: RunnerCapabilities(),
 	}))
+}
+
+// warnIgnoredCacheSecret flags an external cache server secret configured on a runner that uses the built-in cache server.
+func warnIgnoredCacheSecret(cfg *config.Config) {
+	if cfg.Cache.ExternalServer != "" {
+		return
+	}
+	// Not using an external cache server, so any configured secret is ignored.
+	if cfg.Cache.ExternalSecret == "" {
+		return
+	}
+	// LoadDefault resolves external_secret_file into ExternalSecret, so report whichever key the operator actually wrote.
+	key := "cache.external_secret"
+	if cfg.Cache.ExternalSecretFile != "" {
+		key = "cache.external_secret_file"
+	}
+	log.Warnf("%s is set but cache.external_server is not; the built-in cache server does not use a shared secret, so the value is ignored", key)
 }

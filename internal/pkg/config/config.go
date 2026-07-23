@@ -9,6 +9,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -57,13 +58,14 @@ type Runner struct {
 
 // Cache represents the configuration for caching.
 type Cache struct {
-	Enabled        *bool  `yaml:"enabled"`         // Enabled indicates whether caching is enabled. It is a pointer to distinguish between false and not set. If not set, it will be true.
-	Dir            string `yaml:"dir"`             // Dir specifies the directory path for caching.
-	Host           string `yaml:"host"`            // Host specifies the caching host.
-	Port           uint16 `yaml:"port"`            // Port specifies the caching port.
-	ExternalServer string `yaml:"external_server"` // ExternalServer specifies the URL of external cache server
-	ExternalSecret string `yaml:"external_secret"` // ExternalSecret is a shared secret between this runner and an external gitea-runner cache-server, enabling per-job ACTIONS_RUNTIME_TOKEN authentication and repo scoping over the network. Leave empty to keep the legacy unauthenticated behavior.
-	OfflineMode    bool   `yaml:"offline_mode"`    // OfflineMode reuses a cached action without fetching from the remote; a moved tag or branch stays at the cached commit until the cache entry is removed.
+	Enabled            *bool  `yaml:"enabled"`              // Enabled indicates whether caching is enabled. It is a pointer to distinguish between false and not set. If not set, it will be true.
+	Dir                string `yaml:"dir"`                  // Dir specifies the directory path for caching.
+	Host               string `yaml:"host"`                 // Host specifies the caching host.
+	Port               uint16 `yaml:"port"`                 // Port specifies the caching port.
+	ExternalServer     string `yaml:"external_server"`      // ExternalServer specifies the URL of external cache server
+	ExternalSecret     string `yaml:"external_secret"`      // ExternalSecret is a shared secret between this runner and an external gitea-runner cache-server, enabling per-job ACTIONS_RUNTIME_TOKEN authentication and repo scoping over the network. Required whenever ExternalServer is set; ExternalSecretFile is the alternative way to provide it.
+	ExternalSecretFile string `yaml:"external_secret_file"` // ExternalSecretFile is the path to a file holding the ExternalSecret value, so the secret can be mounted instead of stored in the config file. LoadDefault reads it into ExternalSecret; setting both is an error.
+	OfflineMode        bool   `yaml:"offline_mode"`         // OfflineMode reuses a cached action without fetching from the remote; a moved tag or branch stays at the cached commit until the cache entry is removed.
 }
 
 // Container represents the configuration for the container.
@@ -177,6 +179,10 @@ func LoadDefault(file string) (*Config, error) {
 		b := true
 		cfg.Cache.Enabled = &b
 	}
+	// Resolved regardless of cache.enabled, because the `cache-server` command reads the secret from the same key without checking cache.enabled.
+	if err := resolveCacheExternalSecret(cfg); err != nil {
+		return nil, err
+	}
 	if *cfg.Cache.Enabled {
 		if cfg.Cache.Dir == "" {
 			home, err := os.UserHomeDir()
@@ -186,7 +192,7 @@ func LoadDefault(file string) (*Config, error) {
 			cfg.Cache.Dir = filepath.Join(home, ".cache", "actcache")
 		}
 		if cfg.Cache.ExternalServer != "" && cfg.Cache.ExternalSecret == "" {
-			return nil, errors.New("cache.external_server is set but cache.external_secret is empty; configure the same external_secret on this runner and the gitea-runner cache-server")
+			return nil, errors.New("cache.external_server is set but no shared secret is configured; set cache.external_secret (or cache.external_secret_file) to the same value used by the gitea-runner cache-server")
 		}
 	}
 	if cfg.Container.WorkdirParent == "" {
@@ -300,4 +306,25 @@ func definedRunnerConfigKeys(content []byte) (map[string]bool, error) {
 	}
 
 	return defined, nil
+}
+
+// resolveCacheExternalSecret loads cache.external_secret from the file named by cache.external_secret_file,
+// so deployments can mount the secret instead of committing it to the config file.
+func resolveCacheExternalSecret(cfg *Config) error {
+	if cfg.Cache.ExternalSecretFile == "" {
+		return nil
+	}
+	if cfg.Cache.ExternalSecret != "" {
+		return errors.New("cache.external_secret and cache.external_secret_file are both set; configure only one of them")
+	}
+	content, err := os.ReadFile(cfg.Cache.ExternalSecretFile)
+	if err != nil {
+		return fmt.Errorf("read cache.external_secret_file %q: %w", cfg.Cache.ExternalSecretFile, err)
+	}
+	secret := strings.TrimSpace(string(content))
+	if secret == "" {
+		return fmt.Errorf("cache.external_secret_file %q contains no secret", cfg.Cache.ExternalSecretFile)
+	}
+	cfg.Cache.ExternalSecret = secret
+	return nil
 }

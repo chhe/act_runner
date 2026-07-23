@@ -132,6 +132,11 @@ cache:
   # Required when external_server is set. Must be identical on every runner and the cache-server.
   # Generate with: openssl rand -hex 32
   external_secret: ""
+  # Path to a file containing the shared secret, as an alternative to external_secret.
+  # Use this to keep the secret out of this file.
+  # Surrounding whitespace is trimmed, so a trailing newline in the file is fine.
+  # Setting both external_secret and external_secret_file is an error.
+  external_secret_file: ""
   # When true, reuse a cached action instead of fetching from the remote on every job.
   # A moved tag (e.g. a re-tagged "v6") or an updated branch stays at the cached commit
   # until its cache entry expires or is manually removed.
