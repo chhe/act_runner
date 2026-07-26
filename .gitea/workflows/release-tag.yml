@@ -12,6 +12,18 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # all history for all branches and tags
+      # Custom publishers (the R2 mirror below) run as the very last
+      # step of goreleaser's publish pipeline, after the Gitea release
+      # has already been created and every artifact already uploaded
+      # to S3. Fail here instead, before anything is built or
+      # published, if the R2 secrets are missing.
+      - name: check R2 configuration
+        run: sh scripts/upload-r2.sh --check-config
+        env:
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       - uses: actions/setup-go@v7
         with:
           go-version-file: "go.mod"
@@ -34,6 +46,10 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           S3_REGION: ${{ secrets.AWS_REGION }}
           S3_BUCKET: ${{ secrets.AWS_BUCKET }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           GORELEASER_FORCE_TOKEN: "gitea"
           GITEA_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
