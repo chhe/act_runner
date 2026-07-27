@@ -181,7 +181,7 @@ func runStepExecutor(step step, stage stepStage, executor common.Executor) commo
 			}
 
 			if continueOnError {
-				logger.Errorf("##[error]%v", err)
+				logger.Errorf("##[error]%s", escapeCommandData(err.Error()))
 				logger.Infof("Failed but continue next step")
 				err = nil
 				stepResult.Conclusion = model.StepStatusSuccess

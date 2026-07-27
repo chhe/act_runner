@@ -63,7 +63,7 @@ func (sr *stepRun) printRunScriptActionDetails(ctx context.Context) {
 
 	normalized := strings.TrimRight(strings.ReplaceAll(sr.interpolatedScript, "\r\n", "\n"), "\n")
 
-	rawLogger.Infof("::group::Run %s", sr.runScriptGroupTitle(normalized))
+	rawLogger.Infof("::group::Run %s", escapeCommandData(sr.runScriptGroupTitle(normalized)))
 
 	if normalized != "" {
 		for line := range strings.SplitSeq(normalized, "\n") {
@@ -90,7 +90,7 @@ func printRunActionHeader(ctx context.Context, step *model.Step, env map[string]
 	if step.Name != "" {
 		title = step.Name
 	}
-	rawLogger.Infof("::group::Run %s", title)
+	rawLogger.Infof("::group::Run %s", escapeCommandData(title))
 
 	if len(step.With) > 0 {
 		rawLogger.Infof("with:")

@@ -66,7 +66,7 @@ func reportStepError(ctx context.Context, rc *RunContext, err error) {
 		rc.markInterrupted(ctx.Err())
 		return
 	}
-	common.Logger(ctx).Errorf("##[error]%v", err)
+	common.Logger(ctx).Errorf("##[error]%s", escapeCommandData(err.Error()))
 	common.SetJobError(ctx, err)
 	rc.markFailed()
 }

@@ -154,30 +154,25 @@ func parseKeyValuePairs(kvPairs, separator string) map[string]string {
 	return rtn
 }
 
+// A Replacer never rescans what it wrote, so "%250A" stays a literal "%0A".
+var (
+	commandDataEscaper       = strings.NewReplacer("%", "%25", "\r", "%0D", "\n", "%0A")
+	commandDataUnescaper     = strings.NewReplacer("%25", "%", "%0D", "\r", "%0A", "\n")
+	commandPropertyUnescaper = strings.NewReplacer("%25", "%", "%0D", "\r", "%0A", "\n", "%3A", ":", "%2C", ",")
+)
+
+// escapeCommandData encodes the data part of a "::cmd::" or "##[cmd]" line the runner writes itself,
+// so the log renderer decodes it back. Lines forwarded from step output are already escaped.
+func escapeCommandData(arg string) string {
+	return commandDataEscaper.Replace(arg)
+}
+
 func UnescapeCommandData(arg string) string {
-	escapeMap := map[string]string{
-		"%25": "%",
-		"%0D": "\r",
-		"%0A": "\n",
-	}
-	for k, v := range escapeMap {
-		arg = strings.ReplaceAll(arg, k, v)
-	}
-	return arg
+	return commandDataUnescaper.Replace(arg)
 }
 
 func unescapeCommandProperty(arg string) string {
-	escapeMap := map[string]string{
-		"%25": "%",
-		"%0D": "\r",
-		"%0A": "\n",
-		"%3A": ":",
-		"%2C": ",",
-	}
-	for k, v := range escapeMap {
-		arg = strings.ReplaceAll(arg, k, v)
-	}
-	return arg
+	return commandPropertyUnescaper.Replace(arg)
 }
 
 func unescapeKvPairs(kvPairs map[string]string) map[string]string {

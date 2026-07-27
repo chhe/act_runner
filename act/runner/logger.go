@@ -175,6 +175,10 @@ func AppendSecretMasker(oldnew []string, v string) []string {
 		// formatted JSON secrets could otherwise mask {,[,],} everywhere
 		if len(tm) > 1 {
 			ret = append(ret, tm, "***")
+			// command data reaches the log escaped, so "pass%word" also arrives as "pass%25word"
+			if strings.ContainsAny(tm, "%\r\n") {
+				ret = append(ret, escapeCommandData(tm), "***")
+			}
 		}
 	}
 
@@ -229,6 +233,11 @@ type jobLogFormatter struct {
 
 func (f *jobLogFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 	b := &bytes.Buffer{}
+
+	// the web renderer decodes command data, so this local view has to as well
+	if _, _, _, ok := tryParseRawActionCommand(entry.Message + "\n"); ok {
+		entry.Message = UnescapeCommandData(entry.Message)
+	}
 
 	if f.isColored(entry) {
 		f.printColored(b, entry)
