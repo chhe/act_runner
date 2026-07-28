@@ -940,3 +940,117 @@ func TestRunContext_cleanupFailedStart(t *testing.T) {
 		assert.NotPanics(t, func() { (&RunContext{}).cleanupFailedStart(context.Background()) })
 	})
 }
+
+func TestImageOSFromImage(t *testing.T) {
+	for _, tc := range []struct {
+		image string
+		want  string
+	}{
+		{"", ""},
+		{"docker.gitea.com/runner-images:ubuntu-24.04", "ubuntu24"},
+		{"docker.gitea.com/runner-images:ubuntu-latest", ""},
+		{"runner-images:ubuntu22.04", "ubuntu22"},
+		{"node:20", ""},
+		{"ubuntu:22.04", ""},
+		{"ubuntu", ""},
+		{"catthehacker/ubuntu:act-22.04", ""},
+		{"myco/ubuntu:v2.1", ""},
+		{"myco/ubuntu:v22.04", ""},
+		{"app:release-1", ""},
+		{"app:1.2.3", ""},
+		{"app:build-2.1", ""},
+		{"registry.example.com:5000/runner-images", ""},
+		{"registry.example.com:5000/runner-images:ubuntu-24.04", "ubuntu24"},
+	} {
+		t.Run(tc.image, func(t *testing.T) {
+			assert.Equal(t, tc.want, imageOSFromImage(tc.image))
+		})
+	}
+}
+
+func createRunsOnRunContext(t *testing.T, runsOn string) *RunContext {
+	return createIfTestRunContext(map[string]*model.Job{
+		"job1": createJob(t, "runs-on: "+runsOn, ""),
+	})
+}
+
+func TestRunContextImageOS(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("prefers the release in the resolved image tag", func(t *testing.T) {
+		rc := createRunsOnRunContext(t, "ubuntu-latest")
+		rc.Config.Platforms = map[string]string{
+			"ubuntu-latest": "docker.gitea.com/runner-images:ubuntu-24.04",
+		}
+		assert.Equal(t, "ubuntu24", rc.imageOS(ctx))
+	})
+
+	t.Run("falls back to the runs-on label", func(t *testing.T) {
+		rc := createRunsOnRunContext(t, "ubuntu-22.04")
+		rc.Config.Platforms = map[string]string{"ubuntu-22.04": "some-image"}
+		assert.Equal(t, "ubuntu22", rc.imageOS(ctx))
+	})
+
+	t.Run("keeps the historical value for a rolling label with no release", func(t *testing.T) {
+		assert.Equal(t, "ubuntu20", createRunsOnRunContext(t, "ubuntu-latest").imageOS(ctx))
+	})
+
+	t.Run("is empty for the synthetic job of a composite action", func(t *testing.T) {
+		rc := createIfTestRunContext(map[string]*model.Job{"job1": {}})
+		assert.Empty(t, rc.imageOS(ctx))
+	})
+}
+
+func TestRunContextGetRunnerContext(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("adds the runner values the container cannot know", func(t *testing.T) {
+		rc := createRunsOnRunContext(t, "ubuntu-latest")
+		rc.Config.RunnerName = "runner-1"
+
+		runnerContext := rc.getRunnerContext(ctx)
+		assert.Equal(t, "runner-1", runnerContext["name"])
+		assert.Equal(t, "self-hosted", runnerContext["environment"])
+		assert.NotContains(t, runnerContext, "debug")
+	})
+
+	t.Run("reports debug when step debugging is on", func(t *testing.T) {
+		rc := createRunsOnRunContext(t, "ubuntu-latest")
+		rc.Config.Secrets = map[string]string{"ACTIONS_STEP_DEBUG": "true"}
+
+		assert.Equal(t, "1", rc.getRunnerContext(ctx)["debug"])
+	})
+
+	t.Run("keeps the execution environment values", func(t *testing.T) {
+		rc := createRunsOnRunContext(t, "ubuntu-latest")
+		rc.JobContainer = &container.HostEnvironment{TmpDir: "/tmp/act", ToolCache: "/tmp/tool_cache"}
+
+		runnerContext := rc.getRunnerContext(ctx)
+		assert.Equal(t, "/tmp/act", runnerContext["temp"])
+		assert.Equal(t, "/tmp/tool_cache", runnerContext["tool_cache"])
+		assert.NotEmpty(t, runnerContext["os"])
+	})
+}
+
+func TestParentDir(t *testing.T) {
+	assert.Empty(t, parentDir(""))
+	assert.Empty(t, parentDir("repo"))
+	assert.Empty(t, parentDir("/repo"))
+	assert.Equal(t, "/workspace/owner", parentDir("/workspace/owner/repo"))
+	assert.Equal(t, `C:\workspace\owner`, parentDir(`C:\workspace\owner\repo`))
+}
+
+func TestRunContextWithGithubEnvRunnerValues(t *testing.T) {
+	ctx := context.Background()
+	rc := createRunsOnRunContext(t, "ubuntu-latest")
+	rc.Config.RunnerName = "runner-1"
+	rc.Config.Secrets = map[string]string{"ACTIONS_STEP_DEBUG": "true"}
+
+	env := map[string]string{}
+	rc.withGithubEnv(ctx, &model.GithubContext{Workspace: "/workspace/owner/repo"}, env)
+
+	assert.Equal(t, "runner-1", env["RUNNER_NAME"])
+	assert.Equal(t, "self-hosted", env["RUNNER_ENVIRONMENT"])
+	assert.Equal(t, "/workspace/owner", env["RUNNER_WORKSPACE"])
+	assert.Equal(t, "1", env["RUNNER_DEBUG"])
+}

@@ -95,9 +95,7 @@ func (rc *RunContext) NewExpressionEvaluatorWithEnv(ctx context.Context, env map
 		Inputs:    inputs,
 		HashFiles: getHashFilesFunction(ctx, rc),
 	}
-	if rc.JobContainer != nil {
-		ee.Runner = rc.JobContainer.GetRunnerContext(ctx)
-	}
+	ee.Runner = rc.getRunnerContext(ctx)
 	return expressionEvaluator{
 		interpreter: exprparser.NewInterpeter(ee, exprparser.Config{
 			Run:        rc.Run,
@@ -149,9 +147,7 @@ func (rc *RunContext) NewStepExpressionEvaluator(ctx context.Context, step step)
 		Inputs:    inputs,
 		HashFiles: getHashFilesFunction(ctx, rc),
 	}
-	if rc.JobContainer != nil {
-		ee.Runner = rc.JobContainer.GetRunnerContext(ctx)
-	}
+	ee.Runner = rc.getRunnerContext(ctx)
 	return expressionEvaluator{
 		interpreter: exprparser.NewInterpeter(ee, exprparser.Config{
 			Run:        rc.Run,

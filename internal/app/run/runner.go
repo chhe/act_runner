@@ -474,6 +474,7 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 		Vars:                              task.Vars,
 		ValidVolumes:                      r.cfg.Container.ValidVolumes,
 		InsecureSkipTLS:                   r.cfg.Runner.Insecure,
+		RunnerName:                        r.name,
 	}
 
 	rr, err := runner.New(runnerConfig)

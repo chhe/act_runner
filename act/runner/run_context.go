@@ -298,7 +298,7 @@ func (rc *RunContext) startHostEnvironment() common.Executor {
 			AllocatePTY: rc.Config.AllocatePTY,
 		}
 		rc.cleanUpJobContainer = rc.JobContainer.Remove()
-		for k, v := range rc.JobContainer.GetRunnerContext(ctx) {
+		for k, v := range rc.getRunnerContext(ctx) {
 			if v, ok := v.(string); ok {
 				rc.Env["RUNNER_"+strings.ToUpper(k)] = v
 			}
@@ -986,6 +986,21 @@ func (rc *RunContext) getStepsContext() map[string]*model.StepResult {
 	return rc.StepResults
 }
 
+// getRunnerContext returns the `runner` context: what the execution environment knows
+// (os, arch, temp, tool_cache) plus what only the runner process knows.
+func (rc *RunContext) getRunnerContext(ctx context.Context) map[string]any {
+	runnerContext := map[string]any{}
+	if rc.JobContainer != nil {
+		maps0.Copy(runnerContext, rc.JobContainer.GetRunnerContext(ctx))
+	}
+	runnerContext["name"] = rc.Config.RunnerName
+	runnerContext["environment"] = "self-hosted"
+	if rc.Config.RunnerDebug() {
+		runnerContext["debug"] = "1"
+	}
+	return runnerContext
+}
+
 func (rc *RunContext) getGithubContext(ctx context.Context) *model.GithubContext {
 	logger := common.Logger(ctx)
 	ghc := &model.GithubContext{
@@ -1170,7 +1185,7 @@ func nestedMapLookup(m map[string]any, ks ...string) (rval any) {
 	}
 }
 
-func (rc *RunContext) withGithubEnv(ctx context.Context, github *model.GithubContext, env map[string]string) map[string]string { //nolint:unparam // pre-existing issue from nektos/act
+func (rc *RunContext) withGithubEnv(ctx context.Context, github *model.GithubContext, env map[string]string) {
 	env["CI"] = "true"
 	env["GITHUB_WORKFLOW"] = github.Workflow
 	env["GITHUB_RUN_ID"] = github.RunID
@@ -1212,23 +1227,71 @@ func (rc *RunContext) withGithubEnv(ctx context.Context, github *model.GithubCon
 		env["GITHUB_RUN_ATTEMPT"] = github.RunAttempt
 	}
 
+	env["RUNNER_NAME"] = rc.Config.RunnerName
+	env["RUNNER_ENVIRONMENT"] = "self-hosted"
+	if workspace := parentDir(github.Workspace); workspace != "" {
+		env["RUNNER_WORKSPACE"] = workspace
+	}
+	if rc.Config.RunnerDebug() {
+		env["RUNNER_DEBUG"] = "1"
+	}
+
 	if rc.Config.ArtifactServerPath != "" {
 		setActionRuntimeVars(rc, env)
 	}
 
-	for _, platformName := range rc.runsOnPlatformNames(ctx) {
-		if platformName != "" {
-			if platformName == "ubuntu-latest" {
-				// hardcode current ubuntu-latest since we have no way to check that 'on the fly'
-				env["ImageOS"] = "ubuntu20"
-			} else {
-				platformName = strings.SplitN(strings.Replace(platformName, `-`, ``, 1), `.`, 2)[0]
-				env["ImageOS"] = platformName
-			}
-		}
+	if imageOS := rc.imageOS(ctx); imageOS != "" {
+		env["ImageOS"] = imageOS
+	}
+}
+
+// parentDir returns the directory containing p, or "" when p names no parent. Both
+// separators are accepted rather than filepath's, as p may describe a container while
+// the runner itself runs on Windows, or the other way round.
+func parentDir(p string) string {
+	if slash := strings.LastIndexAny(p, `/\`); slash > 0 {
+		return p[:slash]
+	}
+	return ""
+}
+
+// imageOS returns ImageOS, which setup-* actions use to tell one runner image release
+// from another. The resolved image tag is preferred over the runs-on label because it
+// still names a release when the label is a rolling one such as ubuntu-latest.
+func (rc *RunContext) imageOS(ctx context.Context) string {
+	if rc.Run.Job().RunsOn() == nil {
+		// A composite action runs on a synthetic job, and resolving its image would only
+		// log that runs-on is missing.
+		return ""
+	}
+	if imageOS := imageOSFromImage(rc.platformImage(ctx)); imageOS != "" {
+		return imageOS
 	}
 
-	return env
+	for _, platformName := range slices.Backward(rc.runsOnPlatformNames(ctx)) {
+		if platformName == "ubuntu-latest" {
+			// Rolling label whose image names no release either, so keep the historical value.
+			return "ubuntu20"
+		} else if platformName != "" {
+			return strings.SplitN(strings.Replace(platformName, `-`, ``, 1), `.`, 2)[0]
+		}
+	}
+	return ""
+}
+
+// imageOSTag matches an image reference tagged with an OS family ImageOS can report plus
+// its release, such as "docker.gitea.com/runner-images:ubuntu-24.04". Anything else
+// ("ubuntu-latest", "app:22.04", "catthehacker/ubuntu:act-22.04", or a registry port) is
+// left to the runs-on label rather than turned into a bogus OS.
+var imageOSTag = regexp.MustCompile(`:(ubuntu|win|macos)-?([0-9]+)[^/]*$`)
+
+// imageOSFromImage derives ImageOS from an image reference, e.g.
+// "docker.gitea.com/runner-images:ubuntu-24.04" yields "ubuntu24".
+func imageOSFromImage(image string) string {
+	if match := imageOSTag.FindStringSubmatch(image); match != nil {
+		return match[1] + match[2]
+	}
+	return ""
 }
 
 func setActionRuntimeVars(rc *RunContext, env map[string]string) {
