@@ -61,3 +61,22 @@ runs:
 		t.Fatalf("error = %q, want invalid value", err)
 	}
 }
+
+func TestReadActionDockerEntrypoints(t *testing.T) {
+	action, err := ReadAction(strings.NewReader(`
+runs:
+  using: docker
+  image: Dockerfile
+  pre-entrypoint: pre.sh
+  post-entrypoint: post.sh
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.Runs.PreEntrypoint != "pre.sh" {
+		t.Fatalf("pre-entrypoint = %q, want pre.sh", action.Runs.PreEntrypoint)
+	}
+	if action.Runs.PostEntrypoint != "post.sh" {
+		t.Fatalf("post-entrypoint = %q, want post.sh", action.Runs.PostEntrypoint)
+	}
+}
