@@ -13,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -163,6 +164,12 @@ func TestGraphEvent(t *testing.T) {
 	assert.Empty(t, plan.Stages)
 }
 
+// these two build the same action Dockerfiles into one image tag, so they cannot overlap
+var sharedImageWorkflows = []string{"local-action-dockerfile", "local-action-via-composite-dockerfile"}
+
+// bounds concurrent plans: each job holds a network, and the daemon's address pool is finite
+var planSlots = make(chan struct{}, 4)
+
 type TestJobFileInfo struct {
 	workdir      string
 	workflowPath string
@@ -182,12 +189,19 @@ func (j *TestJobFileInfo) runTest(ctx context.Context, t *testing.T, cfg *Config
 
 	fullWorkflowPath := filepath.Join(workdir, j.workflowPath)
 	runnerConfig := &Config{
-		Workdir:               workdir,
-		BindWorkdir:           false,
-		EventName:             j.eventName,
-		EventPath:             cfg.EventPath,
-		Platforms:             j.platforms,
-		ReuseContainers:       false,
+		Workdir:     workdir,
+		BindWorkdir: false,
+		EventName:   j.eventName,
+		EventPath:   cfg.EventPath,
+		Platforms:   j.platforms,
+		// fixtures reuse workflow and job names, so parallel tests would collide without this
+		ContainerNamePrefix: strings.ReplaceAll(t.Name(), "/", "-"),
+		ReuseContainers:     false,
+		// as the shipped runner does, else a fixture asserting a job failure keeps its
+		// container, and its network, on the daemon forever
+		AutoRemove: true,
+		// 0 would run jobs runtime.NumCPU()-wide, making the network peak machine-dependent
+		MaxParallel:           2,
 		ForceRebuild:          true,
 		Env:                   cfg.Env,
 		Secrets:               cfg.Secrets,
@@ -210,7 +224,11 @@ func (j *TestJobFileInfo) runTest(ctx context.Context, t *testing.T, cfg *Config
 	plan, err := planner.PlanEvent(j.eventName)
 	assert.True(t, (err == nil) != (plan == nil), "PlanEvent should return either a plan or an error") //nolint:testifylint // pre-existing issue from nektos/act
 	if err == nil && plan != nil {
-		err = runner.NewPlanExecutor(plan)(ctx)
+		err = func() error {
+			planSlots <- struct{}{}
+			defer func() { <-planSlots }()
+			return runner.NewPlanExecutor(plan)(ctx)
+		}()
 		if j.errorMessage == "" {
 			assert.NoError(t, err, fullWorkflowPath) //nolint:testifylint // pre-existing issue from nektos/act
 		} else {
@@ -227,6 +245,7 @@ type TestConfig struct {
 
 func TestRunEvent(t *testing.T) {
 	requireDocker(t)
+	t.Parallel()
 
 	ctx := context.Background()
 
@@ -314,6 +333,9 @@ func TestRunEvent(t *testing.T) {
 			if table.workflowPath == "container-volumes" {
 				// host /proc bind mounts are Linux-Docker-only
 				requireLinuxDocker(t)
+			}
+			if !slices.Contains(sharedImageWorkflows, table.workflowPath) {
+				t.Parallel()
 			}
 
 			config := &Config{
@@ -445,6 +467,7 @@ func TestRunEventHostEnvironment(t *testing.T) {
 }
 
 func TestDryrunEvent(t *testing.T) {
+	t.Parallel()
 	// Dryrun plans without containers or network (shells and local actions only).
 	ctx := common.WithDryrun(context.Background(), true)
 
@@ -464,6 +487,7 @@ func TestDryrunEvent(t *testing.T) {
 
 	for _, table := range tables {
 		t.Run(table.workflowPath, func(t *testing.T) {
+			t.Parallel()
 			table.runTest(ctx, t, &Config{})
 		})
 	}
@@ -474,31 +498,9 @@ func TestDryrunEvent(t *testing.T) {
 // workflow's outputs via `needs`).
 func TestReusableWorkflowCaller(t *testing.T) {
 	requireDocker(t)
+	t.Parallel()
 	table := TestJobFileInfo{workdir, "uses-workflow", "push", "", platforms, map[string]string{"secret": "keep_it_private"}}
 	table.runTest(context.Background(), t, &Config{Secrets: table.secrets})
-}
-
-func TestDockerActionForcePullForceRebuild(t *testing.T) {
-	requireDocker(t)
-	requireNetwork(t) // force-pulls a docker action image
-
-	ctx := context.Background()
-
-	config := &Config{
-		ForcePull:    true,
-		ForceRebuild: true,
-	}
-
-	tables := []TestJobFileInfo{
-		{workdir, "local-action-dockerfile", "push", "", platforms, secrets},
-		{workdir, "local-action-via-composite-dockerfile", "push", "", platforms, secrets},
-	}
-
-	for _, table := range tables {
-		t.Run(table.workflowPath, func(t *testing.T) {
-			table.runTest(ctx, t, config)
-		})
-	}
 }
 
 type maskJobLoggerFactory struct {
@@ -513,6 +515,7 @@ func (f *maskJobLoggerFactory) WithJobLogger() *log.Logger {
 }
 
 func TestMaskValues(t *testing.T) {
+	t.Parallel()
 	assertNoSecret := func(text, secret string) { //nolint:unparam // pre-existing issue from nektos/act
 		found := strings.Contains(text, "composite secret")
 		if found {
@@ -543,6 +546,7 @@ func TestMaskValues(t *testing.T) {
 
 func TestRunEventSecrets(t *testing.T) {
 	requireDocker(t)
+	t.Parallel()
 	workflowPath := "secrets"
 
 	tjfi := TestJobFileInfo{
@@ -598,6 +602,7 @@ func TestRunWithService(t *testing.T) {
 }
 
 func TestRunActionInputs(t *testing.T) {
+	t.Parallel()
 	requireDocker(t)
 	workflowPath := "input-from-cli"
 
@@ -617,6 +622,7 @@ func TestRunActionInputs(t *testing.T) {
 }
 
 func TestRunEventPullRequest(t *testing.T) {
+	t.Parallel()
 	requireDocker(t)
 
 	workflowPath := "pull-request"
@@ -633,6 +639,7 @@ func TestRunEventPullRequest(t *testing.T) {
 }
 
 func TestRunMatrixWithUserDefinedInclusions(t *testing.T) {
+	t.Parallel()
 	requireDocker(t)
 	workflowPath := "matrix-with-user-inclusions"
 

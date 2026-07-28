@@ -33,6 +33,8 @@ jobs:
           done
       - name: lint
         run: make lint
+      - name: checks
+        run: make checks
       - name: build
         run: make build
       - name: test

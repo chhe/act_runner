@@ -21,6 +21,8 @@ DOCKER_ROOTLESS_REF := $(DOCKER_IMAGE):$(DOCKER_TAG)-dind-rootless
 GOLANGCI_LINT_PACKAGE ?= github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 GOVULNCHECK_PACKAGE ?= golang.org/x/vuln/cmd/govulncheck@v1.3.0
 
+GOTEST_FLAGS ?= -race -timeout 20m -parallel 8
+
 STATIC ?=
 EXTLDFLAGS ?=
 ifneq ($(STATIC),)
@@ -110,6 +112,9 @@ deps-tools: ## install tool dependencies
 	$(GO) install $(GOVULNCHECK_PACKAGE) & \
 	wait
 
+.PHONY: checks
+checks: tidy-check fmt-check security-check ## run the non-lint source checks
+
 .PHONY: lint
 lint: lint-go lint-go-windows ## lint everything
 
@@ -131,7 +136,7 @@ lint-pr-title: ## lint PR title against Conventional Commits (set PR_TITLE=...)
 	@node ./tools/lint-pr-title.ts
 
 .PHONY: security-check
-security-check: deps-tools
+security-check:
 	GOEXPERIMENT= $(GO) run $(GOVULNCHECK_PACKAGE) -show color ./... || true
 
 .PHONY: tidy
@@ -148,8 +153,8 @@ tidy-check: tidy
 	fi
 
 .PHONY: test
-test: fmt-check security-check ## test everything (integration tests self-skip without docker/network)
-	@$(GO) test -race -timeout 20m -v -cover -coverprofile coverage.txt ./... && echo "\n==>\033[32m Ok\033[m\n" || exit 1
+test: ## test everything (integration tests self-skip without docker/network)
+	@$(GO) test $(GOTEST_FLAGS) -cover -coverprofile coverage.txt ./... && echo "\n==>\033[32m Ok\033[m\n" || exit 1
 
 .PHONY: coverage-report
 coverage-report: ## turn coverage.txt from `make test` into .tmp/coverage.md

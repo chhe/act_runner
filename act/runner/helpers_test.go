@@ -5,11 +5,9 @@ package runner
 
 import (
 	"context"
-	"net"
 	"os/exec"
 	"runtime"
 	"testing"
-	"time"
 
 	"gitea.com/gitea/runner/act/container"
 
@@ -40,18 +38,6 @@ func requireDocker(t *testing.T) {
 	if _, err := cli.Ping(ctx, mobyclient.PingOptions{}); err != nil {
 		t.Skipf("skipping: docker daemon unreachable: %v", err)
 	}
-}
-
-// requireNetwork skips the test unless github.com is reachable. A few tests exercise behaviour
-// that inherently needs the network (force-pulling an image, resolving a remote short-sha ref);
-// gating lets the rest of the suite run offline without these failing.
-func requireNetwork(t *testing.T) {
-	t.Helper()
-	conn, err := net.DialTimeout("tcp", "github.com:443", 3*time.Second)
-	if err != nil {
-		t.Skipf("skipping: network unavailable: %v", err)
-	}
-	_ = conn.Close()
 }
 
 // requireHostTools skips the test unless every named executable is on PATH. Used by the

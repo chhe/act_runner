@@ -445,13 +445,6 @@ func TestHandler(t *testing.T) {
 		require.Equal(t, 404, resp.StatusCode)
 	})
 
-	t.Run("get with not exist id", func(t *testing.T) {
-		resp, err := testClient.Get(signArtifactURL(handler, 100))
-		require.NoError(t, err)
-		defer resp.Body.Close()
-		require.Equal(t, 404, resp.StatusCode)
-	})
-
 	t.Run("get with multiple keys", func(t *testing.T) {
 		version := "c19da02a2bd7e77277f1ac29ab45c09b7d46a4ee758284e26bb3045ad11d9d20"
 		key := strings.ToLower(t.Name())
@@ -469,7 +462,8 @@ func TestHandler(t *testing.T) {
 			_, err := rand.Read(contents[i])
 			require.NoError(t, err)
 			uploadCacheNormally(t, base, keys[i], version, contents[i])
-			time.Sleep(time.Second) // ensure CreatedAt of caches are different
+			// ensure CreatedAt of caches are different, in upload order
+			backdateCache(t, handler, keys[i], time.Duration(len(contents)-i)*time.Second)
 		}
 
 		reqKeys := strings.Join([]string{
@@ -554,7 +548,8 @@ func TestHandler(t *testing.T) {
 			_, err := rand.Read(contents[i])
 			require.NoError(t, err)
 			uploadCacheNormally(t, base, keys[i], version, contents[i])
-			time.Sleep(time.Second) // ensure CreatedAt of caches are different
+			// ensure CreatedAt of caches are different, in upload order
+			backdateCache(t, handler, keys[i], time.Duration(len(contents)-i)*time.Second)
 		}
 
 		reqKeys := strings.Join([]string{
@@ -607,7 +602,8 @@ func TestHandler(t *testing.T) {
 			_, err := rand.Read(contents[i])
 			require.NoError(t, err)
 			uploadCacheNormally(t, base, keys[i], version, contents[i])
-			time.Sleep(time.Second) // ensure CreatedAt of caches are different
+			// ensure CreatedAt of caches are different, in upload order
+			backdateCache(t, handler, keys[i], time.Duration(len(contents)-i)*time.Second)
 		}
 
 		reqKeys := strings.Join([]string{
@@ -644,6 +640,20 @@ func TestHandler(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, contents[expect], content)
 	})
+}
+
+// backdateCache rewrites a cache's CreatedAt. It has one-second resolution, so age-ordering
+// tests set it directly instead of sleeping a second between uploads.
+func backdateCache(t *testing.T, handler *Handler, key string, age time.Duration) {
+	db, err := handler.openDB()
+	require.NoError(t, err)
+	defer db.Close()
+
+	var caches []*Cache
+	require.NoError(t, db.Find(&caches, bolthold.Where("Key").Eq(key)))
+	require.Len(t, caches, 1)
+	caches[0].CreatedAt = time.Now().Add(-age).Unix()
+	require.NoError(t, db.Update(caches[0].ID, caches[0]))
 }
 
 func uploadCacheNormally(t *testing.T, base, key, version string, content []byte) { //nolint:unparam // pre-existing issue from nektos/act

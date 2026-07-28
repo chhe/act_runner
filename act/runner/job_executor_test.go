@@ -33,6 +33,7 @@ import (
 )
 
 func TestJobExecutor(t *testing.T) {
+	t.Parallel()
 	// Dryrun only checks syntax/planning; all cases resolve locally, so this runs offline.
 	tables := []TestJobFileInfo{
 		{workdir, "uses-and-run-in-one-step", "push", "Invalid run/uses syntax for job:test step:Test", platforms, secrets},
@@ -46,6 +47,7 @@ func TestJobExecutor(t *testing.T) {
 	ctx := common.WithDryrun(context.Background(), true)
 	for _, table := range tables {
 		t.Run(table.workflowPath, func(t *testing.T) {
+			t.Parallel()
 			table.runTest(ctx, t, &Config{})
 		})
 	}
