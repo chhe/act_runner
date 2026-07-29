@@ -104,6 +104,14 @@ runner:
   post_task_script: ''
   # Hard limit on post_task_script runtime. Default if omitted: 5m.
   post_task_script_timeout: 5m
+  # Scripts run inside the job environment before the job's first step and after its last
+  # one, the equivalent of GitHub's ACTIONS_RUNNER_HOOK_JOB_STARTED and
+  # ACTIONS_RUNNER_HOOK_JOB_COMPLETED, which are read when these are unset. The paths are
+  # resolved inside the job environment. Either one failing fails the job.
+  # Full guide: docs/job-hooks.md
+  hooks:
+    job_started: ''
+    job_completed: ''
 
 cache:
   # Enable the built-in cache server (used by actions/cache and similar actions).

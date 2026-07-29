@@ -139,9 +139,6 @@ runner:
 	assert.Equal(t, -1*time.Second, cfg.Runner.IdleCleanupInterval)
 }
 
-// TestLoadDefault_MalformedYAMLReturnsParseError pins the error surfaced for
-// invalid YAML to the canonical "parse config file" message rather than the
-// "for defaults metadata" variant — i.e. the main yaml.Unmarshal runs first.
 func TestLoadDefault_LoadsPostTaskScript(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
@@ -170,6 +167,25 @@ runner:
 	assert.Equal(t, 5*time.Minute, cfg.Runner.PostTaskScriptTimeout)
 }
 
+func TestLoadDefault_LoadsJobHooks(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+runner:
+  hooks:
+    job_started: /hooks/started.sh
+    job_completed: /hooks/completed.sh
+`), 0o600))
+
+	cfg, err := LoadDefault(path)
+	require.NoError(t, err)
+	assert.Equal(t, "/hooks/started.sh", cfg.Runner.Hooks.JobStarted)
+	assert.Equal(t, "/hooks/completed.sh", cfg.Runner.Hooks.JobCompleted)
+}
+
+// TestLoadDefault_MalformedYAMLReturnsParseError pins the error surfaced for
+// invalid YAML to the canonical "parse config file" message rather than the
+// "for defaults metadata" variant — i.e. the main yaml.Unmarshal runs first.
 func TestLoadDefault_MalformedYAMLReturnsParseError(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")

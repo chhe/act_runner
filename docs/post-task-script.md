@@ -150,6 +150,7 @@ powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0po
 
 ## See also
 
+- [Job hooks](job-hooks.md) — scripts running inside the job environment, around its steps
 - [Configuration](../README.md#configuration) — generating and loading `config.yaml`
 - [config.example.yaml](../internal/pkg/config/config.example.yaml) — all runner options
 - Bind-workdir idle cleanup (`runner.workdir_cleanup_age`) — separate from this hook; runs only when the runner is idle

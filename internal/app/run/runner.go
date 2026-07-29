@@ -471,6 +471,8 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 		DefaultActionInstance:             r.getDefaultActionsURL(task),
 		DefaultActionInstanceIsSelfHosted: r.isSelfHostedActionsURL(task),
 		PlatformPicker:                    r.labels.PickPlatform,
+		JobStartedHook:                    r.cfg.Runner.Hooks.JobStarted,
+		JobCompletedHook:                  r.cfg.Runner.Hooks.JobCompleted,
 		Vars:                              task.Vars,
 		ValidVolumes:                      r.cfg.Container.ValidVolumes,
 		InsecureSkipTLS:                   r.cfg.Runner.Insecure,

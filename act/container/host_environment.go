@@ -330,6 +330,10 @@ func (e *HostEnvironment) exec(ctx context.Context, command []string, cmdline st
 	} else {
 		wd = e.Path
 	}
+	// Flush any buffered, not-yet-newline-terminated trailing line, as the docker backend
+	// does in waitForCommand, so the final line of a command's output is not lost.
+	defer common.FlushWriter(e.StdOut)
+
 	f, err := lookupPathHost(command[0], env, e.StdOut)
 	if err != nil {
 		return err

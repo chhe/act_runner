@@ -270,6 +270,16 @@ On Windows, use `.exe`, `.bat`, or `.cmd` paths; **PowerShell (`.ps1`) is not su
 
 See **[docs/post-task-script.md](docs/post-task-script.md)** for lifecycle details, environment variables, timeout interaction, and platform notes.
 
+#### Job hooks (`runner.hooks.job_started`, `runner.hooks.job_completed`)
+
+Optional scripts that run **inside the job environment** (the job container, or the host in host mode), before the job's first step and after its last one. They are the equivalent of GitHub's `ACTIONS_RUNNER_HOOK_JOB_STARTED` / `ACTIONS_RUNNER_HOOK_JOB_COMPLETED`, which are read when the settings are unset.
+
+Because they run where the steps run and see the job's environment, they are the place for per-job setup no workflow should have to carry: registry logins, mirror configuration, or masking runner-wide secrets with `::add-mask::`. Their output is part of the job log and is scanned for workflow commands, and they can export to the job through `$GITHUB_ENV` and `$GITHUB_PATH`.
+
+Both hooks are synchronous and block the job while they run. Either one exiting non-zero fails the job, and there is no per-hook timeout.
+
+See **[docs/job-hooks.md](docs/job-hooks.md)** for the execution order, environment, and platform notes.
+
 ### Example Deployments
 
 Check out the [examples](examples) directory for sample deployment types.

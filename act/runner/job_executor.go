@@ -226,10 +226,15 @@ func newJobExecutor(info jobInfo, sf stepFactory, rc *RunContext) common.Executo
 		}
 	}
 
-	// The setup section of the job log: download the actions, run the pre steps, then name the job.
+	// The setup section of the job log. The started hook goes first, so what it sets up is
+	// in place for the first action download and the first step.
+	preSteps = append(preSteps, rc.runJobStartedHook)
 	preSteps = append(preSteps, printPrepareActions(rc, preparers))
 	preSteps = append(preSteps, stepPreSteps...)
 	preSteps = append(preSteps, printCompleteJobName(rc))
+
+	// Ahead of the teardown below, while the job environment is still up.
+	postExecutor = postExecutor.Finally(rc.runJobCompletedHook)
 
 	postExecutor = postExecutor.Finally(func(ctx context.Context) error {
 		jobError := common.JobError(ctx)
