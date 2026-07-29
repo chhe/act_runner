@@ -30,7 +30,9 @@ import (
 	"gitea.com/gitea/runner/act/exprparser"
 	"gitea.com/gitea/runner/act/model"
 
+	"github.com/docker/cli/cli/compose/loader"
 	"github.com/docker/go-connections/nat"
+	"github.com/moby/moby/api/types/mount"
 	"github.com/opencontainers/selinux/go-selinux"
 )
 
@@ -204,52 +206,93 @@ func (rc *RunContext) validVolumes() []string {
 		getDockerDaemonSocketMountPath(rc.containerDaemonSocket()))
 }
 
+// toolCache returns the tool cache path the job sees, relocatable through RUNNER_TOOL_CACHE.
+func (rc *RunContext) toolCache(fallback string) string {
+	if path := rc.GetEnv()["RUNNER_TOOL_CACHE"]; path != "" {
+		return path
+	}
+	return fallback
+}
+
+// runnerEnv returns a container's RUNNER_* variables, derived from the values runner.tool_cache
+// and friends report so the two cannot drift apart.
+func (rc *RunContext) runnerEnv(ctx context.Context) []string {
+	ext := container.LinuxContainerEnvironmentExtensions{}
+	runnerContext := ext.GetRunnerContext(ctx)
+	runnerContext["tool_cache"] = rc.toolCache(container.DefaultToolCache)
+
+	env := make([]string, 0, len(runnerContext))
+	for key, value := range runnerContext {
+		env = append(env, fmt.Sprintf("RUNNER_%s=%s", strings.ToUpper(key), value))
+	}
+	slices.Sort(env)
+	return env
+}
+
+// splitVolumes routes volume specs into binds and a source:target mount map, and returns the
+// container paths they mount onto. Only a plain source:target volume fits the map, everything
+// else (anonymous volumes, host binds, mount options) stays a bind.
+func splitVolumes(specs []string) ([]string, map[string]string, map[string]bool) {
+	binds := []string{}
+	mounts := map[string]string{}
+	targets := map[string]bool{}
+
+	for _, spec := range specs {
+		parsed, err := loader.ParseVolume(spec)
+		if err != nil {
+			binds = append(binds, spec) // let Docker report the malformed spec
+			continue
+		}
+		targets[parsed.Target] = true
+		if parsed.Type == string(mount.TypeVolume) && parsed.Source != "" && !parsed.ReadOnly {
+			mounts[parsed.Source] = parsed.Target
+		} else {
+			binds = append(binds, spec)
+		}
+	}
+	return binds, mounts, targets
+}
+
 // Returns the binds and mounts for the container, resolving paths as appopriate
 func (rc *RunContext) GetBindsAndMounts() ([]string, map[string]string) {
 	name := rc.jobContainerName()
-
-	binds := []string{}
-	if daemonSocket := rc.containerDaemonSocket(); daemonSocket != "-" {
-		daemonPath := getDockerDaemonSocketMountPath(daemonSocket)
-		binds = append(binds, fmt.Sprintf("%s:%s", daemonPath, "/var/run/docker.sock"))
-	}
-
 	ext := container.LinuxContainerEnvironmentExtensions{}
 
-	mounts := map[string]string{
-		"act-toolcache": "/opt/hostedtoolcache",
-		name + "-env":   ext.GetActPath(),
-	}
-
+	var volumes []string
 	if job := rc.Run.Job(); job != nil {
 		if container := job.Container(); container != nil {
 			for _, v := range container.Volumes {
 				if rc.ExprEval != nil {
 					v = rc.ExprEval.Interpolate(context.Background(), v)
 				}
-				if !strings.Contains(v, ":") || filepath.IsAbs(v) {
-					// Bind anonymous volume or host file.
-					binds = append(binds, v)
-				} else {
-					// Mount existing volume.
-					paths := strings.SplitN(v, ":", 2)
-					mounts[paths[0]] = paths[1]
-				}
+				volumes = append(volumes, v)
 			}
 		}
 	}
+	// the runner's own mounts below yield to the targets the job claims
+	binds, mounts, claimed := splitVolumes(volumes)
 
-	if rc.Config.BindWorkdir {
-		bindModifiers := ""
-		if runtime.GOOS == "darwin" {
-			bindModifiers = ":delegated"
+	if daemonSocket := rc.containerDaemonSocket(); daemonSocket != "-" && !claimed["/var/run/docker.sock"] {
+		binds = append(binds, getDockerDaemonSocketMountPath(daemonSocket)+":/var/run/docker.sock")
+	}
+	if toolCache := rc.toolCache(container.DefaultToolCache); !claimed[toolCache] {
+		mounts["act-toolcache"] = toolCache
+	}
+	mounts[name+"-env"] = ext.GetActPath() // runner-internal, never overridable
+
+	if workdir := ext.ToContainerPath(rc.Config.Workdir); !claimed[workdir] {
+		if rc.Config.BindWorkdir {
+			bindModifiers := ""
+			if runtime.GOOS == "darwin" {
+				bindModifiers = ":delegated"
+			}
+			if selinux.GetEnabled() {
+				bindModifiers = ":z"
+			}
+			binds = append(binds, fmt.Sprintf("%s:%s%s", rc.Config.Workdir, workdir, bindModifiers))
+		} else {
+			mounts[name] = workdir
 		}
-		if selinux.GetEnabled() {
-			bindModifiers = ":z"
-		}
-		binds = append(binds, fmt.Sprintf("%s:%s%s", rc.Config.Workdir, ext.ToContainerPath(rc.Config.Workdir), bindModifiers))
-	} else {
-		mounts[name] = ext.ToContainerPath(rc.Config.Workdir)
 	}
 
 	return binds, mounts
@@ -283,7 +326,10 @@ func (rc *RunContext) startHostEnvironment() common.Executor {
 		if err := os.MkdirAll(runnerTmp, 0o777); err != nil {
 			return err
 		}
-		toolCache := filepath.Join(cacheDir, "tool_cache")
+		toolCache := rc.toolCache(filepath.Join(cacheDir, "tool_cache"))
+		if err := os.MkdirAll(toolCache, 0o777); err != nil {
+			return err
+		}
 		rc.JobContainer = &container.HostEnvironment{
 			Path:         path,
 			TmpDir:       runnerTmp,
@@ -368,10 +414,7 @@ func (rc *RunContext) startJobContainer() common.Executor {
 
 		envList := make([]string, 0)
 
-		envList = append(envList, fmt.Sprintf("%s=%s", "RUNNER_TOOL_CACHE", "/opt/hostedtoolcache"))
-		envList = append(envList, fmt.Sprintf("%s=%s", "RUNNER_OS", "Linux"))
-		envList = append(envList, fmt.Sprintf("%s=%s", "RUNNER_ARCH", container.RunnerArch(ctx)))
-		envList = append(envList, fmt.Sprintf("%s=%s", "RUNNER_TEMP", "/tmp"))
+		envList = append(envList, rc.runnerEnv(ctx)...)
 		envList = append(envList, fmt.Sprintf("%s=%s", "LANG", "C.UTF-8")) // Use same locale as GitHub Actions
 
 		ext := container.LinuxContainerEnvironmentExtensions{}
@@ -992,6 +1035,8 @@ func (rc *RunContext) getRunnerContext(ctx context.Context) map[string]any {
 	runnerContext := map[string]any{}
 	if rc.JobContainer != nil {
 		maps0.Copy(runnerContext, rc.JobContainer.GetRunnerContext(ctx))
+		defaultToolCache, _ := runnerContext["tool_cache"].(string)
+		runnerContext["tool_cache"] = rc.toolCache(defaultToolCache)
 	}
 	runnerContext["name"] = rc.Config.RunnerName
 	runnerContext["environment"] = "self-hosted"
@@ -1363,24 +1408,9 @@ func (rc *RunContext) handleServiceCredentials(ctx context.Context, creds map[st
 
 // GetServiceBindsAndMounts returns the binds and mounts for the service container, resolving paths as appopriate
 func (rc *RunContext) GetServiceBindsAndMounts(svcVolumes []string) ([]string, map[string]string) {
-	binds := []string{}
-	if daemonSocket := rc.containerDaemonSocket(); daemonSocket != "-" {
-		daemonPath := getDockerDaemonSocketMountPath(daemonSocket)
-		binds = append(binds, fmt.Sprintf("%s:%s", daemonPath, "/var/run/docker.sock"))
+	binds, mounts, claimed := splitVolumes(svcVolumes)
+	if daemonSocket := rc.containerDaemonSocket(); daemonSocket != "-" && !claimed["/var/run/docker.sock"] {
+		binds = append(binds, getDockerDaemonSocketMountPath(daemonSocket)+":/var/run/docker.sock")
 	}
-
-	mounts := map[string]string{}
-
-	for _, v := range svcVolumes {
-		if !strings.Contains(v, ":") || filepath.IsAbs(v) {
-			// Bind anonymous volume or host file.
-			binds = append(binds, v)
-		} else {
-			// Mount existing volume.
-			paths := strings.SplitN(v, ":", 2)
-			mounts[paths[0]] = paths[1]
-		}
-	}
-
 	return binds, mounts
 }

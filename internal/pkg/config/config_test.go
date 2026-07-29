@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -195,6 +196,21 @@ func TestLoadDefault_MalformedYAMLReturnsParseError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parse config file")
 	assert.NotContains(t, err.Error(), "defaults metadata")
+}
+
+func TestLoadDefault_WarnsOnUnknownKeysButStillLoads(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("container:\n  volumes:\n    - /host:/ctr\n  privileged: true\n"), 0o600))
+
+	hook := test.NewGlobal()
+	defer hook.Reset()
+
+	cfg, err := LoadDefault(path)
+	require.NoError(t, err)
+	assert.True(t, cfg.Container.Privileged)
+	require.Len(t, hook.Entries, 1)
+	assert.Contains(t, hook.LastEntry().Message, "field volumes not found")
 }
 
 func TestContainerNetworkCreateOptions(t *testing.T) {

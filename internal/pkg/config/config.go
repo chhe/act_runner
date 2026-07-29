@@ -4,6 +4,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"maps"
@@ -143,6 +144,7 @@ func LoadDefault(file string) (*Config, error) {
 		if err := yaml.Unmarshal(content, cfg); err != nil {
 			return nil, fmt.Errorf("parse config file %q: %w", file, err)
 		}
+		warnUnknownKeys(file, content)
 		definedRunnerKeys, err = definedRunnerConfigKeys(content)
 		if err != nil {
 			return nil, fmt.Errorf("parse config file %q for defaults metadata: %w", file, err)
@@ -286,6 +288,21 @@ func LoadDefault(file string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// warnUnknownKeys reports keys the config does not define, which are otherwise ignored
+// without a trace. It only warns, so a config carrying keys from another runner version
+// still loads.
+func warnUnknownKeys(file string, content []byte) {
+	decoder := yaml.NewDecoder(bytes.NewReader(content))
+	decoder.KnownFields(true)
+
+	var typeErr *yaml.TypeError
+	if err := decoder.Decode(&Config{}); errors.As(err, &typeErr) {
+		for _, message := range typeErr.Errors {
+			log.Warnf("config file %q: %s, it will be ignored", file, message)
+		}
+	}
 }
 
 func definedRunnerConfigKeys(content []byte) (map[string]bool, error) {

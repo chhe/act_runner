@@ -167,7 +167,11 @@ container:
     enable_ipv6: false # Omit to use Docker's default (IPv6 disabled). Enabling it requires dockerd started with --ipv6.
   # Whether to use privileged mode or not when launching task containers (privileged mode is required for Docker-in-Docker).
   privileged: false
-  # Any other options to be used when the container is started (e.g., --add-host=my.gitea.url:host-gateway).
+  # Any other options to be used when the container is started, for example:
+  #   options: --add-host=my.gitea.url:host-gateway
+  # A volume declared here replaces the one the runner mounts on the same container path, so the
+  # tool cache can be kept on the host. Its source must also be allowed by valid_volumes below:
+  #   options: --volume /host/toolcache:/opt/hostedtoolcache
   options:
   # The parent directory of a job's working directory.
   # NOTE: There is no need to add the first '/' of the path as runner will add it automatically.

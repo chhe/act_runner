@@ -23,6 +23,7 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
 	mobyclient "github.com/moby/moby/client"
 	"github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
@@ -659,4 +660,23 @@ func TestCheckVolumesRejectsEscapingHostPaths(t *testing.T) {
 		Binds: []string{filepath.Join(linkPath, "missing") + ":/mnt"},
 	})
 	assert.Empty(t, hostConf.Binds)
+}
+
+func TestMergeContainerConfigsVolumesReplaceRunnerMounts(t *testing.T) {
+	logger, _ := test.NewNullLogger()
+	ctx := common.WithLogger(context.Background(), logger)
+	cr := &containerReference{
+		input: &NewContainerInput{
+			NetworkMode: "bridge",
+			Options:     "--volume /host/tools:/opt/hostedtoolcache",
+		},
+	}
+
+	_, hostConf, err := cr.mergeContainerConfigs(ctx, &container.Config{}, &container.HostConfig{
+		Binds:  []string{"/var/run/docker.sock:/var/run/docker.sock"},
+		Mounts: []mount.Mount{{Type: mount.TypeVolume, Source: "act-toolcache", Target: "/opt/hostedtoolcache"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/var/run/docker.sock:/var/run/docker.sock", "/host/tools:/opt/hostedtoolcache"}, hostConf.Binds)
+	assert.Empty(t, hostConf.Mounts)
 }

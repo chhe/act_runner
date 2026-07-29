@@ -19,6 +19,7 @@ import (
 	"gitea.com/gitea/runner/act/exprparser"
 	"gitea.com/gitea/runner/act/model"
 
+	"github.com/docker/cli/cli/compose/loader"
 	log "github.com/sirupsen/logrus"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
@@ -363,6 +364,10 @@ func TestRunContext_GetBindsAndMounts(t *testing.T) {
 			{"BindAnonymousVolume", []string{"/volume"}, "/volume", map[string]string{}},
 			{"BindHostFile", []string{"/path/to/file/on/host:/volume"}, "/path/to/file/on/host:/volume", map[string]string{}},
 			{"MountExistingVolume", []string{"volume-id:/volume"}, "", map[string]string{"volume-id": "/volume"}},
+			{"MountExistingVolumeReadOnly", []string{"volume-id:/volume:ro"}, "volume-id:/volume:ro", map[string]string{}},
+			{"BindRelativeHostPath", []string{"./relative:/volume"}, "./relative:/volume", map[string]string{}},
+			{"OverridesToolCache", []string{"/host/tools:/opt/hostedtoolcache"}, "/host/tools:/opt/hostedtoolcache", map[string]string{}},
+			{"OverridesDockerSocket", []string{"/host/docker.sock:/var/run/docker.sock"}, "/host/docker.sock:/var/run/docker.sock", map[string]string{}},
 		}
 
 		t.Run("InterpolatedContainerVolumes", func(t *testing.T) {
@@ -418,15 +423,37 @@ func TestRunContext_GetBindsAndMounts(t *testing.T) {
 				rc.Run.JobID = "job1"
 				rc.Run.Workflow.Jobs = map[string]*model.Job{"job1": job}
 
-				gotbind, gotmount := rc.GetBindsAndMounts()
+				jobBinds, jobMounts := rc.GetBindsAndMounts()
+				svcBinds, svcMounts := rc.GetServiceBindsAndMounts(testcase.volumes)
+				// job and service containers classify volumes alike, only their own mounts differ
+				for _, got := range []struct {
+					binds  []string
+					mounts map[string]string
+				}{{jobBinds, jobMounts}, {svcBinds, svcMounts}} {
+					gotbind, gotmount := got.binds, got.mounts
 
-				if len(testcase.wantbind) > 0 {
-					assert.Contains(t, gotbind, testcase.wantbind)
-				}
+					if len(testcase.wantbind) > 0 {
+						assert.Contains(t, gotbind, testcase.wantbind)
+					}
 
-				for k, v := range testcase.wantmount {
-					assert.Contains(t, gotmount, k)
-					assert.Equal(t, gotmount[k], v)
+					for k, v := range testcase.wantmount {
+						assert.Contains(t, gotmount, k)
+						assert.Equal(t, gotmount[k], v)
+					}
+
+					// Docker rejects a container with two mounts on one target, so the job's own
+					// volumes must displace the runner's rather than pile up next to them.
+					targets := map[string]bool{}
+					for _, bind := range gotbind {
+						parsed, err := loader.ParseVolume(bind)
+						require.NoError(t, err)
+						assert.NotContains(t, targets, parsed.Target, "%s mounts an already mounted target", bind)
+						targets[parsed.Target] = true
+					}
+					for source, target := range gotmount {
+						assert.NotContains(t, targets, target, "%s mounts an already mounted target", source)
+						targets[target] = true
+					}
 				}
 			})
 		}
