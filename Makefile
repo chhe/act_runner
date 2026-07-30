@@ -97,7 +97,7 @@ go-check:
 
 .PHONY: fmt-check
 fmt-check: fmt
-	@diff=$$(git diff --color=always); \
+	@diff=$$(git diff --color=always -- '*.go'); \
 	if [ -n "$$diff" ]; then \
 		echo "Please run 'make fmt' and commit the result:"; \
 		printf "%s" "$${diff}"; \
