@@ -6,7 +6,7 @@ SHASUM ?= shasum -a 256
 HAS_GO = $(shell hash $(GO) > /dev/null 2>&1 && echo "GO" || echo "NOGO" )
 XGO_PACKAGE ?= src.techknowlogick.com/xgo@v1.9.0 # renovate: datasource=go
 XGO_VERSION := go-1.26.x
-GXZ_PACKAGE ?= github.com/ulikunitz/xz/cmd/gxz@v0.5.10 # renovate: datasource=go
+GXZ_PACKAGE ?= github.com/ulikunitz/xz/cmd/gxz@v0.5.15 # renovate: datasource=go
 
 LINUX_ARCHS ?= linux/amd64,linux/arm64
 DARWIN_ARCHS ?= darwin-12/amd64,darwin-12/arm64
