@@ -667,7 +667,9 @@ func TestReadWorkflow_Strategy(t *testing.T) {
 	matrixes, err := job.GetMatrixes()
 	assert.NoError(t, err)                          //nolint:testifylint // pre-existing issue from nektos/act
 	assert.Equal(t, matrixes, []map[string]any{{}}) //nolint:testifylint // pre-existing issue from nektos/act
-	assert.Equal(t, job.Matrix(), map[string][]any(nil))
+	matrix, err := job.Matrix()
+	require.NoError(t, err)
+	assert.Empty(t, matrix)
 	assert.Equal(t, job.Strategy.MaxParallel, 2) //nolint:testifylint // pre-existing issue from nektos/act
 	assert.Equal(t, job.Strategy.FailFast, true) //nolint:testifylint // pre-existing issue from nektos/act
 
@@ -675,7 +677,9 @@ func TestReadWorkflow_Strategy(t *testing.T) {
 	matrixes, err = job.GetMatrixes()
 	assert.NoError(t, err)                          //nolint:testifylint // pre-existing issue from nektos/act
 	assert.Equal(t, matrixes, []map[string]any{{}}) //nolint:testifylint // pre-existing issue from nektos/act
-	assert.Equal(t, job.Matrix(), map[string][]any(nil))
+	matrix, err = job.Matrix()
+	require.NoError(t, err)
+	assert.Empty(t, matrix)
 	assert.Equal(t, job.Strategy.MaxParallel, 4)  //nolint:testifylint // pre-existing issue from nektos/act
 	assert.Equal(t, job.Strategy.FailFast, false) //nolint:testifylint // pre-existing issue from nektos/act
 
@@ -683,7 +687,9 @@ func TestReadWorkflow_Strategy(t *testing.T) {
 	matrixes, err = job.GetMatrixes()
 	assert.NoError(t, err)                          //nolint:testifylint // pre-existing issue from nektos/act
 	assert.Equal(t, matrixes, []map[string]any{{}}) //nolint:testifylint // pre-existing issue from nektos/act
-	assert.Equal(t, job.Matrix(), map[string][]any(nil))
+	matrix, err = job.Matrix()
+	require.NoError(t, err)
+	assert.Empty(t, matrix)
 	assert.Equal(t, job.Strategy.MaxParallel, 2)  //nolint:testifylint // pre-existing issue from nektos/act
 	assert.Equal(t, job.Strategy.FailFast, false) //nolint:testifylint // pre-existing issue from nektos/act
 
@@ -700,7 +706,9 @@ func TestReadWorkflow_Strategy(t *testing.T) {
 			{"datacenter": "site-b", "node-version": "12.x", "site": "dev"},
 		},
 	)
-	assert.Equal(t, job.Matrix(), //nolint:testifylint // pre-existing issue from nektos/act
+	matrix, err = job.Matrix()
+	require.NoError(t, err)
+	assert.Equal(t, matrix, //nolint:testifylint // pre-existing issue from nektos/act
 		map[string][]any{
 			"datacenter": {"site-c", "site-d"},
 			"exclude": {
@@ -1092,13 +1100,15 @@ jobs:
 				t.Fatal("job not found")
 			}
 
-			matrix := job.Matrix()
+			matrix, err := job.Matrix()
 
 			if tt.wantErr {
+				require.Error(t, err)
 				assert.Nil(t, matrix, "matrix should be nil on error")
 			} else {
+				require.NoError(t, err)
 				if tt.wantLen == 0 {
-					assert.Nil(t, matrix, "matrix should be nil for jobs without strategy")
+					assert.Empty(t, matrix, "no matrix for jobs without strategy")
 				} else {
 					assert.NotNil(t, matrix, "matrix should not be nil")
 					assert.Len(t, matrix, tt.wantLen, "matrix should have expected number of keys")
@@ -1130,11 +1140,9 @@ func TestJobMatrixValidation(t *testing.T) {
 			},
 		}
 
-		// Attempt to get matrix
-		matrix := job.Matrix()
-
-		// Should return nil due to validation error
-		assert.Nil(t, matrix, "matrix with nested map should return nil")
+		matrix, err := job.Matrix()
+		require.ErrorContains(t, err, `matrix key "config" has invalid nested object value`)
+		assert.Nil(t, matrix)
 	})
 }
 

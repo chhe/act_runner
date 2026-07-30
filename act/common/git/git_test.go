@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -609,13 +608,5 @@ func TestAcquireCloneLock(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("acquire on a different directory must not block")
 		}
-	})
-
-	t.Run("same directory reuses the same mutex", func(t *testing.T) {
-		dir := t.TempDir()
-
-		v1, _ := cloneLocks.LoadOrStore(dir, &sync.Mutex{})
-		v2, _ := cloneLocks.LoadOrStore(dir, &sync.Mutex{})
-		require.Same(t, v1, v2)
 	})
 }

@@ -70,6 +70,7 @@ type Handler struct {
 	storage  *Storage
 	router   *httprouter.Router
 	listener net.Listener
+	port     int
 	server   *http.Server
 	logger   logrus.FieldLogger
 
@@ -177,6 +178,12 @@ func StartHandler(dir, outboundIP string, port uint16, internalSecret string, lo
 	if err != nil {
 		return nil, err
 	}
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		listener.Close()
+		return nil, fmt.Errorf("cache server listens on %T, want a TCP address", listener.Addr())
+	}
+	h.port = addr.Port
 	server := &http.Server{
 		ReadHeaderTimeout: 2 * time.Second,
 		Handler:           router,
@@ -194,9 +201,7 @@ func StartHandler(dir, outboundIP string, port uint16, internalSecret string, lo
 
 func (h *Handler) ExternalURL() string {
 	// TODO: make the external url configurable if necessary
-	return fmt.Sprintf("http://%s:%d",
-		h.outboundIP,
-		h.listener.Addr().(*net.TCPAddr).Port)
+	return fmt.Sprintf("http://%s:%d", h.outboundIP, h.port)
 }
 
 // RegisterJob makes token a valid bearer credential for cache requests from

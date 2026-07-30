@@ -16,6 +16,7 @@ import (
 	"sync"
 
 	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/internal/pkg/lock"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
@@ -32,7 +33,7 @@ var (
 	githubHTTPRegex     = regexp.MustCompile(`^https?://.*github.com.*/(.+)/(.+?)(?:.git)?$`)
 	githubSSHRegex      = regexp.MustCompile(`github.com[:/](.+)/(.+?)(?:.git)?$`)
 
-	cloneLocks sync.Map // key: clone target directory; value: *sync.Mutex
+	cloneLocks lock.Keyed[string] // key: clone target directory
 
 	ErrShortRef = errors.New("short SHA references are not supported")
 	ErrNoRepo   = errors.New("unable to find git repo")
@@ -43,10 +44,7 @@ var (
 // Callers reading files inside dir (e.g. tarring a checked-out action into a job container) must hold this lock too,
 // otherwise a concurrent NewGitCloneExecutor on the same dir can mutate the worktree mid-read.
 func AcquireCloneLock(dir string) func() {
-	v, _ := cloneLocks.LoadOrStore(dir, &sync.Mutex{})
-	mu := v.(*sync.Mutex)
-	mu.Lock()
-	return mu.Unlock
+	return cloneLocks.Lock(dir)
 }
 
 type Error struct {

@@ -86,11 +86,12 @@ func (w *Workflow) OnSchedule() []string {
 	case []any:
 		allSchedules := []string{}
 		for _, v := range val {
-			for k, cron := range v.(map[string]any) {
-				if k != "cron" {
-					continue
-				}
-				allSchedules = append(allSchedules, cron.(string))
+			entry, ok := v.(map[string]any)
+			if !ok {
+				continue
+			}
+			if cron, ok := entry["cron"].(string); ok {
+				allSchedules = append(allSchedules, cron)
 			}
 		}
 		return allSchedules
@@ -443,9 +444,9 @@ func normalizeMatrixValue(key string, val any) ([]any, error) {
 // Scalar values are wrapped into single-element arrays automatically.
 // Template expressions are resolved by EvaluateYamlNode before this method is
 // called; if unresolved, the literal string is wrapped as a one-element fallback.
-func (j *Job) Matrix() map[string][]any {
+func (j *Job) Matrix() (map[string][]any, error) {
 	if j.Strategy == nil || j.Strategy.RawMatrix.Kind != yaml.MappingNode {
-		return nil
+		return map[string][]any{}, nil
 	}
 
 	// Decode to flexible map first so that scalar values don't cause a type error.
@@ -455,9 +456,9 @@ func (j *Job) Matrix() map[string][]any {
 		// Fall back to the strict array-only format for backward compatibility.
 		var val map[string][]any
 		if !decodeNode(j.Strategy.RawMatrix, &val) {
-			return nil
+			return map[string][]any{}, nil
 		}
-		return val
+		return val, nil
 	}
 
 	// Convert flexible format to expected format with validation
@@ -465,12 +466,11 @@ func (j *Job) Matrix() map[string][]any {
 	for k, v := range flexVal {
 		normalized, err := normalizeMatrixValue(k, v)
 		if err != nil {
-			log.Errorf("matrix validation error: %v", err)
-			return nil
+			return nil, err
 		}
 		val[k] = normalized
 	}
-	return val
+	return val, nil
 }
 
 // GetMatrixes returns the matrix cross product
@@ -482,38 +482,38 @@ func (j *Job) GetMatrixes() ([]map[string]any, error) {
 		j.Strategy.FailFast = j.Strategy.GetFailFast()
 		j.Strategy.MaxParallel = j.Strategy.GetMaxParallel()
 
-		if m := j.Matrix(); m != nil {
+		m, err := j.Matrix()
+		if err != nil {
+			return nil, err
+		}
+		if len(m) > 0 {
 			includes := make([]map[string]any, 0)
 			extraIncludes := make([]map[string]any, 0)
+			addInclude := func(raw any) error {
+				include, ok := raw.(map[string]any)
+				if !ok {
+					return fmt.Errorf("the workflow is not valid. Matrix include %v is not a map of matrix keys to values", raw)
+				}
+				for k := range include {
+					if _, ok := m[k]; ok {
+						includes = append(includes, include)
+						return nil
+					}
+				}
+				extraIncludes = append(extraIncludes, include)
+				return nil
+			}
 			for _, v := range m["include"] {
 				switch t := v.(type) {
 				case []any:
 					for _, i := range t {
-						i := i.(map[string]any)
-						extraInclude := true
-						for k := range i {
-							if _, ok := m[k]; ok {
-								includes = append(includes, i)
-								extraInclude = false
-								break
-							}
-						}
-						if extraInclude {
-							extraIncludes = append(extraIncludes, i)
+						if err := addInclude(i); err != nil {
+							return nil, err
 						}
 					}
 				case any:
-					v := v.(map[string]any)
-					extraInclude := true
-					for k := range v {
-						if _, ok := m[k]; ok {
-							includes = append(includes, v)
-							extraInclude = false
-							break
-						}
-					}
-					if extraInclude {
-						extraIncludes = append(extraIncludes, v)
+					if err := addInclude(t); err != nil {
+						return nil, err
 					}
 				}
 			}
@@ -521,10 +521,13 @@ func (j *Job) GetMatrixes() ([]map[string]any, error) {
 
 			excludes := make([]map[string]any, 0)
 			for _, e := range m["exclude"] {
-				e := e.(map[string]any)
-				for k := range e {
+				exclude, ok := e.(map[string]any)
+				if !ok {
+					return nil, fmt.Errorf("the workflow is not valid. Matrix exclude %v is not a map of matrix keys to values", e)
+				}
+				for k := range exclude {
 					if _, ok := m[k]; ok {
-						excludes = append(excludes, e)
+						excludes = append(excludes, exclude)
 					} else {
 						// We fail completely here because that's what GitHub does for non-existing matrix keys, fail on exclude, silent skip on include
 						return nil, fmt.Errorf("the workflow is not valid. Matrix exclude key %q does not match any key within the matrix", k)

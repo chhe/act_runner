@@ -11,6 +11,7 @@ import (
 	"gitea.com/gitea/runner/act/model"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLiterals(t *testing.T) {
@@ -523,7 +524,9 @@ func TestOperatorsBooleanEvaluation(t *testing.T) {
 			assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
 
 			if expected, ok := tt.expected.(float64); ok && math.IsNaN(expected) {
-				assert.True(t, math.IsNaN(output.(float64)))
+				number, ok := output.(float64)
+				require.True(t, ok, "want a number, got %T", output)
+				assert.True(t, math.IsNaN(number))
 			} else {
 				assert.Equal(t, tt.expected, output)
 			}

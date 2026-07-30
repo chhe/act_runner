@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -1011,33 +1013,59 @@ func TestReporter_SetOutputs(t *testing.T) {
 	r := &Reporter{state: &runnerv1.TaskState{}}
 
 	r.SetOutputs(map[string]string{"foo": "bar"})
-	got, ok := r.outputs.Load("foo")
+	got, ok := r.outputs["foo"]
 	require.True(t, ok)
-	assert.Equal(t, "bar", got)
+	assert.Equal(t, "bar", got.value)
 
 	// first value wins: a later write to the same key is ignored
 	r.SetOutputs(map[string]string{"foo": "baz"})
-	got, _ = r.outputs.Load("foo")
-	assert.Equal(t, "bar", got)
+	assert.Equal(t, "bar", r.outputs["foo"].value)
 
 	// keys longer than maxOutputKeyLen are dropped
 	longKey := strings.Repeat("k", maxOutputKeyLen+1)
 	r.SetOutputs(map[string]string{longKey: "v"})
-	_, ok = r.outputs.Load(longKey)
+	_, ok = r.outputs[longKey]
 	assert.False(t, ok)
 
 	// values longer than maxOutputValueLen are dropped
 	longValue := strings.Repeat("v", maxOutputValueLen+1)
 	r.SetOutputs(map[string]string{"big": longValue})
-	_, ok = r.outputs.Load("big")
+	_, ok = r.outputs["big"]
 	assert.False(t, ok)
 
 	// a value at exactly the limit is still stored
 	maxValue := strings.Repeat("v", maxOutputValueLen)
 	r.SetOutputs(map[string]string{"atlimit": maxValue})
-	got, ok = r.outputs.Load("atlimit")
+	got, ok = r.outputs["atlimit"]
 	require.True(t, ok)
-	assert.Len(t, got, maxOutputValueLen)
+	assert.Len(t, got.value, maxOutputValueLen)
+}
+
+// An output the server acknowledged is not reported again.
+func TestReporter_OutputsSentOnce(t *testing.T) {
+	client := mocks.NewClient(t)
+	var reported []map[string]string
+	client.On("UpdateTask", mock.Anything, mock.Anything).Return(
+		func(_ context.Context, req *connect_go.Request[runnerv1.UpdateTaskRequest]) (*connect_go.Response[runnerv1.UpdateTaskResponse], error) {
+			reported = append(reported, req.Msg.Outputs)
+			return connect_go.NewResponse(&runnerv1.UpdateTaskResponse{SentOutputs: slices.Collect(maps.Keys(req.Msg.Outputs))}), nil
+		})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	taskCtx, err := structpb.NewStruct(map[string]any{})
+	require.NoError(t, err)
+	cfg, _ := config.LoadDefault("")
+	r := NewReporter(ctx, cancel, client, &runnerv1.Task{Context: taskCtx}, cfg)
+
+	r.SetOutputs(map[string]string{"foo": "bar"})
+	require.NoError(t, r.ReportState(false))
+	assert.True(t, r.outputs["foo"].sent)
+
+	require.NoError(t, r.ReportState(true))
+	require.Len(t, reported, 2)
+	assert.Equal(t, map[string]string{"foo": "bar"}, reported[0])
+	assert.Empty(t, reported[1])
 }
 
 func TestReporter_EffectiveCloseTimeout(t *testing.T) {

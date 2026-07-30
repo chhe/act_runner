@@ -138,9 +138,10 @@ func (sar *stepActionRemote) prepareActionExecutor() common.Executor {
 		})
 		var ntErr common.Executor
 		if err := gitClone(ctx); err != nil {
-			if errors.Is(err, git.ErrShortRef) {
+			var refErr *git.Error
+			if errors.As(err, &refErr) && errors.Is(err, git.ErrShortRef) {
 				return fmt.Errorf("Unable to resolve action `%s`, the provided ref `%s` is the shortened version of a commit SHA, which is not supported. Please use the full commit SHA `%s` instead",
-					sar.Step.Uses, sar.remoteAction.Ref, err.(*git.Error).Commit())
+					sar.Step.Uses, sar.remoteAction.Ref, refErr.Commit())
 			} else if errors.Is(err, gogit.ErrForceNeeded) { // TODO: figure out if it will be easy to shadow/alias go-git err's
 				ntErr = common.NewInfoExecutor("Non-terminating error while running 'git clone': %v", err)
 			} else {

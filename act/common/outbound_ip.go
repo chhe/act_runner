@@ -19,7 +19,9 @@ func GetOutboundIP() net.IP {
 	conn, err := net.Dial("udp", "8.8.8.8:80")
 	if err == nil {
 		defer conn.Close()
-		return conn.LocalAddr().(*net.UDPAddr).IP
+		if addr, ok := conn.LocalAddr().(*net.UDPAddr); ok {
+			return addr.IP
+		}
 	}
 
 	// So the machine cannot access the internet. Pick an IP address from network interfaces.

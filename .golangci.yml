@@ -11,6 +11,7 @@ linters:
     - dupl
     - errcheck
     - forbidigo
+    - forcetypeassert
     - gocheckcompilerdirectives
     - gocritic
     - goheader
@@ -102,6 +103,9 @@ linters:
       - linters:
           - forbidigo
         path: cmd
+      - linters:
+          - forcetypeassert
+        path: _test\.go
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
