@@ -89,6 +89,7 @@ type NewDockerBuildExecutorInput struct {
 type NewDockerNetworkCreateExecutorInput struct {
 	EnableIPv4 *bool
 	EnableIPv6 *bool
+	RunnerUUID string
 }
 
 // NewDockerPullExecutorInput the input for the NewDockerPullExecutor function

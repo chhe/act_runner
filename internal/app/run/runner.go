@@ -54,6 +54,7 @@ func RunnerCapabilities() []string {
 // Runner runs the pipeline.
 type Runner struct {
 	name string
+	uuid string
 
 	cfg *config.Config
 
@@ -119,6 +120,7 @@ func NewRunner(cfg *config.Config, reg *config.Registration, cli client.Client) 
 
 	runner := &Runner{
 		name:           reg.Name,
+		uuid:           reg.UUID,
 		cfg:            cfg,
 		client:         cli,
 		labels:         ls,
@@ -129,6 +131,9 @@ func NewRunner(cfg *config.Config, reg *config.Registration, cli client.Client) 
 	}
 	return runner
 }
+
+// removeOrphanNetworks is a variable so tests can substitute one that needs no Docker daemon.
+var removeOrphanNetworks = container.RemoveOrphanNetworks
 
 // OnIdle performs lightweight maintenance during polling idle windows.
 // It runs synchronously on the poller goroutine; shouldRunIdleCleanup
@@ -150,6 +155,21 @@ func (r *Runner) OnIdle(ctx context.Context) {
 	// the name match leaves untouched. No-op when no host-mode job ever ran.
 	if hostRoot := filepath.FromSlash(r.cfg.Host.WorkdirParent); hostRoot != "" {
 		r.cleanupStaleDirs(ctx, hostRoot, isHostScratchDir)
+	}
+	r.cleanupOrphanNetworks(ctx)
+}
+
+// cleanupOrphanNetworks reclaims the per-job networks of jobs this runner did not live to
+// tear down. A labelled network with no containers on it is finished with, and as for the
+// directories above, a task beginning during the pass is safe because the cutoff keeps a
+// network it has created but not yet attached a container to out of scope.
+func (r *Runner) cleanupOrphanNetworks(ctx context.Context) {
+	if r.uuid == "" || !r.labels.RequireDocker() && !r.cfg.Container.RequireDocker {
+		return
+	}
+	cutoff := r.now().Add(-r.cfg.Runner.WorkdirCleanupAge)
+	if err := removeOrphanNetworks(ctx, r.uuid, cutoff); err != nil {
+		log.Warnf("failed to clean up networks left behind by earlier jobs: %v", err)
 	}
 }
 
@@ -472,6 +492,9 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 		ContainerNetworkCreateOptions: container.NewDockerNetworkCreateExecutorInput{
 			EnableIPv4: r.cfg.Container.NetworkCreateOptions.EnableIPv4,
 			EnableIPv6: r.cfg.Container.NetworkCreateOptions.EnableIPv6,
+			// so a network this job leaks, if the runner dies before its teardown, can be
+			// told apart from one belonging to another runner on the same daemon
+			RunnerUUID: r.uuid,
 		},
 		ContainerOptions:                  r.cfg.Container.Options,
 		ContainerDaemonSocket:             r.cfg.Container.DockerHost,

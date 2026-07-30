@@ -9,6 +9,7 @@ package container
 import (
 	"context"
 	"runtime"
+	"time"
 
 	"gitea.com/gitea/runner/act/common"
 
@@ -71,4 +72,8 @@ func NewDockerNetworkRemoveExecutor(name string) common.Executor {
 	return func(ctx context.Context) error {
 		return nil
 	}
+}
+
+func RemoveOrphanNetworks(ctx context.Context, runnerUUID string, createdBefore time.Time) error {
+	return nil
 }

@@ -297,3 +297,37 @@ func TestRunnerOnIdleSkipsWhenAlreadyCancelled(t *testing.T) {
 
 	assert.DirExists(t, stale)
 }
+
+// The idle sweep reclaims the docker networks of jobs this runner did not live to tear down,
+// and stays out of the way of runners that share the daemon but not the registration.
+func TestRunnerOnIdleRemovesOrphanNetworks(t *testing.T) {
+	now := time.Date(2026, time.April, 29, 20, 0, 0, 0, time.UTC)
+	cfg := &config.Config{
+		Container: config.Container{RequireDocker: true},
+		Runner: config.Runner{
+			WorkdirCleanupAge:   24 * time.Hour,
+			IdleCleanupInterval: time.Minute,
+		},
+	}
+
+	var swept []string
+	var sweptCutoff time.Time
+	origRemoveOrphanNetworks := removeOrphanNetworks
+	removeOrphanNetworks = func(_ context.Context, runnerUUID string, createdBefore time.Time) error {
+		swept = append(swept, runnerUUID)
+		sweptCutoff = createdBefore
+		return nil
+	}
+	t.Cleanup(func() { removeOrphanNetworks = origRemoveOrphanNetworks })
+
+	r := &Runner{uuid: "runner-1", cfg: cfg, now: func() time.Time { return now }}
+	r.OnIdle(context.Background())
+	assert.Equal(t, []string{"runner-1"}, swept)
+	// a network of a job starting during the pass is younger than this and so out of scope
+	assert.Equal(t, now.Add(-24*time.Hour), sweptCutoff)
+
+	// a host-only runner has no daemon to sweep
+	hostOnly := &Runner{uuid: "runner-2", cfg: &config.Config{Runner: cfg.Runner}, now: func() time.Time { return now }}
+	hostOnly.OnIdle(context.Background())
+	assert.Equal(t, []string{"runner-1"}, swept)
+}

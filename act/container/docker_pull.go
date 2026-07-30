@@ -30,21 +30,17 @@ func NewDockerPullExecutor(input NewDockerPullExecutorInput) common.Executor {
 			return nil
 		}
 
-		pull := input.ForcePull
-		if !pull {
+		// skip the pull when the image is already here: either none was forced, or a digest
+		// pins the content so a forced pull could only fetch the same bytes again
+		if !input.ForcePull || isPinnedImage(input.Image) {
 			imageExists, err := ImageExistsLocally(ctx, input.Image, input.Platform)
 			logger.Debugf("Image exists? %v", imageExists)
 			if err != nil {
 				return fmt.Errorf("unable to determine if image already exists for image '%s' (%s): %w", input.Image, input.Platform, err)
 			}
-
-			if !imageExists {
-				pull = true
+			if imageExists {
+				return nil
 			}
-		}
-
-		if !pull {
-			return nil
 		}
 
 		imageRef := cleanImage(ctx, input.Image)
@@ -61,22 +57,32 @@ func NewDockerPullExecutor(input NewDockerPullExecutorInput) common.Executor {
 			return err
 		}
 
-		reader, err := cli.ImagePull(ctx, imageRef, imagePullOptions)
-
-		_ = logDockerResponse(logger, reader, err != nil)
-		if err != nil {
-			if imagePullOptions.RegistryAuth != "" && strings.Contains(err.Error(), "unauthorized") {
-				logger.Errorf("pulling image '%v' (%s) failed with credentials %s retrying without them, please check for stale docker config files", imageRef, input.Platform, err.Error())
-				imagePullOptions.RegistryAuth = ""
-				reader, err = cli.ImagePull(ctx, imageRef, imagePullOptions)
-
-				_ = logDockerResponse(logger, reader, err != nil)
-			}
+		// the daemon reports a failure that happens after the first progress line in the
+		// stream rather than on the call itself, so both have to be checked
+		pullOnce := func(opts client.ImagePullOptions) error {
+			reader, err := cli.ImagePull(ctx, imageRef, opts)
+			streamErr := logDockerResponse(logger, reader, err != nil)
 			if err != nil {
-				return fmt.Errorf("failed to pull image '%s' (%s): %w", imageRef, input.Platform, err)
+				return err
 			}
+			return streamErr
 		}
-		return nil
+
+		err = pullOnce(imagePullOptions)
+		if err != nil && imagePullOptions.RegistryAuth != "" && strings.Contains(err.Error(), "unauthorized") {
+			logger.Errorf("pulling image '%v' (%s) failed with credentials %s retrying without them, please check for stale docker config files", imageRef, input.Platform, err.Error())
+			imagePullOptions.RegistryAuth = ""
+			err = pullOnce(imagePullOptions)
+		}
+		if err == nil {
+			return nil
+		}
+		// a registry that is down should not fail a job whose image is already here
+		if exists, existsErr := ImageExistsLocally(ctx, input.Image, input.Platform); existsErr == nil && exists {
+			logger.Warnf("could not update image '%s' (%s), continuing with the local copy: %v", imageRef, input.Platform, err)
+			return nil
+		}
+		return fmt.Errorf("failed to pull image '%s' (%s): %w", imageRef, input.Platform, err)
 	}
 }
 
@@ -120,6 +126,15 @@ func getImagePullOptions(ctx context.Context, input NewDockerPullExecutorInput) 
 	}
 
 	return imagePullOptions, nil
+}
+
+func isPinnedImage(image string) bool {
+	ref, err := reference.ParseAnyReference(image)
+	if err != nil {
+		return false
+	}
+	_, pinned := ref.(reference.Canonical)
+	return pinned
 }
 
 func cleanImage(ctx context.Context, imageName string) string {

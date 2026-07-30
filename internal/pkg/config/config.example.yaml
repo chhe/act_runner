@@ -15,6 +15,9 @@ runner:
   # Where to store the registration result.
   file: .runner
   # Execute how many tasks concurrently at the same time.
+  # With `container.network` empty, each concurrent docker job takes a subnet from the
+  # daemon's address pool, so a high capacity can exhaust it. See `default-address-pools`
+  # in the docker daemon config.
   capacity: 1
   # Extra environment variables to run jobs.
   envs:
@@ -43,9 +46,12 @@ runner:
   # While idle, remove stale bind-workdir task directories and orphaned host-mode
   # scratch directories (left behind when a host cleanup delete stalls) older than
   # this duration. Setting either workdir_cleanup_age or idle_cleanup_interval to 0
-  # (or any non-positive value) disables stale-directory cleanup entirely.
+  # (or any non-positive value) disables stale-directory cleanup entirely, along with
+  # the docker network cleanup below.
   workdir_cleanup_age: 24h
-  # Cadence for the idle stale-directory cleanup pass.
+  # Cadence for the idle cleanup pass. Besides the directories above, on runners that use
+  # docker it removes the per-job networks of jobs this runner did not live to tear down,
+  # which would otherwise hold a subnet of the daemon address pool until the host is rebuilt.
   idle_cleanup_interval: 10m
   # The base interval for periodic log flush to the Gitea instance.
   # Logs may be sent earlier if the buffer reaches log_report_batch_size
@@ -161,7 +167,9 @@ container:
   # network_create_options only apply when `network` is left empty and the runner
   # auto-creates a per-job network that does not already exist. They have no effect
   # when a custom `network` name is set, because that network is used as-is and never
-  # created by the runner. Omit the entire block to use Docker's defaults.
+  # created by the runner. Omit the entire block to use Docker's defaults. An auto-created
+  # network is labelled com.gitea.runner.uuid=<this runner's uuid>, which is how the idle
+  # cleanup tells its own leftovers apart from those of other runners on the same daemon.
   network_create_options:
     enable_ipv4: true  # Omit to use Docker's default (IPv4 enabled). Set false to disable IPv4.
     enable_ipv6: false # Omit to use Docker's default (IPv6 disabled). Enabling it requires dockerd started with --ipv6.
@@ -197,6 +205,9 @@ container:
   docker_host: ""
   # Pull docker image(s) even if already present.
   # Defaults to false when the key is omitted.
+  # Two exceptions: an image pinned by digest (image@sha256:...) cannot change, so it is never
+  # re-pulled, and a pull that fails while a copy is already on the host does not fail the job,
+  # which runs on that copy with a warning in its log.
   force_pull: false
   # Rebuild docker image(s) even if already present
   force_rebuild: false

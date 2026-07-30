@@ -122,6 +122,26 @@ func (m *mockDockerClient) ContainerRemove(ctx context.Context, id string, opts 
 	return args.Get(0).(mobyclient.ContainerRemoveResult), args.Error(1)
 }
 
+func (m *mockDockerClient) ContainerKill(ctx context.Context, id string, opts mobyclient.ContainerKillOptions) (mobyclient.ContainerKillResult, error) {
+	args := m.Called(ctx, id, opts)
+	return args.Get(0).(mobyclient.ContainerKillResult), args.Error(1)
+}
+
+func (m *mockDockerClient) NetworkList(ctx context.Context, opts mobyclient.NetworkListOptions) (mobyclient.NetworkListResult, error) {
+	args := m.Called(ctx, opts)
+	return args.Get(0).(mobyclient.NetworkListResult), args.Error(1)
+}
+
+func (m *mockDockerClient) NetworkInspect(ctx context.Context, id string, opts mobyclient.NetworkInspectOptions) (mobyclient.NetworkInspectResult, error) {
+	args := m.Called(ctx, id, opts)
+	return args.Get(0).(mobyclient.NetworkInspectResult), args.Error(1)
+}
+
+func (m *mockDockerClient) NetworkRemove(ctx context.Context, id string, opts mobyclient.NetworkRemoveOptions) (mobyclient.NetworkRemoveResult, error) {
+	args := m.Called(ctx, id, opts)
+	return args.Get(0).(mobyclient.NetworkRemoveResult), args.Error(1)
+}
+
 type endlessReader struct {
 	io.Reader
 }
@@ -391,34 +411,58 @@ func TestDockerCopyTarStreamErrorInMkdir(t *testing.T) {
 // be logged as one.
 func TestRemoveIgnoresAutoRemoveRace(t *testing.T) {
 	removeOpts := mobyclient.ContainerRemoveOptions{RemoveVolumes: true, Force: true}
+	killOpts := mobyclient.ContainerKillOptions{Signal: "SIGKILL"}
 	for _, tc := range []struct {
-		name     string
-		err      error
-		wantLogs bool
+		name        string
+		err         error
+		wantWait    bool
+		wantFailure bool
 	}{
-		{name: "removal in progress", err: cerrdefs.ErrConflict.WithMessage("removal of container abc is already in progress")},
+		{name: "removal in progress", err: cerrdefs.ErrConflict.WithMessage("removal of container abc is already in progress"), wantWait: true},
 		{name: "already removed", err: cerrdefs.ErrNotFound.WithMessage("No such container: abc")},
 		{name: "removed cleanly", err: nil},
-		{name: "real failure", err: errors.New("driver failed to remove root filesystem"), wantLogs: true},
+		{name: "real failure", err: errors.New("driver failed to remove root filesystem"), wantFailure: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			logger, hook := test.NewNullLogger()
 			ctx := common.WithLogger(context.Background(), logger)
 			client := &mockDockerClient{}
+			client.On("ContainerKill", ctx, "abc", killOpts).Return(mobyclient.ContainerKillResult{}, nil)
 			client.On("ContainerRemove", ctx, "abc", removeOpts).Return(mobyclient.ContainerRemoveResult{}, tc.err)
+			if tc.wantWait {
+				removed := make(chan container.WaitResponse, 1)
+				removed <- container.WaitResponse{}
+				client.On("ContainerWait", mock.Anything, "abc", mobyclient.ContainerWaitOptions{Condition: container.WaitConditionRemoved}).
+					Return(mobyclient.ContainerWaitResult{Result: removed})
+			}
 			cr := &containerReference{id: "abc", cli: client}
 
 			require.NoError(t, cr.remove()(ctx))
-			assert.Empty(t, cr.id)
-
-			if tc.wantLogs {
+			// a failure keeps the id, so a later Remove() can retry it
+			if tc.wantFailure {
+				assert.Equal(t, "abc", cr.id)
 				assert.Len(t, hook.AllEntries(), 1)
 			} else {
+				assert.Empty(t, cr.id)
 				assert.Empty(t, hook.AllEntries())
 			}
 			client.AssertExpectations(t)
 		})
 	}
+}
+
+// A container whose id was never learned, because find() could not reach the daemon or
+// create() lost its reply, must still be removed rather than leaking with its network. It
+// was never started here, so it is not worth a kill of its own.
+func TestRemoveWithoutIDUsesName(t *testing.T) {
+	ctx := context.Background()
+	client := &mockDockerClient{}
+	client.On("ContainerRemove", ctx, "job-1", mobyclient.ContainerRemoveOptions{RemoveVolumes: true, Force: true}).
+		Return(mobyclient.ContainerRemoveResult{}, nil)
+	cr := &containerReference{cli: client, input: &NewContainerInput{Name: "job-1"}}
+
+	require.NoError(t, cr.remove()(ctx))
+	client.AssertExpectations(t)
 }
 
 // find() must drop a stale cached id so later Copy/Exec don't hit the

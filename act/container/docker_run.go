@@ -386,29 +386,68 @@ func (cr *containerReference) find() common.Executor {
 	}
 }
 
-// isContainerGone reports whether a failed remove still left the container gone (NotFound or Conflict).
-func isContainerGone(err error) bool {
-	return cerrdefs.IsNotFound(err) || cerrdefs.IsConflict(err)
-}
-
 func (cr *containerReference) remove() common.Executor {
 	return func(ctx context.Context) error {
-		if cr.id == "" {
+		idOrName := cr.id
+		if idOrName == "" && cr.input != nil {
+			idOrName = cr.input.Name
+		}
+		if idOrName == "" {
 			return nil
 		}
 
 		logger := common.Logger(ctx)
-		_, err := cr.cli.ContainerRemove(ctx, cr.id, client.ContainerRemoveOptions{
+		// Kill first so removal never waits out a daemon's stop timeout: Docker kills outright
+		// on a forced remove, Podman sends SIGTERM and waits. Only worth it for a container
+		// this started, and removal can still deal with one it could not kill.
+		if cr.id != "" {
+			_, err := cr.cli.ContainerKill(ctx, cr.id, client.ContainerKillOptions{Signal: "SIGKILL"})
+			if err != nil && !cerrdefs.IsConflict(err) && !cerrdefs.IsNotFound(err) {
+				logger.Debugf("Container %s could not be killed: %v", cr.id, err)
+			}
+		}
+		_, err := cr.cli.ContainerRemove(ctx, idOrName, client.ContainerRemoveOptions{
 			RemoveVolumes: true,
 			Force:         true,
 		})
-		if err != nil && !isContainerGone(err) {
-			logger.Error(fmt.Errorf("failed to remove container: %w", err))
+		switch {
+		case cerrdefs.IsConflict(err):
+			// the daemon's own AutoRemove teardown is running, and it releases the volume
+			// references and the network endpoint only once it finishes
+			cr.waitForRemoval(ctx, idOrName)
+		case err != nil && !cerrdefs.IsNotFound(err):
+			logger.Error(fmt.Errorf("failed to remove container %s: %w", idOrName, err))
+			return nil // keep the id, the container is still there for a later Remove()
 		}
 
-		logger.Debugf("Removed container: %v", cr.id)
+		logger.Debugf("Removed container: %v", idOrName)
 		cr.id = ""
 		return nil
+	}
+}
+
+func (cr *containerReference) waitForRemoval(ctx context.Context, idOrName string) {
+	// per container, against the one minute the post-job executor allows for the whole
+	// cleanup, so a job with several services can spend most of that budget here
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	waitResult := cr.cli.ContainerWait(ctx, idOrName, client.ContainerWaitOptions{
+		Condition: container.WaitConditionRemoved,
+	})
+	select {
+	case <-waitResult.Result:
+	case <-waitResult.Error:
+	case <-ctx.Done():
+		// the client delivers the result over an unbuffered channel, so leave a receiver
+		// behind or its goroutine parks on the send for the lifetime of the process
+		go func() {
+			select {
+			case <-waitResult.Result:
+			case <-waitResult.Error:
+			}
+		}()
+		common.Logger(ctx).Warnf("Timed out waiting for the daemon to remove container %s, its volumes and network may be left behind", idOrName)
 	}
 }
 
