@@ -82,6 +82,7 @@ type NewDockerBuildExecutorInput struct {
 	BuildContext io.Reader
 	ImageTag     string
 	Platform     string
+	BuildArgs    map[string]*string
 }
 
 // NewDockerNetworkCreateExecutorInput the input for the NewDockerNetworkCreateExecutor function

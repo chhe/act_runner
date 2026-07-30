@@ -64,6 +64,14 @@ func runDaemon(ctx context.Context, daemArgs *daemonArgs, configFile *string) fu
 			log.Warn("no labels configured, runner may not be able to pick up jobs")
 		}
 
+		// Before the first Docker API call: the standard library resolves the proxy
+		// environment once. Ungated because host labels still reach the daemon.
+		if dockerSocketPath, err := getDockerSocketPath(cfg.Container.DockerHost); err == nil {
+			run.BypassProxyForDockerHost(dockerSocketPath)
+		} else {
+			log.Debugf("cannot resolve the docker socket path, so Docker API calls are not exempted from the proxy: %v", err)
+		}
+
 		if ls.RequireDocker() || cfg.Container.RequireDocker {
 			// Wait for dockerd be ready
 			if timeout := cfg.Container.DockerTimeout; timeout > 0 {
@@ -101,6 +109,7 @@ func runDaemon(ctx context.Context, daemArgs *daemonArgs, configFile *string) fu
 			}
 			// if dockerSocketPath passes the check, override DOCKER_HOST with dockerSocketPath
 			os.Setenv("DOCKER_HOST", dockerSocketPath)
+			run.WarnIfDaemonHasNoProxy(ctx)
 			// empty cfg.Container.DockerHost means runner need to find an available docker host automatically
 			// and assign the path to cfg.Container.DockerHost
 			if cfg.Container.DockerHost == "" {

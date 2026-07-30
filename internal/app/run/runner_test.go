@@ -93,6 +93,24 @@ func TestNewRunnerInitializesLabelsAndEnvironment(t *testing.T) {
 	require.Nil(t, r.cacheHandler)
 }
 
+// Proxy variables are assembled per task, because a job's service containers have to be
+// reached directly and they are only known once the workflow is parsed.
+func TestNewRunnerLeavesProxyToTheTask(t *testing.T) {
+	clearProxyEnv(t)
+	t.Setenv("http_proxy", "http://proxy:3128")
+
+	cfg := &config.Config{}
+	cfg.Cache.ExternalServer = "http://cache.local:8088/"
+	reg := &config.Registration{Name: "runner"}
+	cli := clientmocks.NewClient(t)
+	cli.On("Address").Return("https://gitea.example/").Maybe()
+
+	r := NewRunner(cfg, reg, cli)
+
+	require.NotContains(t, r.envs, "http_proxy")
+	require.NotContains(t, r.envs, "no_proxy")
+}
+
 func taskWithDefaultActionsURL(url string) *runnerv1.Task {
 	return &runnerv1.Task{
 		Context: &structpb.Struct{

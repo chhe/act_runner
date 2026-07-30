@@ -292,6 +292,83 @@ jobs:
 	require.Equal(t, [2]string{"", ""}, credentials["redis:latest"])
 }
 
+// A service container reaches the internet the same way the job does, so it inherits the
+// job's proxy; a service that sets the variable itself keeps its own value.
+func TestStartJobContainerGivesServicesTheJobProxy(t *testing.T) {
+	workflow, err := model.ReadWorkflow(strings.NewReader(`
+name: test
+on: push
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    container:
+      image: registry.example/job:latest
+    services:
+      redis:
+        image: redis:latest
+      db:
+        image: postgres:latest
+        env:
+          no_proxy: db-only.example
+    steps: []
+`))
+	require.NoError(t, err)
+
+	var inputs []*container.NewContainerInput
+	origNewContainer := newContainer
+	newContainer = func(input *container.NewContainerInput) container.ExecutionsEnvironment {
+		inputs = append(inputs, input)
+		return fakeContainer{}
+	}
+	t.Cleanup(func() { newContainer = origNewContainer })
+
+	rc := &RunContext{
+		Name: "test",
+		Config: &Config{
+			Workdir:              "/tmp",
+			ContainerNetworkMode: "host",
+			ReuseContainers:      true,
+			Env:                  map[string]string{},
+			ProxyEnv:             map[string]string{"http_proxy": "http://proxy:3128", "no_proxy": "internal.example"},
+			Secrets:              map[string]string{},
+		},
+		Env: map[string]string{},
+		Run: &model.Run{
+			JobID:    "job",
+			Workflow: workflow,
+		},
+	}
+	rc.ExprEval = rc.NewExpressionEvaluator(t.Context())
+
+	require.NoError(t, rc.startJobContainer()(t.Context()))
+
+	env := map[string][]string{}
+	for _, in := range inputs {
+		env[in.Image] = in.Env
+	}
+
+	require.Contains(t, env["redis:latest"], "http_proxy=http://proxy:3128")
+	require.Contains(t, env["redis:latest"], "no_proxy=internal.example")
+	// the service's own env wins over what the runner injected, without dropping the rest
+	require.Contains(t, env["postgres:latest"], "no_proxy=db-only.example")
+	require.NotContains(t, env["postgres:latest"], "no_proxy=internal.example")
+	require.Contains(t, env["postgres:latest"], "http_proxy=http://proxy:3128")
+}
+
+// act builds Dockerfile actions through the API, which does not pre-populate the proxy
+// build args the docker CLI would, so the RUN steps would have no network behind a proxy.
+func TestProxyBuildArgs(t *testing.T) {
+	rc := &RunContext{Config: &Config{ProxyEnv: map[string]string{"http_proxy": "http://proxy:3128"}}}
+
+	args := rc.proxyBuildArgs()
+
+	require.Len(t, args, 1)
+	require.Equal(t, "http://proxy:3128", *args["http_proxy"])
+
+	// a job without a proxy builds exactly as it does today
+	require.Nil(t, (&RunContext{Config: &Config{}}).proxyBuildArgs())
+}
+
 func TestRunContext_GetBindsAndMounts(t *testing.T) {
 	rctemplate := &RunContext{
 		Name: "TestRCName",

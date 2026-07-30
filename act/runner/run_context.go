@@ -435,7 +435,9 @@ func (rc *RunContext) startJobContainer() common.Executor {
 				continue
 			}
 			// interpolate env
-			interpolatedEnvs := make(map[string]string, len(spec.Env))
+			interpolatedEnvs := make(map[string]string, len(spec.Env)+len(rc.Config.ProxyEnv))
+			// a service reaches the internet the way the job does; its own env still wins
+			maps0.Copy(interpolatedEnvs, rc.Config.ProxyEnv)
 			for k, v := range spec.Env {
 				interpolatedEnvs[k] = rc.ExprEval.Interpolate(ctx, v)
 			}
@@ -967,6 +969,20 @@ func (rc *RunContext) isEnabled(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	return true, nil
+}
+
+// proxyBuildArgs returns the job's proxy variables as docker build args. The docker CLI
+// pre-populates these from its own client configuration, but act builds through the API,
+// so without them a Dockerfile action's RUN steps have no network behind a proxy.
+func (rc *RunContext) proxyBuildArgs() map[string]*string {
+	if len(rc.Config.ProxyEnv) == 0 {
+		return nil
+	}
+	args := make(map[string]*string, len(rc.Config.ProxyEnv))
+	for name, value := range rc.Config.ProxyEnv {
+		args[name] = &value
+	}
+	return args
 }
 
 func mergeMaps(maps ...map[string]string) map[string]string {

@@ -209,6 +209,35 @@ Whenever the resulting labels differ from the ones in the registration file, the
 
 > **Note:** A runner that only exposes `host` labels still needs access to a Docker daemon (e.g. a mounted `/var/run/docker.sock`) whenever a job uses a `docker://` action or a service container. `host` labels only change where the job's own steps run; container-based steps and actions are still executed with Docker.
 
+#### Proxy
+
+Set these variables in the runner's environment, with systemd `Environment=`, `docker run -e`, or Kubernetes `env:`:
+
+```sh
+http_proxy=http://proxy.example:3128
+https_proxy=http://proxy.example:3128
+no_proxy=gitea.internal,.example.local
+```
+
+The runner uses them for its own requests and gives them to every job, in lower and upper case.
+
+These hosts are added to `no_proxy` for jobs, so they are always reached directly:
+
+- the cache server
+- `localhost`, `127.0.0.1` and `::1`
+- the job's service containers
+- the Docker daemon, when it is reached over `tcp://`
+
+Gitea is not added. Add it to `no_proxy` yourself if it should be reached directly.
+
+To change a value for one job, set it in a step's `env:` or in the job's `container.env`. Setting it at workflow or job level has no effect. To change it for the whole runner, set it in `runner.envs`. A `no_proxy` set there is added to the list above instead of replacing it.
+
+Images are pulled by the Docker daemon, which needs its own proxy setting. In the `dind` images the daemon runs in the same container and reads the variables above. For any other daemon, see [the Docker documentation](https://docs.docker.com/engine/daemon/proxy/). The runner logs a warning at startup if it has a proxy and the daemon does not.
+
+Dockerfile actions are built with these variables as build arguments, so their `RUN` steps can reach the network.
+
+A password in a proxy URL is hidden in job logs. Any step can still read it, because the step is given the proxy URL in its environment.
+
 #### Caching (`actions/cache`)
 
 Each runner starts its own cache server automatically. Cache entries are local to that runner — runners do not share a cache by default.

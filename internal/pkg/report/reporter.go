@@ -86,8 +86,13 @@ type Reporter struct {
 	stopCommandEndToken string
 }
 
-func NewReporter(ctx context.Context, cancel context.CancelFunc, client client.Client, task *runnerv1.Task, cfg *config.Config) *Reporter {
+// extraMasks are values known before the job starts that are not among its secrets, such as
+// the password in the runner's proxy URL.
+func NewReporter(ctx context.Context, cancel context.CancelFunc, client client.Client, task *runnerv1.Task, cfg *config.Config, extraMasks ...string) *Reporter {
 	var oldnew []string
+	for _, v := range extraMasks {
+		oldnew = runner.AppendSecretMasker(oldnew, v)
+	}
 	if v := task.Context.Fields["token"].GetStringValue(); v != "" {
 		oldnew = runner.AppendSecretMasker(oldnew, v)
 	}

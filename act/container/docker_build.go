@@ -49,6 +49,7 @@ func NewDockerBuildExecutor(input NewDockerBuildExecutorInput) common.Executor {
 			Remove:      true,
 			AuthConfigs: LoadDockerAuthConfigs(ctx),
 			Dockerfile:  input.Dockerfile,
+			BuildArgs:   input.BuildArgs,
 		}
 		platform, err := parsePlatform(input.Platform)
 		if err != nil {

@@ -372,6 +372,7 @@ func execAsDocker(ctx context.Context, step actionStep, actionName, actionDir, b
 				ImageTag:     image,
 				BuildContext: buildContext,
 				Platform:     rc.Config.ContainerArchitecture,
+				BuildArgs:    rc.proxyBuildArgs(),
 			})
 			if buildContext == nil {
 				// Held across the whole build: the daemon drains contextDir lazily.

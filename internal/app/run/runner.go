@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -268,7 +269,8 @@ func (r *Runner) Run(ctx context.Context, task *runnerv1.Task) error {
 
 	ctx, cancel := context.WithTimeout(ctx, r.cfg.Runner.Timeout)
 	defer cancel()
-	reporter := report.NewReporter(ctx, cancel, r.client, task, r.cfg)
+	// A proxy URL may carry credentials, and every job is given it; keep them out of the log.
+	reporter := report.NewReporter(ctx, cancel, r.client, task, r.cfg, proxyPasswords()...)
 	var runErr error
 	defer func() {
 		r.runningCount.Add(-1)
@@ -340,6 +342,11 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 
 	taskContext := task.Context.Fields
 	envs := r.cloneEnvs()
+
+	// Added per task because this job's service containers must be reached directly, and
+	// act reaches them by their workflow key.
+	proxyEnv := JobProxyEnv(envs, envs["ACTIONS_CACHE_URL"], slices.Sorted(maps.Keys(job.Services)))
+	maps.Copy(envs, proxyEnv)
 
 	if r.capabilities != "" {
 		envs["GITEA_ACTIONS_CAPABILITIES"] = r.capabilities
@@ -450,6 +457,7 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 		LogOutput:            true,
 		JSONLogger:           false,
 		Env:                  envs,
+		ProxyEnv:             proxyEnv,
 		Secrets:              task.Secrets,
 		GitHubInstance:       strings.TrimSuffix(r.client.Address(), "/"),
 		AutoRemove:           true,
