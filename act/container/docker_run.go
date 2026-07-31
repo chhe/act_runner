@@ -42,6 +42,7 @@ import (
 	"github.com/moby/moby/api/types/system"
 	"github.com/moby/moby/client"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/sirupsen/logrus"
 )
 
 // drainGracePeriod bounds how long we wait for an output-copy goroutine to
@@ -498,6 +499,16 @@ func (cr *containerReference) mergeContainerConfigs(ctx context.Context, config 
 	containerConfig, err := parse(flags, copts, runtime.GOOS)
 	if err != nil {
 		return nil, nil, fmt.Errorf("Cannot process container options: '%s': '%w'", input.Options, err)
+	}
+
+	// For Gitea
+	// When privileged mode is disabled, container.options is workflow-controlled
+	// untrusted input. Strip the HostConfig fields that would let a workflow break
+	// out of the container (host namespaces, capability expansion, security profile
+	// overrides, device and runtime access). Otherwise these survive into the final
+	// HostConfig even though --privileged is forced off.
+	if !hostConfig.Privileged {
+		sanitizeOptionsHostConfig(logger, containerConfig.HostConfig)
 	}
 
 	logger.Debugf("Custom container.Config from options ==> %+v", containerConfig.Config)
@@ -1098,6 +1109,77 @@ func (cr *containerReference) wait() common.Executor {
 		}
 
 		return ExitCodeError(statusCode)
+	}
+}
+
+// For Gitea
+// sanitizeOptionsHostConfig clears the HostConfig fields parsed from a
+// workflow-controlled container.options string that could be used to escape the
+// container when privileged mode is disabled. It must only be called when the
+// runner has privileged mode turned off; with privileged mode enabled the
+// administrator has already opted into host access.
+func sanitizeOptionsHostConfig(logger logrus.FieldLogger, hostConfig *container.HostConfig) {
+	warn := func(option string) {
+		logger.Warnf("container option %q is not allowed when privileged mode is disabled and will be ignored", option)
+	}
+
+	if hostConfig.PidMode != "" {
+		warn("--pid")
+		hostConfig.PidMode = ""
+	}
+	if hostConfig.IpcMode != "" {
+		warn("--ipc")
+		hostConfig.IpcMode = ""
+	}
+	if hostConfig.UTSMode != "" {
+		warn("--uts")
+		hostConfig.UTSMode = ""
+	}
+	if hostConfig.CgroupnsMode != "" {
+		warn("--cgroupns")
+		hostConfig.CgroupnsMode = ""
+	}
+	// UsernsMode is set from the runner-controlled input; never let options
+	// override it (e.g. --userns=host disables user namespace remapping).
+	if hostConfig.UsernsMode != "" {
+		warn("--userns")
+		hostConfig.UsernsMode = ""
+	}
+	if len(hostConfig.CapAdd) > 0 {
+		warn("--cap-add")
+		hostConfig.CapAdd = nil
+	}
+	if len(hostConfig.SecurityOpt) > 0 {
+		warn("--security-opt")
+		hostConfig.SecurityOpt = nil
+	}
+	if len(hostConfig.Devices) > 0 {
+		warn("--device")
+		hostConfig.Devices = nil
+	}
+	if len(hostConfig.DeviceCgroupRules) > 0 {
+		warn("--device-cgroup-rule")
+		hostConfig.DeviceCgroupRules = nil
+	}
+	if len(hostConfig.DeviceRequests) > 0 {
+		warn("--gpus")
+		hostConfig.DeviceRequests = nil
+	}
+	if len(hostConfig.VolumesFrom) > 0 {
+		warn("--volumes-from")
+		hostConfig.VolumesFrom = nil
+	}
+	if hostConfig.Runtime != "" {
+		warn("--runtime")
+		hostConfig.Runtime = ""
+	}
+	if hostConfig.CgroupParent != "" {
+		warn("--cgroup-parent")
+		hostConfig.CgroupParent = ""
+	}
+	if len(hostConfig.Sysctls) > 0 {
+		warn("--sysctl")
+		hostConfig.Sysctls = nil
 	}
 }
 

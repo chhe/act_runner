@@ -669,6 +669,110 @@ func TestCheckVolumes(t *testing.T) {
 	}
 }
 
+func TestSanitizeOptionsHostConfig(t *testing.T) {
+	logger, _ := test.NewNullLogger()
+
+	dangerous := func() *container.HostConfig {
+		return &container.HostConfig{
+			PidMode:      "host",
+			IpcMode:      "host",
+			UTSMode:      "host",
+			CgroupnsMode: "host",
+			UsernsMode:   "host",
+			CapAdd:       []string{"ALL"},
+			SecurityOpt:  []string{"seccomp=unconfined", "apparmor=unconfined"},
+			VolumesFrom:  []string{"other"},
+			Runtime:      "runc",
+			Resources: container.Resources{
+				CgroupParent:      "/custom",
+				Devices:           []container.DeviceMapping{{PathOnHost: "/dev/sda", PathInContainer: "/dev/sda", CgroupPermissions: "rwm"}},
+				DeviceCgroupRules: []string{"a *:* rwm"},
+			},
+			Sysctls: map[string]string{"net.ipv4.ip_forward": "1"},
+		}
+	}
+
+	hostConfig := dangerous()
+	sanitizeOptionsHostConfig(logger, hostConfig)
+
+	assert.Empty(t, string(hostConfig.PidMode))
+	assert.Empty(t, string(hostConfig.IpcMode))
+	assert.Empty(t, string(hostConfig.UTSMode))
+	assert.Empty(t, string(hostConfig.CgroupnsMode))
+	assert.Empty(t, string(hostConfig.UsernsMode))
+	assert.Empty(t, hostConfig.CapAdd)
+	assert.Empty(t, hostConfig.SecurityOpt)
+	assert.Empty(t, hostConfig.Devices)
+	assert.Empty(t, hostConfig.DeviceCgroupRules)
+	assert.Empty(t, hostConfig.VolumesFrom)
+	assert.Empty(t, hostConfig.Runtime)
+	assert.Empty(t, hostConfig.CgroupParent)
+	assert.Empty(t, hostConfig.Sysctls)
+}
+
+func TestMergeContainerConfigsStripsDangerousOptionsWhenUnprivileged(t *testing.T) {
+	// OS-independent options only: --device parsing requires a linux/windows
+	// server OS, which is not guaranteed for the test host.
+	const dangerousOptions = "--pid=host --ipc=host --uts=host --cgroupns=host " +
+		"--userns=host --cap-add=ALL --security-opt seccomp=unconfined " +
+		"--security-opt apparmor=unconfined --volumes-from other " +
+		"--runtime runc --cgroup-parent /custom --sysctl net.ipv4.ip_forward=1"
+
+	t.Run("unprivileged strips host-escape options", func(t *testing.T) {
+		logger, _ := test.NewNullLogger()
+		ctx := common.WithLogger(context.Background(), logger)
+		cr := &containerReference{
+			input: &NewContainerInput{
+				Options:     dangerousOptions,
+				NetworkMode: "bridge",
+				UsernsMode:  "private",
+			},
+		}
+
+		_, hostConfig, err := cr.mergeContainerConfigs(ctx, &container.Config{}, &container.HostConfig{
+			Privileged:  false,
+			UsernsMode:  container.UsernsMode("private"),
+			NetworkMode: container.NetworkMode("bridge"),
+		})
+		require.NoError(t, err)
+
+		assert.False(t, hostConfig.Privileged)
+		assert.Empty(t, string(hostConfig.PidMode))
+		assert.Empty(t, string(hostConfig.IpcMode))
+		assert.Empty(t, string(hostConfig.UTSMode))
+		assert.Empty(t, string(hostConfig.CgroupnsMode))
+		// UsernsMode must keep the runner-controlled value, not the one from options.
+		assert.Equal(t, "private", string(hostConfig.UsernsMode))
+		assert.Empty(t, hostConfig.CapAdd)
+		assert.Empty(t, hostConfig.SecurityOpt)
+		assert.Empty(t, hostConfig.VolumesFrom)
+		assert.Empty(t, hostConfig.Runtime)
+		assert.Empty(t, hostConfig.CgroupParent)
+		assert.Empty(t, hostConfig.Sysctls)
+	})
+
+	t.Run("privileged preserves options", func(t *testing.T) {
+		logger, _ := test.NewNullLogger()
+		ctx := common.WithLogger(context.Background(), logger)
+		cr := &containerReference{
+			input: &NewContainerInput{
+				Options:     "--pid=host --cap-add=ALL --security-opt seccomp=unconfined",
+				NetworkMode: "bridge",
+			},
+		}
+
+		_, hostConfig, err := cr.mergeContainerConfigs(ctx, &container.Config{}, &container.HostConfig{
+			Privileged:  true,
+			NetworkMode: container.NetworkMode("bridge"),
+		})
+		require.NoError(t, err)
+
+		assert.Equal(t, "host", string(hostConfig.PidMode))
+		assert.Equal(t, []string{"ALL"}, hostConfig.CapAdd)
+		assert.Equal(t, []string{"seccomp=unconfined"}, hostConfig.SecurityOpt)
+	})
+}
+
 func TestCheckVolumesRejectsEscapingHostPaths(t *testing.T) {
 	logger, _ := test.NewNullLogger()
 	ctx := common.WithLogger(context.Background(), logger)
