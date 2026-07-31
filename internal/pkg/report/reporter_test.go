@@ -5,15 +5,18 @@ package report
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"maps"
+	"net/url"
 	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"gitea.com/gitea/runner/act/runner"
 	"gitea.com/gitea/runner/internal/pkg/client/mocks"
 	"gitea.com/gitea/runner/internal/pkg/config"
 
@@ -1094,5 +1097,26 @@ func TestReporter_ParseResult(t *testing.T) {
 			assert.Equal(t, tt.wantOk, ok)
 			assert.Equal(t, tt.want, got)
 		})
+	}
+}
+
+// A secret leaked in an encoded form — the shape it takes once an action puts it in a
+// JSON body, a URL or a base64 payload — must be masked in the reported log as well.
+func TestReporter_masksEncodedSecrets(t *testing.T) {
+	secret := `p@ss w"rd/1`
+	r := &Reporter{logReplacer: strings.NewReplacer()}
+	r.oldnew = runner.AppendSecretMasker(r.oldnew, secret)
+	r.logReplacer = strings.NewReplacer(r.oldnew...)
+
+	for _, line := range []string{
+		"token: " + secret,
+		"basic " + base64.StdEncoding.EncodeToString([]byte(secret)),
+		"https://example.com/?token=" + url.QueryEscape(secret),
+	} {
+		row := r.parseLogRow(&log.Entry{Message: line})
+		require.NotNil(t, row)
+		assert.Contains(t, row.Content, "***")
+		assert.NotContains(t, row.Content, secret)
+		assert.NotContains(t, row.Content, base64.StdEncoding.EncodeToString([]byte(secret)))
 	}
 }

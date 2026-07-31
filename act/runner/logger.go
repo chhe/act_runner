@@ -7,8 +7,11 @@ package runner
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -167,6 +170,76 @@ func withStepLogger(ctx context.Context, stepNumber int, stepID, stepName, stage
 
 type entryProcessor func(entry *logrus.Entry) *logrus.Entry
 
+// secretValueEncoders are the shapes a secret takes on its way into a log: a base64
+// payload, a JSON string, or a URL component. An action that serializes a secret leaks
+// it in one of these forms, which a mask of the verbatim value alone does not catch, so
+// every form is masked as well. This mirrors the value encoders of GitHub's runner.
+var secretValueEncoders = []func(string) string{
+	func(v string) string { return base64.StdEncoding.EncodeToString([]byte(v)) },
+	base64ShiftEncoder(1),
+	base64ShiftEncoder(2),
+	jsonStringEscape,
+	jsonStringEscapeNoHTML,
+	url.QueryEscape,
+	url.PathEscape,
+}
+
+// minShiftedBase64Len is the shortest shifted base64 fragment worth masking. A shorter
+// one carries too few bytes of the secret to identify it and would mask unrelated output.
+const minShiftedBase64Len = 8
+
+// base64ShiftEncoder returns the part of a secret's base64 form that survives when the
+// secret does not start on a 3-byte boundary of the payload it is embedded in. base64
+// encodes three bytes at a time, so `Authorization: Basic base64("user:token")` contains
+// the base64 of the token alone only when the prefix length happens to be a multiple of
+// three; at the other two alignments the encoding of the whole value differs. Encoding
+// the secret behind shift filler bytes reproduces those alignments, which is what the
+// Base64StringEscapeShift1/2 encoders of GitHub's runner do.
+//
+// The leading group (filler mixed with the secret's first bytes) and the trailing group
+// (padded here, but continuing into whatever follows the secret) are dropped, leaving the
+// group-aligned middle that does appear verbatim in the log.
+func base64ShiftEncoder(shift int) func(string) string {
+	return func(v string) string {
+		buf := make([]byte, shift+len(v))
+		copy(buf[shift:], v)
+		encoded := base64.StdEncoding.EncodeToString(buf)
+		// Keep only the aligned middle, and only when enough of it is left to be a
+		// distinctive pattern rather than a fragment that matches unrelated output.
+		if len(encoded) < 8+minShiftedBase64Len {
+			return ""
+		}
+		return encoded[4 : len(encoded)-4]
+	}
+}
+
+// jsonStringEscape returns v as it appears inside a JSON string, without the quotes,
+// which is what `toJSON(secrets)` or any action logging a JSON body produces. Go's encoder
+// escapes <, >, & (as act's own toJSON does); the non-HTML variant below covers the runtimes
+// that do not. When v has none of those characters both forms are equal and deduplicated.
+func jsonStringEscape(v string) string {
+	encoded, err := json.Marshal(v)
+	if err != nil {
+		return v
+	}
+	return string(encoded[1 : len(encoded)-1])
+}
+
+// jsonStringEscapeNoHTML is jsonStringEscape without HTML escaping, matching the JSON a
+// JavaScript (JSON.stringify) or .NET action emits, so a secret containing < > or & is
+// masked in that form too.
+func jsonStringEscapeNoHTML(v string) string {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return v
+	}
+	// Encode appends a newline; drop it along with the surrounding quotes.
+	encoded := strings.TrimRight(buf.String(), "\n")
+	return encoded[1 : len(encoded)-1]
+}
+
 func AppendSecretMasker(oldnew []string, v string) []string {
 	ret := oldnew
 
@@ -182,6 +255,21 @@ func AppendSecretMasker(oldnew []string, v string) []string {
 		}
 	}
 
+	// The encoded forms are derived from the whole value: a multi-line secret is
+	// encoded as one string, not line by line.
+	trimmed := strings.TrimSpace(v)
+	if len(trimmed) <= 1 {
+		return ret
+	}
+	for _, encode := range secretValueEncoders {
+		encoded := encode(trimmed)
+		// An encoding that leaves the value unchanged is already masked above.
+		if encoded == trimmed || len(encoded) <= 1 || slices.Contains(ret, encoded) {
+			continue
+		}
+		ret = append(ret, encoded, "***")
+	}
+
 	return ret
 }
 
@@ -194,6 +282,18 @@ func valueMasker(insecureSecrets bool, secrets map[string]string) entryProcessor
 	}
 	oldnew = slices.Clip(oldnew)
 	defReplacer := strings.NewReplacer(oldnew...)
+
+	// A ::add-mask:: only ever appends to the job's mask slice, so the replacer built for
+	// it stays valid until the slice grows. Cache it, keyed by the slice itself and its
+	// length, instead of encoding every secret and mask again for each log line.
+	var (
+		mu       sync.Mutex
+		masksRef *[]string
+		pairs    []string
+		masked   int
+		replacer *strings.Replacer
+	)
+
 	return func(entry *logrus.Entry) *logrus.Entry {
 		if insecureSecrets {
 			return entry
@@ -203,15 +303,26 @@ func valueMasker(insecureSecrets bool, secrets map[string]string) entryProcessor
 
 		if len(*masks) == 0 {
 			entry.Message = defReplacer.Replace(entry.Message)
-		} else {
-			cmasker := oldnew
-
-			for _, v := range *masks {
-				cmasker = AppendSecretMasker(cmasker, v)
-			}
-
-			entry.Message = strings.NewReplacer(cmasker...).Replace(entry.Message)
+			return entry
 		}
+
+		mu.Lock()
+		// A composite action logs through the same masker with its own mask slice, so a
+		// different slice starts the cache over.
+		if masksRef != masks {
+			masksRef, pairs, masked, replacer = masks, oldnew, 0, nil
+		}
+		if replacer == nil || masked != len(*masks) {
+			for _, v := range (*masks)[masked:] {
+				pairs = AppendSecretMasker(pairs, v)
+			}
+			masked = len(*masks)
+			replacer = strings.NewReplacer(pairs...)
+		}
+		cmasker := replacer
+		mu.Unlock()
+
+		entry.Message = cmasker.Replace(entry.Message)
 
 		return entry
 	}
