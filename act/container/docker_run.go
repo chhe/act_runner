@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -864,24 +865,59 @@ func (cr *containerReference) waitForCommand(ctx context.Context, isTerminal boo
 	}
 }
 
+// mkdirInContainer creates containerPath and returns it with the symlinked components
+// replaced by the targets the daemon reports for them. Docker 29.7 rejects tar entries
+// traversing a symlink to an absolute target, like the "/var/run" of most images, with
+// "path escapes from parent", and not every daemon creates the implied parents of a
+// directory entry, so one entry per missing component is extracted at the deepest
+// existing ancestor.
+// WORKAROUND: https://github.com/moby/moby/issues/53258
+func (cr *containerReference) mkdirInContainer(ctx context.Context, containerPath string) (string, error) {
+	parts := strings.Split(strings.Trim(path.Clean(containerPath), "/"), "/")
+	existing := "/"
+	for i, part := range parts {
+		if part == "" {
+			return existing, nil
+		}
+		stat, err := cr.cli.ContainerStatPath(ctx, cr.id, client.ContainerStatPathOptions{Path: path.Join(existing, part)})
+		if err != nil {
+			// nothing below exists either, so create the remaining components
+			return path.Join(existing, path.Join(parts[i:]...)), cr.mkdirEntries(ctx, existing, parts[i:])
+		}
+		existing = path.Join(existing, part)
+		if target := stat.Stat.LinkTarget; target != "" {
+			if !path.IsAbs(target) {
+				target = path.Join(path.Dir(existing), target)
+			}
+			existing = target
+		}
+	}
+	return existing, nil
+}
+
+func (cr *containerReference) mkdirEntries(ctx context.Context, destPath string, missing []string) error {
+	buf := &bytes.Buffer{}
+	tw := tar.NewWriter(buf)
+	for i := range missing {
+		_ = tw.WriteHeader(&tar.Header{
+			Name:     path.Join(missing[:i+1]...),
+			Mode:     0o777,
+			Typeflag: tar.TypeDir,
+		})
+	}
+	tw.Close()
+	_, err := cr.cli.CopyToContainer(ctx, cr.id, client.CopyToContainerOptions{
+		DestinationPath: destPath,
+		Content:         buf,
+	})
+	return err
+}
+
 func (cr *containerReference) CopyTarStream(ctx context.Context, destPath string, tarStream io.Reader) error {
 	if cr.id == "" {
 		return cr.missingContainerError("copy to %s", destPath)
 	}
-	// Mkdir, with a path relative to the DestinationPath ("/") below. Docker 29.5+
-	// rejects absolute tar entry names with "path escapes from parent".
-	buf := &bytes.Buffer{}
-	tw := tar.NewWriter(buf)
-	_ = tw.WriteHeader(&tar.Header{
-		Name:     strings.TrimPrefix(destPath, "/"),
-		Mode:     0o777,
-		Typeflag: tar.TypeDir,
-	})
-	tw.Close()
-	_, err := cr.cli.CopyToContainer(ctx, cr.id, client.CopyToContainerOptions{
-		DestinationPath: "/",
-		Content:         buf,
-	})
+	destPath, err := cr.mkdirInContainer(ctx, destPath)
 	if err != nil {
 		return fmt.Errorf("failed to mkdir to copy content to container: %w", err)
 	}
@@ -906,6 +942,10 @@ func (cr *containerReference) copyDir(dstPath, srcPath string, useGitIgnore bool
 			return cr.missingContainerError("copy directory to %s", dstPath)
 		}
 		logger := common.Logger(ctx)
+		dstPath, err := cr.mkdirInContainer(ctx, dstPath)
+		if err != nil {
+			return fmt.Errorf("failed to mkdir to copy directory to container: %w", err)
+		}
 		tarFile, err := os.CreateTemp("", "act")
 		if err != nil {
 			return err
