@@ -2,6 +2,7 @@
 .env
 !/act/runner/testdata/secrets/.env
 .runner
+.runner.lock
 coverage.txt
 .tmp/
 /config.yaml

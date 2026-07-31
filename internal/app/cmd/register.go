@@ -18,6 +18,7 @@ import (
 	"gitea.com/gitea/runner/internal/pkg/client"
 	"gitea.com/gitea/runner/internal/pkg/config"
 	"gitea.com/gitea/runner/internal/pkg/labels"
+	"gitea.com/gitea/runner/internal/pkg/lock"
 	"gitea.com/gitea/runner/internal/pkg/ver"
 
 	"connectrpc.com/connect"
@@ -346,6 +347,19 @@ func registerNoInteractive(ctx context.Context, configFile string, regArgs *regi
 }
 
 func doRegister(ctx context.Context, cfg *config.Config, inputs *registerInputs) error {
+	// Refuse to rewrite the runner file while another process is using it.
+	releaseLock, err := lock.TryLock(cfg.Runner.File)
+	if errors.Is(err, lock.ErrLocked) {
+		return fmt.Errorf("another process is already using %q; stop it before re-registering", cfg.Runner.File)
+	} else if err != nil {
+		// Best-effort guard: if the lock file can't be created, warn and
+		// register anyway; writing the runner file will surface any real
+		// permission problem with a clearer error.
+		log.Warnf("could not lock runner file %q, continuing without the single-process guard: %v", cfg.Runner.File, err)
+	} else {
+		defer func() { _ = releaseLock() }()
+	}
+
 	// initial http client
 	cli := client.New(
 		inputs.InstanceAddr,
