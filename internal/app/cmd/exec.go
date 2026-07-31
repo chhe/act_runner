@@ -132,6 +132,8 @@ func (i *executeArgs) LoadEnvs() map[string]string {
 	_ = readEnvs(i.Envfile(), envs)
 
 	envs["ACTIONS_CACHE_URL"] = i.cacheHandler.ExternalURL() + "/"
+	// The same server answers the cache service v2 API, so let the actions reach it.
+	envs[runner.CacheServiceV2Env] = "true"
 
 	return envs
 }

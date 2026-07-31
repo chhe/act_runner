@@ -242,6 +242,17 @@ A password in a proxy URL is hidden in job logs. Any step can still read it, bec
 
 Each runner starts its own cache server automatically. Cache entries are local to that runner — runners do not share a cache by default.
 
+**Cache service v2**
+
+`actions/cache@v4.2` and later can use the *cache service v2* API. The runner serves it from the same store as v1, on by default, and it works with `external_server`. Turn it off with:
+
+```yaml
+cache:
+  v2: false
+```
+
+Those actions refuse any host they do not take for GitHub. Rather than misreport the server URL, the runner edits that check out of the action's own bundle and keeps the untouched copy beside it; a bundle it does not recognise is left alone and keeps to v1. The same edit lets the stock `actions/upload-artifact` and `actions/download-artifact` work from `v4.4.0` on, without the `gitea-upload-artifact` fork.
+
 **Shared cache across multiple runners**
 
 Run one dedicated `gitea-runner cache-server` that all runners point at.

@@ -347,3 +347,13 @@ cache:
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "contains no secret")
 }
+
+// The shipped example must parse, and every key in it must be one the config knows.
+func TestLoadDefault_ExampleConfigParses(t *testing.T) {
+	hook := test.NewGlobal()
+	defer hook.Reset()
+
+	_, err := LoadDefault("config.example.yaml")
+	require.NoError(t, err)
+	assert.Empty(t, hook.AllEntries())
+}

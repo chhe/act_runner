@@ -595,8 +595,8 @@ func actionStagePaths(step actionStep) (actionDir, actionPath, actionName, conta
 	rc := step.getRunContext()
 	stepModel := step.getStepModel()
 
-	if _, ok := step.(*stepActionRemote); ok {
-		actionDir = fmt.Sprintf("%s/%s", rc.ActionCacheDir(), stepModel.UsesHash())
+	if sar, ok := step.(*stepActionRemote); ok {
+		actionDir = sar.actionDir()
 		actionPath = newRemoteAction(stepModel.Uses).Path
 	} else {
 		actionDir = filepath.Join(rc.Config.Workdir, stepModel.Uses)

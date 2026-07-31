@@ -1041,14 +1041,14 @@ func TestHandler_SecretPersistsAcrossRestarts(t *testing.T) {
 	first, err := StartHandler(dir, "127.0.0.1", 0, "", nil)
 	require.NoError(t, err)
 	exp := time.Now().Add(artifactURLTTL).Unix()
-	sig := first.computeSignature(42, exp)
+	sig := first.computeSignature("", 42, exp)
 	require.NoError(t, first.Close())
 
 	second, err := StartHandler(dir, "127.0.0.1", 0, "", nil)
 	require.NoError(t, err)
 	defer second.Close()
 
-	assert.Equal(t, sig, second.computeSignature(42, exp))
+	assert.Equal(t, sig, second.computeSignature("", 42, exp))
 }
 
 // TestHandler_ArtifactSignatureDownload is a happy-path round trip that

@@ -141,6 +141,11 @@ func runDaemon(ctx context.Context, daemArgs *daemonArgs, configFile *string) fu
 		)
 
 		runner := run.NewRunner(cfg, reg, cli)
+		defer func() {
+			if err := runner.Close(); err != nil {
+				log.Warnf("runner %s: cache server shutdown: %v", reg.Name, err)
+			}
+		}()
 
 		// declare the labels of the runner before fetching tasks
 		resp, err := runner.Declare(ctx, ls.Names())

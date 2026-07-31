@@ -155,6 +155,11 @@ cache:
   # A moved tag (e.g. a re-tagged "v6") or an updated branch stays at the cached commit
   # until its cache entry expires or is manually removed.
   offline_mode: false
+  # Serve the actions cache service v2 API, used by actions/cache@v4.2 and later. Those actions
+  # refuse any host they do not take for GitHub, so reaching it means editing that check out of
+  # the action's own bundle, keeping the untouched copy beside it. The same edit lets the stock
+  # upload-artifact and download-artifact work here. A bundle that does not match is left alone.
+  v2: true
 
 container:
   # Specifies the network to which the container will connect.
