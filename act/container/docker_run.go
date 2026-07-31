@@ -868,11 +868,12 @@ func (cr *containerReference) CopyTarStream(ctx context.Context, destPath string
 	if cr.id == "" {
 		return cr.missingContainerError("copy to %s", destPath)
 	}
-	// Mkdir
+	// Mkdir, with a path relative to the DestinationPath ("/") below. Docker 29.5+
+	// rejects absolute tar entry names with "path escapes from parent".
 	buf := &bytes.Buffer{}
 	tw := tar.NewWriter(buf)
 	_ = tw.WriteHeader(&tar.Header{
-		Name:     destPath,
+		Name:     strings.TrimPrefix(destPath, "/"),
 		Mode:     0o777,
 		Typeflag: tar.TypeDir,
 	})

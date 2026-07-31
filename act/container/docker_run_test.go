@@ -5,6 +5,7 @@
 package container
 
 import (
+	"archive/tar"
 	"bufio"
 	"bytes"
 	"context"
@@ -354,6 +355,44 @@ func TestDockerCopyTarStream(t *testing.T) {
 	}
 
 	_ = cr.CopyTarStream(ctx, "/var/run/act", &bytes.Buffer{})
+
+	client.AssertExpectations(t)
+}
+
+// Docker 29.5+ rejects absolute names in the mkdir tarball with
+// "path escapes from parent", since it is extracted relative to "/".
+func TestDockerCopyTarStreamMkdirEntryIsRelative(t *testing.T) {
+	ctx := context.Background()
+
+	var mkdirNames []string
+	client := &mockDockerClient{}
+	client.On("CopyToContainer", ctx, "123", mock.MatchedBy(func(opts mobyclient.CopyToContainerOptions) bool {
+		if opts.DestinationPath != "/" || opts.Content == nil {
+			return false
+		}
+		tr := tar.NewReader(opts.Content)
+		for {
+			hdr, err := tr.Next()
+			if err != nil {
+				break
+			}
+			mkdirNames = append(mkdirNames, hdr.Name)
+		}
+		return true
+	})).Return(mobyclient.CopyToContainerResult{}, nil)
+	client.On("CopyToContainer", ctx, "123", mock.MatchedBy(func(opts mobyclient.CopyToContainerOptions) bool {
+		return opts.DestinationPath == "/var/run/act" && opts.Content != nil
+	})).Return(mobyclient.CopyToContainerResult{}, nil)
+	cr := &containerReference{
+		id:  "123",
+		cli: client,
+		input: &NewContainerInput{
+			Image: "image",
+		},
+	}
+
+	require.NoError(t, cr.CopyTarStream(ctx, "/var/run/act", &bytes.Buffer{}))
+	assert.Equal(t, []string{"var/run/act"}, mkdirNames)
 
 	client.AssertExpectations(t)
 }
