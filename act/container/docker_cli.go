@@ -4,8 +4,10 @@
 
 //go:build !(WITHOUT_DOCKER || !(linux || darwin || windows || netbsd))
 
-// This file is exact copy of https://github.com/docker/cli/blob/9a471180cb7d39c236d090399a9d362c3f5a8ebd/cli/command/container/opts.go
-// appended with license information.
+// This file is exact copy of https://github.com/docker/cli/blob/dfc4efb1e2ab8c06d70d2a1366ad448d2f917e90/cli/command/container/opts.go with:
+// * appended with license information
+// * regexp and loader.ParseVolume in place of the import-restricted internal/lazyregexp and internal/volumespec
+// * invalidParameter from the package's errors.go, and convertPortSet/convertPortMap for the callers in docker_run.go
 //
 // docker/cli is licensed under the Apache License, Version 2.0.
 // See DOCKER_LICENSE for the full license text.
@@ -30,6 +32,7 @@ import (
 	"strings"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/cli/cli/compose/loader"
 	"github.com/docker/cli/opts"
 	"github.com/docker/go-connections/nat"
@@ -380,7 +383,7 @@ func parse(flags *pflag.FlagSet, copts *containerOptions, serverOS string) (*con
 	var binds []string
 	volumes := copts.volumes.GetMap()
 	// add any bind targets to the list of container volumes
-	for bind := range copts.volumes.GetMap() {
+	for bind := range volumes {
 		parsed, err := loader.ParseVolume(bind)
 		if err != nil {
 			return nil, err
@@ -515,13 +518,13 @@ func parse(flags *pflag.FlagSet, copts *containerOptions, serverOS string) (*con
 	// collect all the environment variables for the container
 	envVariables, err := opts.ReadKVEnvStrings(copts.envFile.GetSlice(), copts.env.GetSlice())
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("--env-file: %w", err)
 	}
 
 	// collect all the labels for the container
 	labels, err := opts.ReadKVStrings(copts.labelsFile.GetSlice(), copts.labels.GetSlice())
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("--label-file: %w", err)
 	}
 
 	pidMode := container.PidMode(copts.pidMode)
@@ -1164,16 +1167,17 @@ func toNetipAddrSlice(ips []string) []netip.Addr {
 }
 
 // invalidParameter wraps an error to indicate it was caused by invalid input.
-// This is a local replacement for docker/docker/errdefs.InvalidParameter.
-type invalidParameterError struct{ error }
+// This is a copy of docker/cli's cli/command/container/errors.go, which is not importable.
+type invalidParameterErr struct{ error }
 
-func (e invalidParameterError) InvalidParameter() {}
+func (invalidParameterErr) InvalidParameter() {}
+func (e invalidParameterErr) Unwrap() error   { return e.error }
 
 func invalidParameter(err error) error {
-	if err == nil {
-		return nil
+	if err == nil || cerrdefs.IsInvalidArgument(err) {
+		return err
 	}
-	return invalidParameterError{err}
+	return invalidParameterErr{err}
 }
 
 func convertPortSet(ports nat.PortSet) (network.PortSet, error) {

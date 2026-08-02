@@ -6,7 +6,6 @@ require (
 	connectrpc.com/connect v1.20.0
 	dario.cat/mergo v1.0.2
 	gitea.dev/actions-proto-go v0.6.0
-	github.com/Masterminds/semver v1.5.0
 	github.com/avast/retry-go/v5 v5.0.0
 	github.com/containerd/errdefs v1.0.0
 	github.com/creack/pty v1.1.24
@@ -27,7 +26,6 @@ require (
 	github.com/moby/patternmatcher v0.6.1
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/opencontainers/selinux v1.15.1
-	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.24.0
 	github.com/prometheus/client_model v0.6.2
 	github.com/rhysd/actionlint v1.7.12

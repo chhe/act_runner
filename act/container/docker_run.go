@@ -27,7 +27,6 @@ import (
 	"gitea.com/gitea/runner/act/filecollector"
 
 	"dario.cat/mergo"
-	"github.com/Masterminds/semver"
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/cli/cli/compose/loader"
 	"github.com/docker/cli/cli/connhelper"
@@ -42,6 +41,7 @@ import (
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/api/types/system"
 	"github.com/moby/moby/client"
+	"github.com/moby/moby/client/pkg/versions"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/sirupsen/logrus"
 )
@@ -92,19 +92,11 @@ func (cr *containerReference) connectToNetwork(name string, aliases []string) co
 // supportsContainerImagePlatform returns true if the underlying Docker server
 // API version is 1.41 and beyond
 func supportsContainerImagePlatform(ctx context.Context, cli client.APIClient) bool {
-	logger := common.Logger(ctx)
 	ver, err := cli.ServerVersion(ctx, client.ServerVersionOptions{})
 	if err != nil {
-		logger.Panicf("Failed to get Docker API Version: %s", err)
-		return false
+		common.Logger(ctx).Panicf("Failed to get Docker API Version: %s", err)
 	}
-	sv, err := semver.NewVersion(ver.APIVersion)
-	if err != nil {
-		logger.Panicf("Failed to unmarshal Docker Version: %s", err)
-		return false
-	}
-	constraint, _ := semver.NewConstraint(">= 1.41")
-	return constraint.Check(sv)
+	return versions.GreaterThanOrEqualTo(ver.APIVersion, "1.41")
 }
 
 func (cr *containerReference) Create(capAdd, capDrop []string) common.Executor {
@@ -588,7 +580,7 @@ func (cr *containerReference) create(capAdd, capDrop []string) common.Executor {
 		}
 
 		var platSpecs *specs.Platform
-		if supportsContainerImagePlatform(ctx, cr.cli) && cr.input.Platform != "" {
+		if cr.input.Platform != "" && supportsContainerImagePlatform(ctx, cr.cli) {
 			platSpecs, err = parsePlatform(cr.input.Platform)
 			if err != nil {
 				return err
