@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"gitea.com/gitea/runner/act/model"
@@ -429,41 +430,54 @@ func (impl *interperterImpl) coerceToNumber(value reflect.Value) reflect.Value {
 	return reflect.ValueOf(math.NaN())
 }
 
-func (impl *interperterImpl) coerceToString(value reflect.Value) reflect.Value {
-	switch value.Kind() {
-	case reflect.Invalid:
-		return reflect.ValueOf("")
-
-	case reflect.Bool:
-		switch value.Bool() {
-		case true:
-			return reflect.ValueOf("true")
-		case false:
-			return reflect.ValueOf("false")
-		}
-
-	case reflect.String:
-		return value
-
-	case reflect.Int:
-		return reflect.ValueOf(fmt.Sprint(value))
-
-	case reflect.Float64:
-		if math.IsInf(value.Float(), 1) {
-			return reflect.ValueOf("Infinity")
-		} else if math.IsInf(value.Float(), -1) {
-			return reflect.ValueOf("-Infinity")
-		}
-		return reflect.ValueOf(fmt.Sprintf("%.15G", value.Float()))
-
-	case reflect.Slice:
-		return reflect.ValueOf("Array")
-
-	case reflect.Map:
-		return reflect.ValueOf("Object")
+// CoerceToString converts an evaluated expression value to a string the way GitHub does,
+// see https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#operators
+// An already reflected value is accepted as-is, since Interface() would panic on an invalid one.
+func CoerceToString(v any) string {
+	value, ok := v.(reflect.Value)
+	if !ok {
+		value = reflect.ValueOf(v)
 	}
 
-	return value
+	switch value.Kind() {
+	case reflect.Invalid:
+		return ""
+
+	case reflect.Bool:
+		return strconv.FormatBool(value.Bool())
+
+	case reflect.String:
+		return value.String()
+
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return strconv.FormatInt(value.Int(), 10)
+
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return strconv.FormatUint(value.Uint(), 10)
+
+	case reflect.Float32, reflect.Float64:
+		if math.IsInf(value.Float(), 1) {
+			return "Infinity"
+		} else if math.IsInf(value.Float(), -1) {
+			return "-Infinity"
+		}
+		return fmt.Sprintf("%.15G", value.Float())
+
+	case reflect.Slice, reflect.Array:
+		return "Array"
+
+	// contexts such as `github` are pointers to structs, so they stringify as objects too
+	case reflect.Map, reflect.Struct:
+		return "Object"
+
+	case reflect.Interface, reflect.Pointer:
+		if value.IsNil() {
+			return ""
+		}
+		return CoerceToString(value.Elem())
+	}
+
+	return fmt.Sprintf("%v", value)
 }
 
 func (impl *interperterImpl) compareString(left, right string, kind actionlint.CompareOpNodeKind) (bool, error) {

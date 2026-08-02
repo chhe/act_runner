@@ -121,6 +121,7 @@ func TestFunctionJoin(t *testing.T) {
 		{"join(fromJSON('[\"a\", \"b\", null]'), null)", "ab", "join-number"},
 		{"join(fromJSON('[\"a\", \"b\"]'))", "a,b", "join-number"},
 		{"join(fromJSON('[\"a\", \"b\", null]'), 1)", "a1b1", "join-number"},
+		{"join(fromJSON('[1, true, null]'), '-')", "1-true-", "join-mixed-types"},
 	}
 
 	env := &EvaluationEnvironment{}
@@ -230,8 +231,10 @@ func TestFunctionFormat(t *testing.T) {
 		{`format('Hello "{0}" {1} {2} {3} {4}', null, true, -3.14, NaN, Infinity)`, `Hello "" true -3.14 NaN Infinity`, nil, "format-with-primitives"},
 		{`format('Hello "{0}" {1} {2}', fromJSON('[0, true, "abc"]'), fromJSON('[{"a":1}]'), fromJSON('{"a":{"b":1}}'))`, `Hello "Array" Array Object`, nil, "format-with-complex-types"},
 		{"format(true)", "true", nil, "format-with-primitive-args"},
+		{"format('{0}', github)", "Object", nil, "format-with-context"},
 		{"format('echo Hello {0} ${{Test}}', github.undefined_property)", "echo Hello  ${Test}", nil, "format-with-undefined-value"},
 		{"format('{0}}', '{1}', 'World')", nil, "Closing bracket without opening one. The following format string is invalid: '{0}}'", "format-invalid-format-string"},
+		{"format('a}b')", nil, "Closing bracket without opening one. The following format string is invalid: 'a}b'", "format-unmatched-closing-brace"},
 		{"format('{0', '{1}', 'World')", nil, "Unclosed brackets. The following format string is invalid: '{0'", "format-invalid-format-string"},
 		{"format('{2}', '{1}', 'World')", "", "The following format string references more arguments than were supplied: '{2}'", "format-invalid-replacement-reference"},
 		{"format('{2147483648}')", "", "The following format string is invalid: '{2147483648}'", "format-invalid-replacement-reference"},
