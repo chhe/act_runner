@@ -283,7 +283,7 @@ func TestPatchBundleAfterTheActionMoved(t *testing.T) {
 // The wiring: a step patches its own bundles only when the runner serves the v2 API, and a step
 // that fails gets them back. The action's path inside its repository is part of where they live.
 func TestStepActionRemoteToolkitPatch(t *testing.T) {
-	newStep := func(t *testing.T, env map[string]string) (*stepActionRemote, string) {
+	newStep := func(t *testing.T, patch bool) (*stepActionRemote, string) {
 		t.Helper()
 
 		sar := &stepActionRemote{
@@ -291,8 +291,7 @@ func TestStepActionRemoteToolkitPatch(t *testing.T) {
 			remoteAction: &remoteAction{Org: "owner", Repo: "repo", Path: "sub", Ref: "v1"},
 			action:       &model.Action{Runs: model.ActionRuns{Using: "node20", Main: "index.js"}},
 			RunContext: &RunContext{
-				Env:    env,
-				Config: &Config{ActionCacheDir: t.TempDir()},
+				Config: &Config{ActionCacheDir: t.TempDir(), PatchToolkit: patch},
 			},
 		}
 		script := filepath.Join(sar.actionDir(), "sub", "index.js")
@@ -301,8 +300,8 @@ func TestStepActionRemoteToolkitPatch(t *testing.T) {
 		return sar, script
 	}
 
-	t.Run("left alone when the runner does not serve the v2 API", func(t *testing.T) {
-		sar, script := newStep(t, map[string]string{})
+	t.Run("left alone when the runner does not patch", func(t *testing.T) {
+		sar, script := newStep(t, false)
 		require.NoError(t, sar.patchActionToolkit(t.Context()))
 
 		body, err := os.ReadFile(script)
@@ -311,7 +310,7 @@ func TestStepActionRemoteToolkitPatch(t *testing.T) {
 	})
 
 	t.Run("patched, and put back when the step fails", func(t *testing.T) {
-		sar, script := newStep(t, map[string]string{CacheServiceV2Env: "true"})
+		sar, script := newStep(t, true)
 		require.NoError(t, sar.patchActionToolkit(t.Context()))
 
 		body, err := os.ReadFile(script)

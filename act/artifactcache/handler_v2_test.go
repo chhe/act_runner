@@ -45,6 +45,11 @@ func putBlob(t *testing.T, url string, content []byte) int {
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusCreated {
+		// The Azure SDK client dereferences this header without checking, so a blob upload that
+		// omits it panics the caller rather than failing it.
+		require.NotEmpty(t, resp.Header.Get("x-ms-request-id"))
+	}
 	return resp.StatusCode
 }
 
@@ -67,7 +72,7 @@ func startTestHandler(t *testing.T) *Handler {
 	handler, err := StartHandler(filepath.Join(t.TempDir(), "artifactcache"), "127.0.0.1", 0, "", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = handler.Close() })
-	handler.RegisterJob(testToken, testRepo)
+	handler.RegisterJob(testToken, JobCredential{Repo: testRepo})
 	return handler
 }
 
@@ -78,7 +83,7 @@ func saveV2(t *testing.T, handler *Handler, key, version string, content []byte)
 
 	created := v2Call(t, handler, testClient, "CreateCacheEntry", map[string]any{"key": key, "version": version})
 	require.Equal(t, true, created["ok"])
-	uploadURL, _ = created["signedUploadUrl"].(string)
+	uploadURL, _ = created["signed_upload_url"].(string)
 	require.NotEmpty(t, uploadURL)
 	require.Equal(t, http.StatusCreated, putBlob(t, uploadURL, content))
 
@@ -100,7 +105,7 @@ func TestCacheServiceV2RoundTrip(t *testing.T) {
 
 	finalized, uploadURL := saveV2(t, handler, "deps-v1", "abc123", content)
 	require.Equal(t, true, finalized["ok"])
-	assert.NotEmpty(t, finalized["entryId"])
+	assert.NotEmpty(t, finalized["entry_id"])
 
 	// The upload URL outlives the finalize call, so replaying it must not poison the entry,
 	// and it is an upload URL only: nothing reads a blob back through it.
@@ -112,8 +117,8 @@ func TestCacheServiceV2RoundTrip(t *testing.T) {
 
 	got := v2Call(t, handler, testClient, "GetCacheEntryDownloadURL", map[string]any{"key": "deps-v1", "version": "abc123"})
 	require.Equal(t, true, got["ok"])
-	assert.Equal(t, "deps-v1", got["matchedKey"])
-	downloadURL, _ := got["signedDownloadUrl"].(string)
+	assert.Equal(t, "deps-v1", got["matched_key"])
+	downloadURL, _ := got["signed_download_url"].(string)
 	require.NotEmpty(t, downloadURL)
 	assert.Equal(t, content, getURL(t, downloadURL))
 }
@@ -124,7 +129,7 @@ func TestCacheServiceV2BlockUpload(t *testing.T) {
 	handler := startTestHandler(t)
 
 	created := v2Call(t, handler, testClient, "CreateCacheEntry", map[string]any{"key": "blocks", "version": "v1"})
-	uploadURL, _ := created["signedUploadUrl"].(string)
+	uploadURL, _ := created["signed_upload_url"].(string)
 	require.NotEmpty(t, uploadURL)
 
 	blocks := map[string][]byte{}
@@ -154,7 +159,7 @@ func TestCacheServiceV2BlockUpload(t *testing.T) {
 
 	got := v2Call(t, handler, testClient, "GetCacheEntryDownloadURL", map[string]any{"key": "blocks", "version": "v1"})
 	require.Equal(t, true, got["ok"])
-	assert.Equal(t, "hello world!", string(getURL(t, got["signedDownloadUrl"].(string))))
+	assert.Equal(t, "hello world!", string(getURL(t, got["signed_download_url"].(string))))
 }
 
 func TestCacheServiceV2Lookups(t *testing.T) {
@@ -175,7 +180,7 @@ func TestCacheServiceV2Lookups(t *testing.T) {
 				"key": "deps-zzz", field: []string{"deps-"}, "version": "v1",
 			})
 			require.Equal(t, true, got["ok"])
-			assert.Equal(t, "deps-abc", got["matchedKey"])
+			assert.Equal(t, "deps-abc", got["matched_key"])
 		})
 	}
 
@@ -190,7 +195,7 @@ func TestCacheServiceV2Lookups(t *testing.T) {
 	t.Run("a prefix of an existing key is still reserved", func(t *testing.T) {
 		reserved := v2Call(t, handler, testClient, "CreateCacheEntry", map[string]any{"key": "deps", "version": "v1"})
 		require.Equal(t, true, reserved["ok"])
-		assert.NotEmpty(t, reserved["signedUploadUrl"])
+		assert.NotEmpty(t, reserved["signed_upload_url"])
 	})
 
 	t.Run("finalizing without a reservation is not ok", func(t *testing.T) {
@@ -203,7 +208,7 @@ func TestCacheServiceV2Lookups(t *testing.T) {
 	// The size the client declares is what Commit validates the assembled archive against.
 	t.Run("finalizing with the wrong size is not ok", func(t *testing.T) {
 		created := v2Call(t, handler, testClient, "CreateCacheEntry", map[string]any{"key": "wrong-size", "version": "v1"})
-		require.Equal(t, http.StatusCreated, putBlob(t, created["signedUploadUrl"].(string), []byte("four")))
+		require.Equal(t, http.StatusCreated, putBlob(t, created["signed_upload_url"].(string), []byte("four")))
 
 		got := v2Call(t, handler, testClient, "FinalizeCacheEntryUpload", map[string]any{
 			"key": "wrong-size", "version": "v1", "size_bytes": 99,
@@ -227,7 +232,7 @@ func TestCacheServiceV2Lookups(t *testing.T) {
 
 	// The cache of one repository must stay invisible to another, as it does for the v1 API.
 	t.Run("another repository sees nothing", func(t *testing.T) {
-		handler.RegisterJob("other-runtime-token", "other/repo")
+		handler.RegisterJob("other-runtime-token", JobCredential{Repo: "other/repo"})
 		otherClient := &http.Client{Transport: &bearerTransport{token: "other-runtime-token"}}
 
 		got := v2Call(t, handler, otherClient, "GetCacheEntryDownloadURL", map[string]any{"key": "deps-abc", "version": "v1"})

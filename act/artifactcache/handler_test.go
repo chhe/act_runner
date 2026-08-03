@@ -52,7 +52,7 @@ func TestHandler(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "artifactcache")
 	handler, err := StartHandler(dir, "", 0, "", nil)
 	require.NoError(t, err)
-	handler.RegisterJob(testToken, testRepo)
+	handler.RegisterJob(testToken, JobCredential{Repo: testRepo})
 
 	base := fmt.Sprintf("%s%s", handler.ExternalURL(), apiPath)
 
@@ -890,7 +890,7 @@ func TestHandler_UnregisterRevokes(t *testing.T) {
 	require.NoError(t, err)
 	defer handler.Close()
 
-	unregister := handler.RegisterJob("tmp-token", testRepo)
+	unregister := handler.RegisterJob("tmp-token", JobCredential{Repo: testRepo})
 
 	base := handler.ExternalURL() + apiPath
 	req, err := http.NewRequest(http.MethodGet, base+"/cache?keys=x&version=y", nil)
@@ -920,8 +920,8 @@ func TestHandler_CrossRepoIsolation(t *testing.T) {
 	handler, err := StartHandler(dir, "", 0, "", nil)
 	require.NoError(t, err)
 	defer handler.Close()
-	handler.RegisterJob("token-a", "owner/repoA")
-	handler.RegisterJob("token-b", "owner/repoB")
+	handler.RegisterJob("token-a", JobCredential{Repo: "owner/repoA"})
+	handler.RegisterJob("token-b", JobCredential{Repo: "owner/repoB"})
 
 	base := handler.ExternalURL() + apiPath
 	key := "shared-key"
@@ -986,7 +986,7 @@ func TestHandler_ArtifactSignature(t *testing.T) {
 	handler, err := StartHandler(dir, "", 0, "", nil)
 	require.NoError(t, err)
 	defer handler.Close()
-	handler.RegisterJob(testToken, testRepo)
+	handler.RegisterJob(testToken, JobCredential{Repo: testRepo})
 
 	base := handler.ExternalURL() + apiPath
 
@@ -1059,7 +1059,7 @@ func TestHandler_ArtifactSignatureDownload(t *testing.T) {
 	handler, err := StartHandler(dir, "", 0, "", nil)
 	require.NoError(t, err)
 	defer handler.Close()
-	handler.RegisterJob(testToken, testRepo)
+	handler.RegisterJob(testToken, JobCredential{Repo: testRepo})
 
 	base := handler.ExternalURL() + apiPath
 	key := "download-key"
@@ -1100,8 +1100,8 @@ func TestHandler_RegisterJob_RefCounted(t *testing.T) {
 	require.NoError(t, err)
 	defer handler.Close()
 
-	first := handler.RegisterJob("shared", testRepo)
-	second := handler.RegisterJob("shared", testRepo)
+	first := handler.RegisterJob("shared", JobCredential{Repo: testRepo})
+	second := handler.RegisterJob("shared", JobCredential{Repo: testRepo})
 
 	base := handler.ExternalURL() + apiPath
 	probe := func() int {
@@ -1131,8 +1131,8 @@ func TestHandler_GC_PerRepoDedup(t *testing.T) {
 	handler, err := StartHandler(dir, "", 0, "", nil)
 	require.NoError(t, err)
 	defer handler.Close()
-	handler.RegisterJob("tok-a", "owner/repoA")
-	handler.RegisterJob("tok-b", "owner/repoB")
+	handler.RegisterJob("tok-a", JobCredential{Repo: "owner/repoA"})
+	handler.RegisterJob("tok-b", JobCredential{Repo: "owner/repoB"})
 
 	key := "shared-dedup-key"
 	version := "c19da02a2bd7e77277f1ac29ab45c09b7d46a4ee758284e26bb3045ad11d9d20"

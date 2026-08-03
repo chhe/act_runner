@@ -89,7 +89,8 @@ func NewRunner(cfg *config.Config, reg *config.Registration, cli client.Client) 
 	var cacheHandler *artifactcache.Handler
 	if cfg.Cache.Enabled == nil || *cfg.Cache.Enabled {
 		if cfg.Cache.ExternalServer != "" {
-			envs["ACTIONS_CACHE_URL"] = cfg.Cache.ExternalServer
+			// The v1 client appends its path to this without a separator, so the slash is required.
+			envs["ACTIONS_CACHE_URL"] = strings.TrimRight(cfg.Cache.ExternalServer, "/") + "/"
 		} else {
 			warnIgnoredCacheSecret(cfg)
 			handler, err := artifactcache.StartHandler(
@@ -107,12 +108,6 @@ func NewRunner(cfg *config.Config, reg *config.Registration, cli client.Client) 
 				envs["ACTIONS_CACHE_URL"] = handler.ExternalURL() + "/"
 			}
 		}
-	}
-
-	if envs["ACTIONS_CACHE_URL"] != "" && (cfg.Cache.V2 == nil || *cfg.Cache.V2) {
-		// act patches the GHES check out of an action's bundle when it sees this, so the client
-		// uses the cache service v2 API this server also answers; see act/runner/toolkit_patch.go.
-		envs[runner.CacheServiceV2Env] = "true"
 	}
 
 	// set artifact gitea api
@@ -440,7 +435,13 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 	// lifetime. Only applies to the embedded cache server; when the operator
 	// points the runner at an external cache via cfg.Cache.ExternalServer, it
 	// is that server's responsibility to authenticate requests.
-	defer r.registerCacheForTask(giteaRuntimeToken, preset.Repository, reporter)()
+	revokeCache, resultsURL := r.registerCacheForTask(giteaRuntimeToken, preset.Repository, reporter)
+	defer revokeCache()
+	// A cache server that agreed to forward the artifact half is the whole results service, so
+	// the job is pointed at it and the v2 variable is finally true.
+	if resultsURL != "" {
+		envs["ACTIONS_RESULTS_URL"], envs[runner.CacheServiceV2Env] = resultsURL, "true"
+	}
 
 	eventJSON, err := json.Marshal(preset.Event)
 	if err != nil {
@@ -481,6 +482,7 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 		AllocatePTY:       r.cfg.Runner.AllocatePTY,
 		ActionOfflineMode: r.cfg.Cache.OfflineMode,
 		ActionCloneDepth:  actionCloneDepth,
+		PatchToolkit:      r.patchToolkit(),
 
 		ReuseContainers:      false,
 		ForcePull:            r.cfg.Container.ForcePull,
@@ -553,6 +555,12 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 	return execErr
 }
 
+// patchToolkit reports whether act should edit the toolkit bundled into an action. It follows the
+// cache URL, because that is what the edits point the client at; see act/runner/toolkit_patch.go.
+func (r *Runner) patchToolkit() bool {
+	return r.envs["ACTIONS_CACHE_URL"] != "" && (r.cfg.Cache.V2 == nil || *r.cfg.Cache.V2)
+}
+
 // registerCacheForTask tells the cache server to accept requests authenticated
 // with the given runtime token for the duration of this task. Returns a
 // function the caller must invoke (typically via defer) to revoke the
@@ -565,18 +573,25 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 //     repo scoping over the network.
 //
 // Safe with an empty token (older Gitea did not issue one).
-func (r *Runner) registerCacheForTask(token, repo string, reporter *report.Reporter) func() {
+// It also returns the URL to advertise as ACTIONS_RESULTS_URL, which is the cache server itself
+// when it agreed to forward this instance's artifact service, and "" when it did not.
+func (r *Runner) registerCacheForTask(token, repo string, reporter *report.Reporter) (func(), string) {
 	if token == "" {
-		return func() {}
+		return func() {}, ""
+	}
+	cred := artifactcache.JobCredential{
+		Repo:        repo,
+		Results:     r.envs["ACTIONS_RESULTS_URL"], // the instance as the job would reach it
+		InsecureTLS: r.cfg.Runner.Insecure,
 	}
 	if r.cacheHandler != nil {
-		return r.cacheHandler.RegisterJob(token, repo)
+		return r.cacheHandler.RegisterJob(token, cred), r.cacheHandler.ResultsURL(cred)
 	}
 	if r.cfg.Cache.ExternalServer != "" && r.cfg.Cache.ExternalSecret != "" {
-		return r.registerExternalCacheJob(token, repo, reporter)
+		return r.registerExternalCacheJob(token, cred, reporter)
 	}
 	// No cache server to register against: caching is disabled, or the built-in server failed to start.
-	return func() {}
+	return func() {}, ""
 }
 
 // registerExternalCacheJob POSTs to the remote cache-server's control-plane.
@@ -584,47 +599,54 @@ func (r *Runner) registerCacheForTask(token, repo string, reporter *report.Repor
 // 401 the job's requests — better than failing the whole task for a cache
 // outage. The warning is mirrored to the job log so users can see why their
 // cache calls 401, instead of having to read the runner daemon's stderr.
-func (r *Runner) registerExternalCacheJob(token, repo string, reporter *report.Reporter) func() {
+func (r *Runner) registerExternalCacheJob(token string, cred artifactcache.JobCredential, reporter *report.Reporter) (func(), string) {
 	base := strings.TrimRight(r.cfg.Cache.ExternalServer, "/")
-	if err := postInternalCache(base+"/_internal/register", r.cfg.Cache.ExternalSecret,
-		map[string]string{"token": token, "repo": repo}); err != nil {
+	resultsURL := ""
+	if body, err := postInternalCache(base+"/_internal/register", r.cfg.Cache.ExternalSecret, map[string]any{
+		"token": token, "repo": cred.Repo, "results": cred.Results, "insecure_tls": cred.InsecureTLS,
+	}); err != nil {
 		log.Warnf("cache external_server register failed (%s): %v", base, err)
 		if reporter != nil {
 			reporter.Logf("::warning::cache external_server register failed (%s): %v — cache requests from this job will be unauthenticated and likely return 401", base, err)
 		}
+	} else {
+		resultsURL, _ = body["results_url"].(string) // absent from a server too old to forward
 	}
 	return func() {
-		if err := postInternalCache(base+"/_internal/revoke", r.cfg.Cache.ExternalSecret,
-			map[string]string{"token": token}); err != nil {
+		if _, err := postInternalCache(base+"/_internal/revoke", r.cfg.Cache.ExternalSecret,
+			map[string]any{"token": token}); err != nil {
 			log.Warnf("cache external_server revoke failed (%s): %v", base, err)
 			if reporter != nil {
 				reporter.Logf("::warning::cache external_server revoke failed (%s): %v", base, err)
 			}
 		}
-	}
+	}, resultsURL
 }
 
-func postInternalCache(url, secret string, body map[string]string) error {
+func postInternalCache(url, secret string, body map[string]any) (map[string]any, error) {
 	buf, err := json.Marshal(body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(buf))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+secret)
 	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		return fmt.Errorf("status %d", resp.StatusCode)
+		return nil, fmt.Errorf("status %d", resp.StatusCode)
 	}
-	return nil
+	answer := map[string]any{}
+	// A server too old to answer with a body is not an error, it simply tells us nothing.
+	_ = json.NewDecoder(resp.Body).Decode(&answer)
+	return answer, nil
 }
 
 func (r *Runner) RunningCount() int64 {

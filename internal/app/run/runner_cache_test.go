@@ -7,7 +7,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,7 +31,7 @@ func TestRunner_registerCacheForTask(t *testing.T) {
 
 	r := &Runner{cfg: emptyCfg(), cacheHandler: handler}
 	token := "run-token-123"
-	unregister := r.registerCacheForTask(token, "owner/repo", nil)
+	unregister, _ := r.registerCacheForTask(token, "owner/repo", nil)
 
 	base := handler.ExternalURL() + "/_apis/artifactcache"
 	probe := func() int {
@@ -53,7 +55,7 @@ func TestRunner_registerCacheForTask(t *testing.T) {
 func TestRunner_registerCacheForTask_NoOps(t *testing.T) {
 	t.Run("nil cacheHandler", func(t *testing.T) {
 		r := &Runner{cfg: emptyCfg()}
-		unregister := r.registerCacheForTask("tok", "owner/repo", nil)
+		unregister, _ := r.registerCacheForTask("tok", "owner/repo", nil)
 		require.NotNil(t, unregister)
 		unregister()
 	})
@@ -65,7 +67,7 @@ func TestRunner_registerCacheForTask_NoOps(t *testing.T) {
 		defer handler.Close()
 
 		r := &Runner{cfg: emptyCfg(), cacheHandler: handler}
-		unregister := r.registerCacheForTask("", "owner/repo", nil)
+		unregister, _ := r.registerCacheForTask("", "owner/repo", nil)
 		require.NotNil(t, unregister)
 		unregister()
 	})
@@ -81,7 +83,7 @@ func TestRunner_CacheFullFlow_MatchesToolkit(t *testing.T) {
 
 	r := &Runner{cfg: emptyCfg(), cacheHandler: handler}
 	token := "full-flow-token"
-	unregister := r.registerCacheForTask(token, "owner/repo", nil)
+	unregister, _ := r.registerCacheForTask(token, "owner/repo", nil)
 	defer unregister()
 
 	base := handler.ExternalURL() + "/_apis/artifactcache"
@@ -154,18 +156,27 @@ func decodeJSON(resp *http.Response, v any) error {
 }
 
 // End-to-end against a remote cache-server: token unknown → 401, register →
-// reserve/upload/commit/find/download all OK, revoke → 401 again.
+// reserve/upload/commit/find/download all OK, revoke → 401 again. Registering also names the
+// instance, and the server answering with its own address is what makes a shared cache server the
+// whole results service, as the built-in one is.
 func TestRunner_ExternalCacheServer_RegisterRevoke(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "remote-cache")
 	const secret = "shared-secret-for-tests"
 	remote, err := artifactcache.StartHandler(dir, "127.0.0.1", 0, secret, nil)
 	require.NoError(t, err)
 	defer remote.Close()
+	gitea := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer gitea.Close()
 
-	r := &Runner{cfg: &config.Config{Cache: config.Cache{
-		ExternalServer: remote.ExternalURL(),
-		ExternalSecret: secret,
-	}}}
+	r := &Runner{
+		cfg: &config.Config{Cache: config.Cache{
+			ExternalServer: remote.ExternalURL(),
+			ExternalSecret: secret,
+		}},
+		envs: map[string]string{"ACTIONS_RESULTS_URL": gitea.URL},
+	}
 
 	token := "external-task-token"
 	repo := "owner/repoX"
@@ -182,9 +193,20 @@ func TestRunner_ExternalCacheServer_RegisterRevoke(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, probe(),
 		"token must be unknown to the remote server before registration")
 
-	unregister := r.registerCacheForTask(token, repo, nil)
+	unregister, resultsURL := r.registerCacheForTask(token, repo, nil)
 	require.NotEqual(t, http.StatusUnauthorized, probe(),
 		"token must be accepted after registerCacheForTask")
+
+	// The server took the results service over, so the artifact half reaches Gitea through it.
+	require.Equal(t, remote.ExternalURL(), resultsURL)
+	artifact, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+		resultsURL+"/twirp/github.actions.results.api.v1.ArtifactService/CreateArtifact", nil)
+	require.NoError(t, err)
+	artifact.Header.Set("Authorization", "Bearer "+token)
+	forwarded, err := http.DefaultClient.Do(artifact)
+	require.NoError(t, err)
+	forwarded.Body.Close()
+	require.Equal(t, http.StatusOK, forwarded.StatusCode)
 
 	// Full reserve→upload→commit→find→download cycle, identical to what
 	// @actions/cache does, against the remote (external) server.

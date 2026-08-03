@@ -23,6 +23,9 @@ import (
 // endpoints, and uploads the archive to the returned URL with the Azure blob protocol.
 // Both API versions are served from the same store, so a repository keeps its cache
 // when a workflow moves between action versions.
+//
+// Responses carry the proto field names, which is what Gitea's own results API emits and the only
+// spelling the Go clients parse. The JavaScript toolkit accepts either.
 const (
 	cacheServiceV2Path = "/twirp/github.actions.results.api.v1.CacheService"
 
@@ -93,8 +96,8 @@ func (h *Handler) v2CreateCacheEntry(w http.ResponseWriter, r *http.Request, _ h
 	}
 
 	h.responseJSON(w, r, http.StatusOK, map[string]any{
-		"ok":              true,
-		"signedUploadUrl": h.signedURL(blobPath, blobUploadPurpose, cache.ID, time.Now().Add(blobUploadURLTTL)),
+		"ok":                true,
+		"signed_upload_url": h.signedURL(blobPath, blobUploadPurpose, cache.ID, time.Now().Add(blobUploadURLTTL)),
 	})
 }
 
@@ -134,7 +137,7 @@ func (h *Handler) v2FinalizeCacheEntryUpload(w http.ResponseWriter, r *http.Requ
 	h.responseJSON(w, r, http.StatusOK, map[string]any{
 		"ok": true,
 		// int64 fields travel as strings in the proto JSON mapping.
-		"entryId": strconv.FormatUint(cache.ID, 10),
+		"entry_id": strconv.FormatUint(cache.ID, 10),
 	})
 }
 
@@ -164,9 +167,9 @@ func (h *Handler) v2GetCacheEntryDownloadURL(w http.ResponseWriter, r *http.Requ
 	}
 
 	h.responseJSON(w, r, http.StatusOK, map[string]any{
-		"ok":                true,
-		"signedDownloadUrl": h.signedArtifactURL(cache.ID, time.Now().Add(artifactURLTTL)),
-		"matchedKey":        cache.Key,
+		"ok":                  true,
+		"signed_download_url": h.signedArtifactURL(cache.ID, time.Now().Add(artifactURLTTL)),
+		"matched_key":         cache.Key,
 	})
 }
 
@@ -209,6 +212,8 @@ func (h *Handler) v2UploadBlob(w http.ResponseWriter, r *http.Request, params ht
 		return
 	}
 
+	// The Azure SDK client dereferences this without checking, so its absence panics the caller.
+	w.Header().Set("x-ms-request-id", strconv.FormatInt(time.Now().UnixNano(), 10))
 	w.WriteHeader(http.StatusCreated)
 }
 

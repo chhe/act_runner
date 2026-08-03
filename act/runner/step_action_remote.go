@@ -236,10 +236,10 @@ func (sar *stepActionRemote) toolkitBundles() (string, []string) {
 	return dir, actionScriptPaths(filepath.Join(dir, sar.remoteAction.Path), sar.action)
 }
 
-// patchActionToolkit edits the bundled toolkit so it works against Gitea, which lets the cache
-// client use the v2 API this runner serves. A no-op unless the runner serves it.
+// patchActionToolkit edits the bundled toolkit so it works against Gitea: the artifact actions
+// stop refusing, and the cache client keeps to the cache server whichever API version it picks.
 func (sar *stepActionRemote) patchActionToolkit(ctx context.Context) error {
-	if sar.RunContext.GetEnv()[CacheServiceV2Env] != "" {
+	if sar.RunContext.Config.PatchToolkit {
 		dir, scripts := sar.toolkitBundles()
 		patchToolkit(ctx, dir, scripts)
 	}
