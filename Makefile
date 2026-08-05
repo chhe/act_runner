@@ -141,7 +141,12 @@ security-check:
 
 .PHONY: tidy
 tidy: ## run go mod tidy
+	$(eval GO_TOOLCHAIN := $(shell grep -Eo '^toolchain\s+go[0-9.]+' go.mod | cut -d' ' -f2))
 	$(GO) mod tidy
+	@# workaround https://github.com/golang/go/issues/75331: restore toolchain if tidy dropped it
+	@if [ -n "$(GO_TOOLCHAIN)" ] && ! grep -qE '^toolchain\s' go.mod; then \
+		$(GO) mod edit -toolchain=$(GO_TOOLCHAIN); \
+	fi
 
 .PHONY: tidy-check
 tidy-check: tidy

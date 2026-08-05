@@ -2,6 +2,8 @@ module gitea.com/gitea/runner
 
 go 1.26.0
 
+toolchain go1.26.5
+
 require (
 	connectrpc.com/connect v1.20.0
 	dario.cat/mergo v1.0.2
