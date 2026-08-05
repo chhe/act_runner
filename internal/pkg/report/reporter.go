@@ -255,6 +255,9 @@ func (r *Reporter) Fire(entry *log.Entry) error {
 	if step.StartedAt == nil {
 		step.StartedAt = timestamppb.New(timestamp)
 		urgentState = true
+		// The runner's own handler is per step, so an unresumed ::stop-commands:: must not
+		// leave the reporter suppressed, and no longer registering masks, for the whole job.
+		r.stopCommandEndToken = ""
 	}
 
 	// Force reporting log errors as raw output to prevent silent failures
@@ -396,10 +399,9 @@ func (r *Reporter) Logf(format string, a ...any) {
 
 func (r *Reporter) logf(format string, a ...any) {
 	if !r.duringSteps() {
-		r.logRows = append(r.logRows, &runnerv1.LogRow{
-			Time:    timestamppb.Now(),
-			Content: fmt.Sprintf(format, a...),
-		})
+		// Masked like any other row: these bypass parseLogRow, but a caller can still
+		// interpolate a secret, such as a configured URL carrying credentials.
+		r.logRows = append(r.logRows, r.newLogRow(timestamppb.Now(), fmt.Sprintf(format, a...)))
 	}
 }
 
@@ -700,66 +702,128 @@ func (r *Reporter) parseResult(result any) (runnerv1.Result, bool) {
 	return ret, ok
 }
 
-var cmdRegex = regexp.MustCompile(`^::([^ :]+)( .*)?::(.*)$`)
+// A property value never contains a raw ':' (GitHub escapes it as %3A), so excluding ':' ends
+// the property list at the first '::' as GitHub does; greedily would swallow a '::' message.
+var cmdRegex = regexp.MustCompile(`^::([^ :]+)( [^:]*)?::(.*)$`)
 
-func (r *Reporter) handleCommand(originalContent, command, value string) *string {
-	if r.stopCommandEndToken != "" && command != r.stopCommandEndToken {
-		return &originalContent
+// handleCommand takes value still escaped, so that the web UI decodes it exactly once. Only
+// the branches that consume the payload here decode it.
+func (r *Reporter) handleCommand(originalContent, command, properties, value string) *string {
+	if r.stopCommandEndToken != "" {
+		if command != r.stopCommandEndToken {
+			return &originalContent
+		}
+		// Resumed here rather than from the switch, because the end token is arbitrary and a
+		// token naming a real command would otherwise never resume.
+		r.stopCommandEndToken = ""
+		return nil
 	}
 
 	switch command {
 	case "add-mask":
-		r.addMask(value)
+		r.addMask(runner.UnescapeCommandData(value))
 		return nil
 	case "debug":
 		if r.debugOutputEnabled {
-			return &value
+			return &originalContent // kept as ::debug::, so the web UI labels and decodes it
 		}
 		return nil
 
-	case "notice":
-		// Not implemented yet, so just return the original content.
-		return &originalContent
-	case "warning":
-		// Not implemented yet, so just return the original content.
-		return &originalContent
-	case "error":
-		// Not implemented yet, so just return the original content.
-		return &originalContent
-	case "group":
-		// Returning the original content, because I think the frontend
-		// will use it when rendering the output.
-		return &originalContent
-	case "endgroup":
-		// Ditto
+	case "notice", "warning", "error":
+		// Gitea has no annotation store, so the annotation is rendered into the log with
+		// its source location instead of being dropped: that location is the whole point
+		// of the command for compiler and linter output.
+		annotation := formatAnnotation(command, properties, value)
+		return &annotation
+	case "group", "endgroup":
+		// Passed through: the web UI folds the log on these and decodes the payload itself.
 		return &originalContent
 	case "stop-commands":
-		r.stopCommandEndToken = value
-		return nil
-	case r.stopCommandEndToken:
-		r.stopCommandEndToken = ""
+		r.stopCommandEndToken = runner.UnescapeCommandData(value)
 		return nil
 	}
 	return &originalContent
 }
 
+// formatAnnotation folds the file, line, column and title the command carries into its message,
+// which the web UI otherwise drops along with the rest of the properties:
+//
+//	::error file=main.go,line=12,col=5,title=vet::undefined: x
+//	::error::main.go:12:5: vet: undefined: x
+//
+// The ::-form prefix is deliberate, and value is not escaped here because it arrived escaped
+// and must stay that way.
+func formatAnnotation(level, properties, value string) string {
+	props := parseCommandProperties(properties)
+
+	prefix := props["file"]
+	if prefix != "" {
+		if props["line"] != "" {
+			prefix += ":" + props["line"]
+			if props["col"] != "" {
+				prefix += ":" + props["col"]
+			}
+		}
+		prefix += ": "
+	}
+	if props["title"] != "" {
+		prefix += props["title"] + ": "
+	}
+	return "::" + level + "::" + prefix + value
+}
+
+// parseCommandProperties parses the `file=main.go,line=12` part of a workflow command.
+func parseCommandProperties(properties string) map[string]string {
+	properties = strings.TrimSpace(properties)
+	if properties == "" {
+		return nil
+	}
+
+	props := map[string]string{}
+	for pair := range strings.SplitSeq(properties, ",") {
+		key, value, ok := strings.Cut(pair, "=")
+		if !ok {
+			continue
+		}
+		// Only the property-list separators are decoded, the web UI decodes the rest.
+		value = strings.ReplaceAll(strings.ReplaceAll(value, "%3A", ":"), "%2C", ",")
+		// GitHub keys its property dictionary case-insensitively, so `File=` works there too.
+		props[strings.ToLower(strings.TrimSpace(key))] = value
+	}
+	// GitHub's toolkit emits `col`; accept `column` as well, which some tools write instead.
+	if props["col"] == "" {
+		props["col"] = props["column"]
+	}
+	return props
+}
+
 func (r *Reporter) parseLogRow(entry *log.Entry) *runnerv1.LogRow {
 	content := strings.TrimRight(entry.Message, "\r\n")
 
+	// cmdRegex only covers the ::cmd:: form, so the ##[add-mask] one would otherwise reach
+	// the log carrying its own secret. Registered and dropped like its ::add-mask:: twin.
+	if arg, ok := strings.CutPrefix(content, "##[add-mask]"); ok {
+		r.addMask(runner.UnescapeCommandData(arg))
+		return nil
+	}
+
 	matches := cmdRegex.FindStringSubmatch(content)
 	if matches != nil {
-		if output := r.handleCommand(content, matches[1], runner.UnescapeCommandData(matches[3])); output != nil {
+		if output := r.handleCommand(content, matches[1], matches[2], matches[3]); output != nil {
 			content = *output
 		} else {
 			return nil
 		}
 	}
 
-	content = r.logReplacer.Replace(content)
+	return r.newLogRow(timestamppb.New(entry.Time), content)
+}
 
+// newLogRow applies the masking and validation every row must carry, whatever built it.
+func (r *Reporter) newLogRow(t *timestamppb.Timestamp, content string) *runnerv1.LogRow {
 	return &runnerv1.LogRow{
-		Time:    timestamppb.New(entry.Time),
-		Content: strings.ToValidUTF8(content, "?"),
+		Time:    t,
+		Content: strings.ToValidUTF8(r.logReplacer.Replace(content), "?"),
 	}
 }
 

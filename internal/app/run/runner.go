@@ -607,7 +607,8 @@ func (r *Runner) registerExternalCacheJob(token string, cred artifactcache.JobCr
 	}); err != nil {
 		log.Warnf("cache external_server register failed (%s): %v", base, err)
 		if reporter != nil {
-			reporter.Logf("::warning::cache external_server register failed (%s): %v — cache requests from this job will be unauthenticated and likely return 401", base, err)
+			reporter.Logf("::warning::%s", runner.EscapeCommandData(fmt.Sprintf(
+				"cache external_server register failed (%s): %v — cache requests from this job will be unauthenticated and likely return 401", base, err)))
 		}
 	} else {
 		resultsURL, _ = body["results_url"].(string) // absent from a server too old to forward
@@ -617,7 +618,8 @@ func (r *Runner) registerExternalCacheJob(token string, cred artifactcache.JobCr
 			map[string]any{"token": token}); err != nil {
 			log.Warnf("cache external_server revoke failed (%s): %v", base, err)
 			if reporter != nil {
-				reporter.Logf("::warning::cache external_server revoke failed (%s): %v", base, err)
+				reporter.Logf("::warning::%s", runner.EscapeCommandData(fmt.Sprintf(
+					"cache external_server revoke failed (%s): %v", base, err)))
 			}
 		}
 	}, resultsURL

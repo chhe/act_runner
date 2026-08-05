@@ -72,9 +72,12 @@ func TestReporter_parseLogRow(t *testing.T) {
 			"Debug enabled", true,
 			[]string{
 				"::debug::GitHub Actions runtime token access controls",
+				// Left escaped: the web UI decodes it, and a real newline would not survive storage.
+				"::debug::first%0Asecond",
 			},
 			[]string{
-				"GitHub Actions runtime token access controls",
+				"::debug::GitHub Actions runtime token access controls",
+				"::debug::first%0Asecond",
 			},
 		},
 		{
@@ -86,31 +89,46 @@ func TestReporter_parseLogRow(t *testing.T) {
 				"<nil>",
 			},
 		},
+		// The three annotation levels share one code path, so the property shapes are only
+		// exercised under "error"; notice and warning just prove the level token round-trips.
 		{
 			"notice", false,
 			[]string{
-				"::notice file=file.name,line=42,endLine=48,title=Cool Title::Gosh, that's not going to work",
+				"::notice::Gosh, that's not going to work",
 			},
 			[]string{
-				"::notice file=file.name,line=42,endLine=48,title=Cool Title::Gosh, that's not going to work",
+				"::notice::Gosh, that's not going to work",
 			},
 		},
 		{
 			"warning", false,
 			[]string{
-				"::warning file=file.name,line=42,endLine=48,title=Cool Title::Gosh, that's not going to work",
+				"::warning::Gosh, that's not going to work",
 			},
 			[]string{
-				"::warning file=file.name,line=42,endLine=48,title=Cool Title::Gosh, that's not going to work",
+				"::warning::Gosh, that's not going to work",
 			},
 		},
 		{
 			"error", false,
 			[]string{
 				"::error file=file.name,line=42,endLine=48,title=Cool Title::Gosh, that's not going to work",
+				"::error::Gosh, that's not going to work",
+				"::error file=file.name,line=42,col=7::Gosh, that's not going to work",
+				// The message keeps its own '::', the property list ends at the first one.
+				"::error file=main.cpp,line=12::no member named 'foo' in 'std::vector<int>'",
+				// GitHub matches property names case-insensitively.
+				"::error File=file.name,Line=42,Col=7::Gosh, that's not going to work",
+				// Only the property separators are decoded here, %25/%0A are left for the web UI.
+				"::error file=a%3Ab.go,title=100%252C::still %25 escaped%0Aand multi-line",
 			},
 			[]string{
-				"::error file=file.name,line=42,endLine=48,title=Cool Title::Gosh, that's not going to work",
+				"::error::file.name:42: Cool Title: Gosh, that's not going to work",
+				"::error::Gosh, that's not going to work",
+				"::error::file.name:42:7: Gosh, that's not going to work",
+				"::error::main.cpp:12: no member named 'foo' in 'std::vector<int>'",
+				"::error::file.name:42:7: Gosh, that's not going to work",
+				"::error::a:b.go: 100%252C: still %25 escaped%0Aand multi-line",
 			},
 		},
 		{
@@ -150,6 +168,24 @@ func TestReporter_parseLogRow(t *testing.T) {
 			},
 		},
 		{
+			// a token naming a real command must still resume
+			"stop-commands with a command-named token", false,
+			[]string{
+				"::stop-commands::add-mask",
+				"::set-output name=x::suppressed",
+				"::add-mask::",
+				"::add-mask::masked",
+				"masked",
+			},
+			[]string{
+				"<nil>",
+				"::set-output name=x::suppressed",
+				"<nil>",
+				"<nil>",
+				"***",
+			},
+		},
+		{
 			"unknown command", false,
 			[]string{
 				"::set-mask::foo",
@@ -176,6 +212,19 @@ func TestReporter_parseLogRow(t *testing.T) {
 				assert.Equal(t, tt.want[idx], got)
 			}
 		})
+	}
+}
+
+// Both add-mask forms must register the secret and drop their own row: the runner forwards
+// the raw line, so failing to consume it writes the secret straight to the job log.
+func TestReporter_parseLogRowAddMask(t *testing.T) {
+	for _, line := range []string{"::add-mask::supersecret", "##[add-mask]supersecret"} {
+		r := &Reporter{logReplacer: strings.NewReplacer()}
+
+		assert.Nil(t, r.parseLogRow(&log.Entry{Message: line}), line)
+
+		row := r.parseLogRow(&log.Entry{Message: "using supersecret now"})
+		assert.Equal(t, "using *** now", row.Content, line)
 	}
 }
 
@@ -1013,7 +1062,7 @@ func TestReporter_Result(t *testing.T) {
 }
 
 func TestReporter_SetOutputs(t *testing.T) {
-	r := &Reporter{state: &runnerv1.TaskState{}}
+	r := &Reporter{state: &runnerv1.TaskState{}, logReplacer: strings.NewReplacer()}
 
 	r.SetOutputs(map[string]string{"foo": "bar"})
 	got, ok := r.outputs["foo"]

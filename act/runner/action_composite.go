@@ -186,10 +186,10 @@ func (rc *RunContext) compositeExecutor(action *model.Action) *compositeSteps {
 			err := rc.newCompositeCommandExecutor(step.main())(ctx)
 
 			if err != nil {
-				logger.Errorf("%v", err)
+				logger.Errorf("##[error]%s", EscapeCommandData(err.Error()))
 				common.SetJobError(ctx, err)
 			} else if ctx.Err() != nil {
-				logger.Errorf("%v", ctx.Err())
+				logger.Errorf("##[error]%s", EscapeCommandData(ctx.Err().Error()))
 				common.SetJobError(ctx, ctx.Err())
 			}
 			return nil
@@ -248,10 +248,10 @@ func newCompositeStepLogExecutor(runStep common.Executor, stepID string) common.
 		logger := common.Logger(ctx)
 		err := runStep(ctx)
 		if err != nil {
-			logger.Errorf("%v", err)
+			logger.Errorf("##[error]%s", EscapeCommandData(err.Error()))
 			common.SetJobError(ctx, err)
 		} else if ctx.Err() != nil {
-			logger.Errorf("%v", ctx.Err())
+			logger.Errorf("##[error]%s", EscapeCommandData(ctx.Err().Error()))
 			common.SetJobError(ctx, ctx.Err())
 		}
 		return nil

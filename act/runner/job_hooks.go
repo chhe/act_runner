@@ -45,7 +45,7 @@ func (rc *RunContext) runJobHook(ctx context.Context, hookPath, name string) err
 	cmd, shell := hookCommand(hookPath)
 	rawLogger := common.Logger(ctx).WithField(rawOutputField, true)
 	defer rawLogger.Infof("::endgroup::")
-	rawLogger.Infof("::group::Run '%s'", escapeCommandData(hookPath))
+	rawLogger.Infof("::group::Run '%s'", EscapeCommandData(hookPath))
 	rawLogger.Infof("A %s hook has been configured by the runner administrator", name)
 	if shell != "" {
 		rawLogger.Infof("shell: %s", shell)

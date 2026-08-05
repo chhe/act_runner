@@ -250,7 +250,7 @@ func AppendSecretMasker(oldnew []string, v string) []string {
 			ret = append(ret, tm, "***")
 			// command data reaches the log escaped, so "pass%word" also arrives as "pass%25word"
 			if strings.ContainsAny(tm, "%\r\n") {
-				ret = append(ret, escapeCommandData(tm), "***")
+				ret = append(ret, EscapeCommandData(tm), "***")
 			}
 		}
 	}

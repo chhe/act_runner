@@ -18,6 +18,7 @@ import (
 	"gitea.com/gitea/runner/act/model"
 
 	"github.com/kballard/go-shellquote"
+	"github.com/sirupsen/logrus"
 	yaml "go.yaml.in/yaml/v4"
 )
 
@@ -63,7 +64,7 @@ func (sr *stepRun) printRunScriptActionDetails(ctx context.Context) {
 
 	normalized := strings.TrimRight(strings.ReplaceAll(sr.interpolatedScript, "\r\n", "\n"), "\n")
 
-	rawLogger.Infof("::group::Run %s", escapeCommandData(sr.runScriptGroupTitle(normalized)))
+	rawLogger.Infof("::group::Run %s", EscapeCommandData(sr.runScriptGroupTitle(normalized)))
 
 	if normalized != "" {
 		for line := range strings.SplitSeq(normalized, "\n") {
@@ -90,12 +91,12 @@ func printRunActionHeader(ctx context.Context, step *model.Step, env map[string]
 	if step.Name != "" {
 		title = step.Name
 	}
-	rawLogger.Infof("::group::Run %s", escapeCommandData(title))
+	rawLogger.Infof("::group::Run %s", EscapeCommandData(title))
 
 	if len(step.With) > 0 {
 		rawLogger.Infof("with:")
 		for _, k := range slices.Sorted(maps.Keys(step.With)) {
-			rawLogger.Infof("  %s: %s", k, step.With[k])
+			logKeyedValue(rawLogger, k, step.With[k])
 		}
 	}
 
@@ -129,7 +130,17 @@ func printStepEnvBlock(ctx context.Context, step *model.Step, env map[string]str
 		if caseInsensitive {
 			lookupKey = strings.ToUpper(k)
 		}
-		rawLogger.Infof("  %s: %s", k, envLookup[lookupKey])
+		logKeyedValue(rawLogger, k, envLookup[lookupKey])
+	}
+}
+
+// logKeyedValue prints one row per line of value: Gitea stores one log row per line, so an
+// embedded newline would reach the user as a literal "\n".
+func logKeyedValue(rawLogger *logrus.Entry, key, value string) {
+	lines := strings.Split(strings.ReplaceAll(value, "\r\n", "\n"), "\n")
+	rawLogger.Infof("  %s: %s", key, lines[0])
+	for _, line := range lines[1:] {
+		rawLogger.Infof("    %s", line)
 	}
 }
 

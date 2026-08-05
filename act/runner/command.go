@@ -6,6 +6,7 @@ package runner
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -45,17 +46,24 @@ func (rc *RunContext) commandHandler(ctx context.Context) common.LineHandler {
 			return true
 		}
 
-		if resumeCommand != "" && command != resumeCommand {
+		if resumeCommand != "" {
 			// There should not be any emojis in the log output for Gitea.
-			// The code in the switch statement is the same.
 			// Return true (not false) so the line still reaches the raw_output
 			// log handler; otherwise everything between ::stop-commands:: and
 			// its end token is silently dropped from the step log.
 			logger.Infof("%s", line)
+			// Resumed here rather than from the switch, because the end token is arbitrary
+			// and a token naming a real command would otherwise never resume.
+			if command == resumeCommand {
+				resumeCommand = ""
+			}
 			return true
 		}
 		arg = UnescapeCommandData(arg)
 		kvPairs = unescapeKvPairs(kvPairs)
+		if (command == "set-env" || command == "add-path") && rc.refuseUnsecureCommand(ctx, command) {
+			return true
+		}
 		switch command {
 		case "set-env":
 			rc.setEnv(ctx, kvPairs, arg)
@@ -63,33 +71,72 @@ func (rc *RunContext) commandHandler(ctx context.Context) common.LineHandler {
 			rc.setOutput(ctx, kvPairs, arg)
 		case "add-path":
 			rc.addPath(ctx, arg)
-		case "debug":
-			logger.Infof("%s", line)
-		case "warning":
-			logger.Infof("%s", line)
-		case "error":
-			logger.Infof("%s", line)
 		case "add-mask":
 			rc.AddMask(arg)
 			logger.Infof("%s", "***")
+			// The raw line is still forwarded, carrying the secret: that is how the reporter
+			// learns the mask, and it drops the row rather than writing it out.
 		case "stop-commands":
 			resumeCommand = arg
-			logger.Infof("%s", line)
-		case resumeCommand:
-			resumeCommand = ""
 			logger.Infof("%s", line)
 		case "save-state":
 			logger.Infof("%s", line)
 			rc.saveState(ctx, kvPairs, arg)
-		case "add-matcher":
-			logger.Infof("%s", line)
 		default:
+			// ::debug::, ::error::, ::warning::, ::add-matcher:: and anything unrecognised are
+			// passed through for the reporter and Gitea's web UI to render.
 			logger.Infof("%s", line)
 		}
 
 		// return true to let gitea's logger handle these special outputs also
 		return true
 	}
+}
+
+const allowUnsecureCommandsVar = "ACTIONS_ALLOW_UNSECURE_COMMANDS"
+
+// refuseUnsecureCommand reports whether a deprecated ::set-env:: or ::add-path:: command must
+// not run, recording the error that fails the step. GitHub disabled both because a step that
+// echoes untrusted content can use them to set NODE_OPTIONS or PATH for every later step.
+func (rc *RunContext) refuseUnsecureCommand(ctx context.Context, command string) bool {
+	if rc.allowUnsecureCommandsOptIn() {
+		return false
+	}
+
+	// The step executor logs the failure itself, so keep this line's wording distinct.
+	common.Logger(ctx).WithField(rawOutputField, true).Errorf("##[error]%s", EscapeCommandData(fmt.Sprintf(
+		"The `%s` command is disabled: it can set the environment of every later step from untrusted output. "+
+			"Write to $GITHUB_ENV or $GITHUB_PATH instead, or set ACTIONS_ALLOW_UNSECURE_COMMANDS to allow it",
+		command)))
+
+	rc.unsecureCommandMu.Lock()
+	defer rc.unsecureCommandMu.Unlock()
+	if rc.unsecureCommandErr == nil {
+		rc.unsecureCommandErr = fmt.Errorf("the `%s` workflow command is disabled", command)
+	}
+	return true
+}
+
+// allowUnsecureCommandsOptIn reports whether the workflow itself asked for the deprecated
+// commands, from any env scope, as it can on GitHub.
+func (rc *RunContext) allowUnsecureCommandsOptIn() bool {
+	return isTruthyEnv(rc.currentStepEnv()[allowUnsecureCommandsVar]) ||
+		isTruthyEnv(rc.Env[allowUnsecureCommandsVar]) ||
+		isTruthyEnv(rc.GlobalEnv[allowUnsecureCommandsVar])
+}
+
+// isTruthyEnv mirrors GitHub's bool.TryParse: only "true", in any casing.
+func isTruthyEnv(v string) bool {
+	return strings.EqualFold(strings.TrimSpace(v), "true")
+}
+
+// takeUnsecureCommandError returns and clears the error left by a refused command.
+func (rc *RunContext) takeUnsecureCommandError() error {
+	rc.unsecureCommandMu.Lock()
+	defer rc.unsecureCommandMu.Unlock()
+	err := rc.unsecureCommandErr
+	rc.unsecureCommandErr = nil
+	return err
 }
 
 func (rc *RunContext) setEnv(ctx context.Context, kvPairs map[string]string, arg string) {
@@ -161,9 +208,9 @@ var (
 	commandPropertyUnescaper = strings.NewReplacer("%25", "%", "%0D", "\r", "%0A", "\n", "%3A", ":", "%2C", ",")
 )
 
-// escapeCommandData encodes the data part of a "::cmd::" or "##[cmd]" line the runner writes itself,
+// EscapeCommandData encodes the data part of a "::cmd::" or "##[cmd]" line the runner writes itself,
 // so the log renderer decodes it back. Lines forwarded from step output are already escaped.
-func escapeCommandData(arg string) string {
+func EscapeCommandData(arg string) string {
 	return commandDataEscaper.Replace(arg)
 }
 

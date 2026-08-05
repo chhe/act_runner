@@ -165,9 +165,22 @@ func runStepExecutor(step step, stage stepStage, executor common.Executor) commo
 		}
 		_ = rc.JobContainer.Copy(actPath, files...)(ctx)
 
+		// The command handler needs the step's env to judge ACTIONS_ALLOW_UNSECURE_COMMANDS.
+		// Cloned: the step executor keeps writing to its own env map after this point, on a
+		// different goroutine from the command handler that reads it.
+		rc.setCurrentStepEnv(maps0.Clone(*step.getEnv()))
+		defer rc.setCurrentStepEnv(nil)
+		_ = rc.takeUnsecureCommandError() // a refusal from before any step belongs to no step
+
 		timeoutctx, cancelTimeOut := evaluateStepTimeout(ctx, rc.ExprEval, stepModel)
 		defer cancelTimeOut()
 		err = executor(timeoutctx)
+		// Always take it, so the job-scoped error cannot leak onto a later step. A refusal
+		// fails the step as it does on GitHub, but the executor's own error wins.
+		insecureErr := rc.takeUnsecureCommandError()
+		if err == nil {
+			err = insecureErr
+		}
 
 		if err == nil {
 			logger.WithField("stepResult", stepResult.Outcome).Infof("Success - %s %s", stage, stepString)
@@ -181,7 +194,7 @@ func runStepExecutor(step step, stage stepStage, executor common.Executor) commo
 			}
 
 			if continueOnError {
-				logger.Errorf("##[error]%s", escapeCommandData(err.Error()))
+				logger.Errorf("##[error]%s", EscapeCommandData(err.Error()))
 				logger.Infof("Failed but continue next step")
 				err = nil
 				stepResult.Conclusion = model.StepStatusSuccess

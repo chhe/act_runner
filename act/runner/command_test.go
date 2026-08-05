@@ -16,12 +16,18 @@ import (
 
 	"github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+// unsecureRC opts into ::set-env:: and ::add-path::, which are refused without it.
+func unsecureRC() *RunContext {
+	return &RunContext{Env: map[string]string{allowUnsecureCommandsVar: "true"}}
+}
 
 func TestSetEnv(t *testing.T) {
 	a := assert.New(t)
 	ctx := context.Background()
-	rc := new(RunContext)
+	rc := unsecureRC()
 	handler := rc.commandHandler(ctx)
 
 	handler("::set-env name=x::valz\n")
@@ -31,7 +37,7 @@ func TestSetEnv(t *testing.T) {
 func TestStopCommandsKeepsSuppressedLinesInLog(t *testing.T) {
 	a := assert.New(t)
 	ctx := context.Background()
-	rc := new(RunContext)
+	rc := unsecureRC()
 	handler := rc.commandHandler(ctx)
 
 	// Stop command processing until the matching end token is seen.
@@ -84,7 +90,7 @@ func TestSetOutput(t *testing.T) {
 func TestAddpath(t *testing.T) {
 	a := assert.New(t)
 	ctx := context.Background()
-	rc := new(RunContext)
+	rc := unsecureRC()
 	handler := rc.commandHandler(ctx)
 
 	handler("::add-path::/zoo\n")
@@ -99,7 +105,7 @@ func TestStopCommands(t *testing.T) {
 
 	a := assert.New(t)
 	ctx := common.WithLogger(context.Background(), logger)
-	rc := new(RunContext)
+	rc := unsecureRC()
 	handler := rc.commandHandler(ctx)
 
 	handler("::set-env name=x::valz\n")
@@ -119,10 +125,26 @@ func TestStopCommands(t *testing.T) {
 	a.Contains(messages, "::set-env name=x::abcd\n")
 }
 
+// The end token is arbitrary, so one that happens to name a real command must still resume
+// rather than being swallowed by that command's case.
+func TestStopCommandsResumesOnCommandNamedToken(t *testing.T) {
+	a := assert.New(t)
+	rc := unsecureRC()
+	handler := rc.commandHandler(context.Background())
+
+	handler("::stop-commands::add-mask\n")
+	handler("::set-env name=x::suppressed\n")
+	a.NotContains(rc.Env, "x")
+
+	handler("::add-mask::\n")
+	handler("::set-env name=x::resumed\n")
+	a.Equal("resumed", rc.Env["x"])
+}
+
 func TestAddpathADO(t *testing.T) {
 	a := assert.New(t)
 	ctx := context.Background()
-	rc := new(RunContext)
+	rc := unsecureRC()
 	handler := rc.commandHandler(ctx)
 
 	handler("##[add-path]/zoo\n")
@@ -218,6 +240,44 @@ func TestSaveState(t *testing.T) {
 func TestEscapeCommandData(t *testing.T) {
 	a := assert.New(t)
 
-	a.Equal("a%25b%0Dc%0Ad%250A", escapeCommandData("a%b\rc\nd%0A"))
+	a.Equal("a%25b%0Dc%0Ad%250A", EscapeCommandData("a%b\rc\nd%0A"))
 	a.Equal("a%b\rc\nd%0A", UnescapeCommandData("a%25b%0Dc%0Ad%250A"))
+}
+
+func TestUnsecureCommands(t *testing.T) {
+	tests := []struct {
+		name    string
+		jobEnv  map[string]string
+		stepEnv map[string]string
+		optedIn bool
+	}{
+		{name: "refused with no opt-in"},
+		// GitHub reads the opt-in with bool.TryParse, so "1" is not one.
+		{name: "refused for a value bool.TryParse rejects", jobEnv: map[string]string{allowUnsecureCommandsVar: "1"}},
+		{name: "opted in through the step environment", stepEnv: map[string]string{allowUnsecureCommandsVar: "true"}, optedIn: true},
+		{name: "opted in through the job environment", jobEnv: map[string]string{allowUnsecureCommandsVar: "TRUE"}, optedIn: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := assert.New(t)
+			rc := &RunContext{Env: tt.jobEnv}
+			rc.setCurrentStepEnv(tt.stepEnv)
+			handler := rc.commandHandler(context.Background())
+
+			handler("::set-env name=x::valz\n")
+			handler("::add-path::/opt/bin\n")
+
+			if !tt.optedIn {
+				a.Empty(rc.Env["x"])
+				a.Empty(rc.ExtraPath)
+				// The refusal fails the step that produced it, once.
+				require.ErrorContains(t, rc.takeUnsecureCommandError(), "set-env")
+				a.NoError(rc.takeUnsecureCommandError())
+				return
+			}
+			a.Equal("valz", rc.Env["x"])
+			a.Equal([]string{"/opt/bin"}, rc.ExtraPath)
+			a.NoError(rc.takeUnsecureCommandError())
+		})
+	}
 }

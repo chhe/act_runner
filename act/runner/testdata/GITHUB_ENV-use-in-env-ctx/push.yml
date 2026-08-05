@@ -3,6 +3,7 @@ jobs:
   _:
     runs-on: ubuntu-latest
     env:
+      ACTIONS_ALLOW_UNSECURE_COMMANDS: 'true'
       MYGLOBALENV3: myglobalval3
     steps:
     - uses: actions/checkout@v4
