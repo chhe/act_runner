@@ -5,10 +5,8 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"os"
 
-	"gitea.com/gitea/runner/internal/pkg/config"
 	"gitea.com/gitea/runner/internal/pkg/ver"
 
 	"github.com/spf13/cobra"
@@ -23,7 +21,7 @@ func Execute(ctx context.Context) {
 		SilenceUsage: true,
 	}
 	configFile := ""
-	rootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "", "Config file path")
+	rootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "", "Config file path. `config` subcommands fall back to config.yaml in the working directory or next to the executable")
 
 	// ./gitea-runner register
 	var regArgs registerArgs
@@ -61,14 +59,12 @@ func Execute(ctx context.Context) {
 	rootCmd.AddCommand(loadBugReportCmd())
 
 	// ./gitea-runner config
-	rootCmd.AddCommand(&cobra.Command{
-		Use:   "generate-config",
-		Short: "Generate an example config file",
-		Args:  cobra.MaximumNArgs(0),
-		Run: func(_ *cobra.Command, _ []string) {
-			fmt.Printf("%s", config.Example)
-		},
-	})
+	rootCmd.AddCommand(loadConfigCmd(&configFile))
+
+	// ./gitea-runner generate-config
+	generateConfigCmd := loadGenerateConfigCmd("generate-config")
+	generateConfigCmd.Deprecated = "use `config generate` instead."
+	rootCmd.AddCommand(generateConfigCmd)
 
 	// ./gitea-runner cache-server
 	var cacheArgs cacheServerArgs

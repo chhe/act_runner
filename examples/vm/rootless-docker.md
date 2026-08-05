@@ -52,7 +52,7 @@ export DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock
 - Generate a `gitea-runner` configuration file in the data directory. Edit the file to adjust for the system.
 
 ```bash
- gitea-runner generate-config >/home/rootless/gitea-runner/config
+ gitea-runner config generate >/home/rootless/gitea-runner/config
 ```
 
 - Create a new user-level`systemd` unit file as `/home/rootless/.config/systemd/user/gitea-runner.service` with the following contents:

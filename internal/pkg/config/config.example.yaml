@@ -1,7 +1,7 @@
 # Example configuration file, it's safe to copy this as the default config file without any modification.
 
 # You don't have to copy this file to your instance,
-# just run `./gitea-runner generate-config > config.yaml` to generate a config file.
+# just run `./gitea-runner config generate > config.yaml` to generate a config file.
 
 # Logging for the runner process itself (messages printed to stderr).
 # This does not control how workflow step output is streamed to the Gitea UI;
@@ -176,7 +176,7 @@ container:
   # network is labelled com.gitea.runner.uuid=<this runner's uuid>, which is how the idle
   # cleanup tells its own leftovers apart from those of other runners on the same daemon.
   network_create_options:
-    enable_ipv4: true  # Omit to use Docker's default (IPv4 enabled). Set false to disable IPv4.
+    enable_ipv4: true # Omit to use Docker's default (IPv4 enabled). Set false to disable IPv4.
     enable_ipv6: false # Omit to use Docker's default (IPv6 disabled). Enabling it requires dockerd started with --ipv6.
   # Whether to use privileged mode or not when launching task containers (privileged mode is required for Docker-in-Docker).
   privileged: false

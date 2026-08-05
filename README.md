@@ -132,8 +132,10 @@ Same idea as `dind`, but built on `docker:dind-rootless` so the bundled daemon a
 The runner is configured with a YAML file. Generate a starting point (this matches what ships in the tree):
 
 ```bash
-./gitea-runner generate-config > config.yaml
+./gitea-runner config generate > config.yaml
 ```
+
+> The top-level `generate-config` command still does the same thing, but is deprecated in favour of `config generate`.
 
 Pass it with `-c` / `--config` on any command that loads configuration (`register`, `daemon`, `cache-server`):
 
@@ -143,7 +145,26 @@ Pass it with `-c` / `--config` on any command that loads configuration (`registe
 ./gitea-runner -c config.yaml cache-server
 ```
 
-Every option is described in [config.example.yaml](internal/pkg/config/config.example.yaml) (the same content `generate-config` prints).
+Every option is described in [config.example.yaml](internal/pkg/config/config.example.yaml) (the same content `config generate` prints).
+
+#### Editing a config file
+
+`config` changes an existing file in place, keeping its comments and key order, which is handy in provisioning scripts:
+
+```bash
+./gitea-runner -c config.yaml config set runner.capacity 4
+./gitea-runner -c config.yaml config set runner.timeout 90m  # written as 1h30m0s
+./gitea-runner -c config.yaml config set runner.envs.MY_VAR value
+./gitea-runner -c config.yaml config add runner.labels 'ubuntu:docker://node:22'
+./gitea-runner -c config.yaml config remove runner.labels 'ubuntu:docker://node:22'
+./gitea-runner -c config.yaml config get runner.labels
+```
+
+`-c` is optional for these subcommands: without it they use `config.yaml` (or `config.yml`) from the working directory, falling back to the directory of the `gitea-runner` binary, and print which file they picked to stderr.
+
+Keys are the dotted YAML path and are validated against the known options, so a typo is rejected instead of being written. `add` and `remove` only work on list options such as `runner.labels` and `container.valid_volumes`, and fail if the value is already present or missing. `set` replaces the whole list when given several values.
+
+The file is re-encoded on every edit, so indentation is normalised to two spaces and blank lines inside a section are dropped.
 
 #### Without a config file
 

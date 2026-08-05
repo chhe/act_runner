@@ -16,7 +16,7 @@ the runner as a background service on a systemd host.
    `.runner` file ends up in the working directory:
 
    ```bash
-   sudo -u gitea-runner gitea-runner generate-config > /etc/gitea-runner/config.yaml
+   sudo -u gitea-runner gitea-runner config generate > /etc/gitea-runner/config.yaml
    cd /var/lib/gitea-runner
    sudo -u gitea-runner gitea-runner register --config /etc/gitea-runner/config.yaml
    ```
