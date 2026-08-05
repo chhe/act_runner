@@ -6,12 +6,14 @@ package container
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
 	"gitea.com/gitea/runner/act/common"
 
 	"github.com/docker/go-connections/nat"
+	"github.com/moby/moby/api/types/container"
 )
 
 // ExitCodeError reports a non-zero process exit code from a container command.
@@ -57,6 +59,32 @@ type FileEntry struct {
 	Body string
 }
 
+// Container and healthcheck states, as plain strings so a caller of Info needs no docker
+// SDK of its own.
+const (
+	StateRunning = string(container.StateRunning)
+
+	HealthNone      = string(container.NoHealthcheck)
+	HealthStarting  = string(container.Starting)
+	HealthHealthy   = string(container.Healthy)
+	HealthUnhealthy = string(container.Unhealthy)
+)
+
+// ErrContainerNotFound reports a container the daemon no longer knows. Its text is a
+// fragment, missingContainerError composes it into the message every operation shares.
+var ErrContainerNotFound = errors.New("does not exist")
+
+// Info is a snapshot of a container, as of one inspect.
+type Info struct {
+	ID       string
+	State    string // the docker container state: "created", "running", "exited", ...
+	ExitCode int
+	Health   string // one of the Health* constants
+	// HealthOutput is the last healthcheck probe's output.
+	HealthOutput string
+	Ports        map[string]string // container port ("5432") to the host port it is published on
+}
+
 // Container for managing docker run containers
 type Container interface {
 	Create(capAdd, capDrop []string) common.Executor
@@ -65,6 +93,8 @@ type Container interface {
 	CopyTarStream(ctx context.Context, destPath string, tarStream io.Reader) error
 	CopyDir(destPath, srcPath string, useGitIgnore bool) common.Executor
 	GetContainerArchive(ctx context.Context, srcPath string) (io.ReadCloser, error)
+	Inspect(ctx context.Context) (*Info, error)
+	DumpLogs(ctx context.Context) error
 	Pull(forcePull bool) common.Executor
 	Start(attach bool) common.Executor
 	Exec(command []string, env map[string]string, user, workdir string) common.Executor

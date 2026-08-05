@@ -230,6 +230,26 @@ Whenever the resulting labels differ from the ones in the registration file, the
 
 > **Note:** A runner that only exposes `host` labels still needs access to a Docker daemon (e.g. a mounted `/var/run/docker.sock`) whenever a job uses a `docker://` action or a service container. `host` labels only change where the job's own steps run; container-based steps and actions are still executed with Docker.
 
+#### Service containers
+
+A job's `services` are started before its steps run. When a service's image or its `options` declare a healthcheck, the runner waits for it to report healthy, so a workflow does not have to poll for its own services:
+
+```yaml
+services:
+  postgres:
+    image: postgres:17
+    options: >-
+      --health-cmd pg_isready
+      --health-interval 5s
+      --health-retries 10
+```
+
+A service that reports unhealthy fails the job right away, with its container log. One that never becomes healthy fails it after `container.service_ready_timeout` (default `5m`, negative disables the wait). A service that exits without declaring a healthcheck only gets its log and a warning.
+
+A job in a container reaches a service by its id on the job network, on the port the service listens on, for example `psql -h postgres -p 5432`. The started containers also fill the `job` context: `job.container.{id,network}` and `job.services.<id>.{id,network,ports}`, where `ports` maps a container port to the host port Docker published it on, for the services that publish one.
+
+Unlike GitHub, a job whose steps run on the host (a `host` label without `container:`) starts no service containers, so `job.services` and `job.container` stay empty. Give such a job a `container:` when it needs services.
+
 #### Proxy
 
 Set these variables in the runner's environment, with systemd `Environment=`, `docker run -e`, or Kubernetes `env:`:

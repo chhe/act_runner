@@ -198,6 +198,109 @@ func (cr *containerReference) GetContainerArchive(ctx context.Context, srcPath s
 	return result.Content, nil
 }
 
+// Inspect resolves the container by name when its id is not known yet. One the daemon no
+// longer knows is reported as ErrContainerNotFound.
+func (cr *containerReference) Inspect(ctx context.Context) (*Info, error) {
+	if common.Dryrun(ctx) {
+		return &Info{Health: HealthNone, Ports: map[string]string{}}, nil
+	}
+	if err := cr.connect()(ctx); err != nil {
+		return nil, err
+	}
+	if cr.id == "" { // a known id is trusted, find() would spend a call validating it
+		if err := cr.find()(ctx); err != nil {
+			return nil, err
+		}
+	}
+	if cr.id == "" {
+		return nil, cr.missingContainerError("inspect it")
+	}
+
+	result, err := cr.cli.ContainerInspect(ctx, cr.id, client.ContainerInspectOptions{})
+	if cerrdefs.IsNotFound(err) {
+		return nil, cr.missingContainerError("inspect it")
+	} else if err != nil {
+		return nil, err
+	}
+	return containerInfoFromInspect(result.Container), nil
+}
+
+// DumpLogs copies the container's log so far to its output writers.
+func (cr *containerReference) DumpLogs(ctx context.Context) error {
+	if common.Dryrun(ctx) {
+		return nil
+	}
+	if err := cr.connect()(ctx); err != nil {
+		return err
+	}
+	if cr.id == "" {
+		return cr.missingContainerError("read its logs")
+	}
+
+	logs, err := cr.cli.ContainerLogs(ctx, cr.id, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true})
+	if err != nil {
+		return err
+	}
+	defer logs.Close()
+	return cr.copyOutput(logs)
+}
+
+// copyOutput writes a container stream to the writers the container was created with,
+// demultiplexing it unless the container has a TTY, which sends a single raw stream.
+func (cr *containerReference) copyOutput(stream io.Reader) error {
+	outWriter := cr.input.Stdout
+	if outWriter == nil {
+		outWriter = os.Stdout
+	}
+	errWriter := cr.input.Stderr
+	if errWriter == nil {
+		errWriter = os.Stderr
+	}
+
+	var err error
+	if !cr.input.AllocatePTY || os.Getenv("NORAW") != "" {
+		_, err = stdcopy.StdCopy(outWriter, errWriter, stream)
+	} else {
+		_, err = io.Copy(outWriter, stream)
+	}
+	// Flush any buffered, not-yet-newline-terminated trailing line so the final line of
+	// the output is not lost when it is not newline-terminated.
+	common.FlushWriter(outWriter)
+	common.FlushWriter(errWriter)
+	return err
+}
+
+func containerInfoFromInspect(inspect container.InspectResponse) *Info {
+	info := &Info{
+		ID:     inspect.ID,
+		Health: HealthNone,
+		Ports:  map[string]string{}, // an empty map, never null, in the expression context
+	}
+
+	if state := inspect.State; state != nil {
+		info.State = string(state.Status)
+		info.ExitCode = state.ExitCode
+		if health := state.Health; health != nil {
+			info.Health = string(health.Status)
+			if len(health.Log) > 0 {
+				info.HealthOutput = strings.TrimSpace(health.Log[len(health.Log)-1].Output)
+			}
+		}
+	}
+
+	if settings := inspect.NetworkSettings; settings != nil {
+		for port, bindings := range settings.Ports {
+			for _, binding := range bindings { // the last binding wins, a port maps to one host port
+				if binding.HostPort != "" {
+					info.Ports[port.Port()] = binding.HostPort
+				}
+			}
+		}
+	}
+
+	return info
+}
+
 func (cr *containerReference) UpdateFromEnv(srcPath string, env *map[string]string) common.Executor {
 	return parseEnvFile(cr, srcPath, env).IfNot(common.Dryrun)
 }
@@ -343,10 +446,10 @@ func (cr *containerReference) Close() common.Executor {
 	}
 }
 
-// missingContainerError is the shared "container X does not exist" error
-// used by ops that need a live cr.id.
+// missingContainerError is the shared "container X does not exist" error used by ops that
+// need a live cr.id, wrapping ErrContainerNotFound so a caller can tell it from a failing daemon.
 func (cr *containerReference) missingContainerError(format string, args ...any) error {
-	return fmt.Errorf("container %q does not exist; cannot "+format, append([]any{cr.input.Name}, args...)...)
+	return fmt.Errorf("container %q %w; cannot "+format, append([]any{cr.input.Name, ErrContainerNotFound}, args...)...)
 }
 
 func (cr *containerReference) find() common.Executor {
@@ -737,7 +840,7 @@ func (cr *containerReference) exec(cmd []string, env map[string]string, user, wo
 		}
 		defer resp.Close()
 
-		err = cr.waitForCommand(ctx, isTerminal, resp.HijackedResponse, idResp, user, workdir)
+		err = cr.waitForCommand(ctx, resp.HijackedResponse, idResp, user, workdir)
 		if err != nil {
 			return err
 		}
@@ -795,7 +898,7 @@ func (cr *containerReference) tryReadGID() common.Executor {
 	return cr.tryReadID("-g", func(id int) { cr.GID = id })
 }
 
-func (cr *containerReference) waitForCommand(ctx context.Context, isTerminal bool, resp client.HijackedResponse, _ client.ExecCreateResult, _, _ string) error {
+func (cr *containerReference) waitForCommand(ctx context.Context, resp client.HijackedResponse, _ client.ExecCreateResult, _, _ string) error {
 	logger := common.Logger(ctx)
 
 	// Buffered so the copy goroutine never blocks on send if the grace-period
@@ -803,28 +906,7 @@ func (cr *containerReference) waitForCommand(ctx context.Context, isTerminal boo
 	cmdResponse := make(chan error, 1)
 
 	go func() {
-		var outWriter io.Writer
-		outWriter = cr.input.Stdout
-		if outWriter == nil {
-			outWriter = os.Stdout
-		}
-		errWriter := cr.input.Stderr
-		if errWriter == nil {
-			errWriter = os.Stderr
-		}
-
-		var err error
-		if !isTerminal || os.Getenv("NORAW") != "" {
-			_, err = stdcopy.StdCopy(outWriter, errWriter, resp.Reader)
-		} else {
-			_, err = io.Copy(outWriter, resp.Reader)
-		}
-		// Flush any buffered, not-yet-newline-terminated trailing line so the
-		// final line of a command's output is not lost (e.g. an error message
-		// printed without a trailing newline before the process exits).
-		common.FlushWriter(outWriter)
-		common.FlushWriter(errWriter)
-		cmdResponse <- err
+		cmdResponse <- cr.copyOutput(resp.Reader)
 	}()
 
 	select {
@@ -1059,33 +1141,11 @@ func (cr *containerReference) attach() common.Executor {
 		if err != nil {
 			return fmt.Errorf("failed to attach to container: %w", err)
 		}
-		isTerminal := cr.input.AllocatePTY
-
-		var outWriter io.Writer
-		outWriter = cr.input.Stdout
-		if outWriter == nil {
-			outWriter = os.Stdout
-		}
-		errWriter := cr.input.Stderr
-		if errWriter == nil {
-			errWriter = os.Stderr
-		}
 		done := make(chan struct{})
 		cr.attachDone = done
 		go func() {
 			defer close(done)
-			var copyErr error
-			if !isTerminal || os.Getenv("NORAW") != "" {
-				_, copyErr = stdcopy.StdCopy(outWriter, errWriter, out.Reader)
-			} else {
-				_, copyErr = io.Copy(outWriter, out.Reader)
-			}
-			// Flush any buffered, not-yet-newline-terminated trailing line once
-			// the stream reaches EOF, so the final line of the container's
-			// output is not lost when it is not newline-terminated.
-			common.FlushWriter(outWriter)
-			common.FlushWriter(errWriter)
-			if copyErr != nil {
+			if copyErr := cr.copyOutput(out.Reader); copyErr != nil {
 				common.Logger(ctx).Error(copyErr)
 			}
 		}()

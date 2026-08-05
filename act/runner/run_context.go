@@ -35,6 +35,7 @@ import (
 	"github.com/docker/go-connections/nat"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/opencontainers/selinux/go-selinux"
+	"golang.org/x/sync/errgroup"
 )
 
 // RunContext contains info about current job
@@ -56,7 +57,7 @@ type RunContext struct {
 	IntraActionState    map[string]map[string]string
 	ExprEval            ExpressionEvaluator
 	JobContainer        container.ExecutionsEnvironment
-	ServiceContainers   []container.ExecutionsEnvironment
+	serviceContainers   []*serviceContainer
 	OutputMappings      map[MappableOutput]MappableOutput
 	JobName             string
 	ActionPath          string
@@ -84,12 +85,24 @@ type RunContext struct {
 	// failures. Those failures must still make success() false and failure() true for later
 	// main-step if evaluation.
 	jobFailed bool
+	// empty for a host-mode job, which starts no container
+	jobContainerID string
+	jobNetworkName string
 	// stepEnv is a copy of the running step's environment, so that workflow commands parsed out
 	// of the container's output can be judged against it. Written by runStepExecutor and read on
 	// the log-writer goroutine, hence unsecureCommandMu, which also guards unsecureCommandErr.
 	stepEnv            map[string]string
 	unsecureCommandErr error // refused ::set-env::/::add-path::, turned into a step failure
 	unsecureCommandMu  sync.Mutex
+}
+
+// serviceContainer pairs a service container with the workflow id that keys job.services.
+type serviceContainer struct {
+	name       string
+	image      string
+	container  container.ExecutionsEnvironment
+	logsDumped bool
+	info       *container.Info // last poll, the source of the `job.services` entry
 }
 
 // setCurrentStepEnv records the environment of the step about to run.
@@ -508,7 +521,7 @@ func (rc *RunContext) startJobContainer() common.Executor {
 				Privileged:     rc.Config.Privileged,
 				UsernsMode:     rc.Config.UsernsMode,
 				Platform:       rc.Config.ContainerArchitecture,
-				AutoRemove:     rc.Config.AutoRemove,
+				AutoRemove:     false, // so a dead service's log survives, cleanupJobResources removes it
 				Options:        rc.ExprEval.Interpolate(ctx, spec.Options),
 				NetworkMode:    networkName,
 				NetworkAliases: []string{serviceID},
@@ -516,7 +529,7 @@ func (rc *RunContext) startJobContainer() common.Executor {
 				PortBindings:   portBindings,
 				AllocatePTY:    rc.Config.AllocatePTY,
 			})
-			rc.ServiceContainers = append(rc.ServiceContainers, c)
+			rc.serviceContainers = append(rc.serviceContainers, &serviceContainer{name: serviceID, image: serviceImage, container: c})
 		}
 
 		rc.cleanUpJobContainer = rc.cleanupJobResources(networkName, createAndDeleteNetwork)
@@ -551,6 +564,8 @@ func (rc *RunContext) startJobContainer() common.Executor {
 			return errors.New("Failed to create job container")
 		}
 
+		rc.jobNetworkName = networkName
+
 		defer printStartJobContainerGroup(ctx, image, name, networkName)()
 		return common.NewPipelineExecutor(
 			rc.pullServicesImages(rc.Config.ForcePull),
@@ -558,9 +573,12 @@ func (rc *RunContext) startJobContainer() common.Executor {
 			rc.stopJobContainer(),
 			container.NewDockerNetworkCreateExecutor(networkName, rc.Config.ContainerNetworkCreateOptions).
 				IfBool(createAndDeleteNetwork),
-			rc.startServiceContainers(networkName),
+			rc.startServiceContainers(),
+			rc.reportUnstartedServices(),
+			rc.waitForServiceContainers(),
 			rc.JobContainer.Create(rc.Config.ContainerCapAdd, rc.Config.ContainerCapDrop),
 			rc.JobContainer.Start(false),
+			rc.captureJobContainerInfo(),
 			rc.JobContainer.Copy(rc.JobContainer.GetActPath()+"/", &container.FileEntry{
 				Name: "workflow/event.json",
 				Mode: 0o644,
@@ -585,7 +603,7 @@ func (rc *RunContext) cleanupJobResources(networkName string, createAndDeleteNet
 		if removeJobContainer {
 			errs = append(errs, rc.JobContainer.Remove()(ctx))
 		}
-		if len(rc.ServiceContainers) > 0 {
+		if len(rc.serviceContainers) > 0 {
 			logger.Infof("Cleaning up services for job %s", rc.JobName)
 			if err := rc.stopServiceContainers()(ctx); err != nil {
 				logger.Errorf("Error while cleaning services: %v", err)
@@ -682,21 +700,21 @@ func (rc *RunContext) stopJobContainer() common.Executor {
 func (rc *RunContext) pullServicesImages(forcePull bool) common.Executor {
 	return func(ctx context.Context) error {
 		execs := []common.Executor{}
-		for _, c := range rc.ServiceContainers {
-			execs = append(execs, c.Pull(forcePull))
+		for _, svc := range rc.serviceContainers {
+			execs = append(execs, svc.container.Pull(forcePull))
 		}
 		return common.NewParallelExecutor(len(execs), execs...)(ctx)
 	}
 }
 
-func (rc *RunContext) startServiceContainers(_ string) common.Executor {
+func (rc *RunContext) startServiceContainers() common.Executor {
 	return func(ctx context.Context) error {
 		execs := []common.Executor{}
-		for _, c := range rc.ServiceContainers {
+		for _, svc := range rc.serviceContainers {
 			execs = append(execs, common.NewPipelineExecutor(
-				c.Pull(false),
-				c.Create(rc.Config.ContainerCapAdd, rc.Config.ContainerCapDrop),
-				c.Start(false),
+				svc.container.Pull(false),
+				svc.container.Create(rc.Config.ContainerCapAdd, rc.Config.ContainerCapDrop),
+				svc.container.Start(false),
 			))
 		}
 		return common.NewParallelExecutor(len(execs), execs...)(ctx)
@@ -706,10 +724,156 @@ func (rc *RunContext) startServiceContainers(_ string) common.Executor {
 func (rc *RunContext) stopServiceContainers() common.Executor {
 	return func(ctx context.Context) error {
 		execs := []common.Executor{}
-		for _, c := range rc.ServiceContainers {
-			execs = append(execs, c.Remove().Finally(c.Close()))
+		for _, svc := range rc.serviceContainers {
+			execs = append(execs, svc.container.Remove().Finally(svc.container.Close()))
 		}
 		return common.NewParallelExecutor(len(execs), execs...)(ctx)
+	}
+}
+
+const (
+	defaultServiceReadyTimeout = 5 * time.Minute
+	serviceReadyPollMax        = 32 * time.Second
+)
+
+var serviceReadyPollInterval = 2 * time.Second // a variable so tests need not wait
+
+// reportUnstartedServices logs a service that did not start. The steps that need it
+// report it better than the runner can, so the job carries on.
+func (rc *RunContext) reportUnstartedServices() common.Executor {
+	return func(ctx context.Context) error {
+		logger := common.Logger(ctx)
+		for _, svc := range rc.serviceContainers {
+			info, err := svc.inspect(ctx)
+			if err != nil {
+				logger.Debugf("unable to inspect service '%s': %v", svc.name, err)
+				continue
+			}
+			if info.State == container.StateRunning {
+				continue
+			}
+			svc.dumpLogs(ctx)
+			logger.Warnf("Docker container %s is not in running state: %s (%d)", info.ID, info.State, info.ExitCode)
+		}
+		return nil
+	}
+}
+
+// waitForServiceContainers blocks until every service that declares a healthcheck reports
+// healthy, as GitHub does, so a first step cannot connect before the service listens.
+func (rc *RunContext) waitForServiceContainers() common.Executor {
+	return func(ctx context.Context) error {
+		if len(rc.serviceContainers) == 0 {
+			return nil
+		}
+
+		timeout := rc.Config.ServiceReadyTimeout
+		switch {
+		case timeout < 0:
+			// disabled, but still describe the containers for `job.services`
+			for _, svc := range rc.serviceContainers {
+				if _, err := svc.inspect(ctx); err != nil && !errors.Is(err, container.ErrContainerNotFound) {
+					return err
+				}
+			}
+			return nil
+		case timeout == 0:
+			timeout = defaultServiceReadyTimeout
+		}
+
+		// the first error cancels the rest, so a failure does not wait out a sibling's timeout
+		group, groupCtx := errgroup.WithContext(ctx)
+		for _, svc := range rc.serviceContainers {
+			group.Go(func() error {
+				return svc.waitUntilHealthy(groupCtx, timeout)
+			})
+		}
+		return group.Wait()
+	}
+}
+
+// waitUntilHealthy waits on the healthcheck alone, so a container that declares none is
+// ready at once and one that exited is left to the steps that need it.
+func (svc *serviceContainer) waitUntilHealthy(ctx context.Context, timeout time.Duration) error {
+	rawLogger := common.Logger(ctx).WithField(rawOutputField, true)
+	interval := serviceReadyPollInterval
+
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	for {
+		info, err := svc.inspect(ctx)
+		if ctxErr := ctx.Err(); ctxErr != nil { // the wait ended, an inspect error only noticed it
+			if errors.Is(ctxErr, context.DeadlineExceeded) {
+				return fmt.Errorf("the service '%s' did not become healthy within %s%s", svc.name, timeout, svc.healthOutputSuffix())
+			}
+			return ctxErr
+		}
+		switch {
+		case errors.Is(err, container.ErrContainerNotFound):
+			return nil // gone, so there is no health left to wait on
+		case err != nil:
+			return err
+		}
+
+		switch {
+		case info.Health == container.HealthUnhealthy:
+			svc.dumpLogs(ctx)
+			common.Logger(ctx).Errorf("Failed to initialize container %s", svc.image)
+			return fmt.Errorf("the service '%s' is unhealthy%s", svc.name, svc.healthOutputSuffix())
+		case info.Health != container.HealthStarting:
+			rawLogger.Infof("%s service is healthy.", svc.name)
+			return nil
+		}
+
+		rawLogger.Infof("%s service is starting, waiting %d seconds before checking again.", svc.name, int(interval.Seconds()))
+		select {
+		case <-ctx.Done(): // reported at the top of the loop
+		case <-time.After(interval):
+		}
+		interval = min(interval*2, serviceReadyPollMax)
+	}
+}
+
+// dumpLogs writes the container's log to the job log once, however often it is reported.
+func (svc *serviceContainer) dumpLogs(ctx context.Context) {
+	if svc.logsDumped {
+		return
+	}
+	svc.logsDumped = true
+	if err := svc.container.DumpLogs(ctx); err != nil {
+		common.Logger(ctx).Debugf("unable to read the log of service '%s': %v", svc.name, err)
+	}
+}
+
+// inspect also records the state for the `job.services` context.
+func (svc *serviceContainer) inspect(ctx context.Context) (*container.Info, error) {
+	info, err := svc.container.Inspect(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect service '%s': %w", svc.name, err)
+	}
+	svc.info = info
+	return info, nil
+}
+
+func (svc *serviceContainer) healthOutputSuffix() string {
+	if svc.info == nil || svc.info.HealthOutput == "" {
+		return ""
+	}
+	return ": " + svc.info.HealthOutput
+}
+
+// captureJobContainerInfo is a convenience: failing to describe the container must not
+// fail the job.
+func (rc *RunContext) captureJobContainerInfo() common.Executor {
+	return func(ctx context.Context) error {
+		info, err := rc.JobContainer.Inspect(ctx)
+		if err != nil {
+			common.Logger(ctx).Debugf("unable to inspect the job container: %v", err)
+			return nil
+		}
+		rc.jobContainerID = info.ID
+		return nil
 	}
 }
 
@@ -1053,9 +1217,26 @@ func (rc *RunContext) getJobContext() *model.JobContext {
 	if rc.jobCancelled {
 		jobStatus = "cancelled"
 	}
-	return &model.JobContext{
-		Status: jobStatus,
+
+	jobContext := &model.JobContext{
+		Status:   jobStatus,
+		Services: map[string]model.JobService{}, // an empty map, never null
 	}
+	if rc.jobContainerID != "" {
+		jobContext.Container.ID = rc.jobContainerID
+		jobContext.Container.Network = rc.jobNetworkName
+	}
+	for _, svc := range rc.serviceContainers {
+		if svc.info == nil {
+			continue
+		}
+		jobContext.Services[svc.name] = model.JobService{
+			ID:      svc.info.ID,
+			Network: rc.jobNetworkName,
+			Ports:   svc.info.Ports,
+		}
+	}
+	return jobContext
 }
 
 func (rc *RunContext) getStepsContext() map[string]*model.StepResult {

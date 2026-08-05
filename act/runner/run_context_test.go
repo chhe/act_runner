@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"gitea.com/gitea/runner/act/common"
 	"gitea.com/gitea/runner/act/container"
@@ -22,6 +23,7 @@ import (
 	"github.com/docker/cli/cli/compose/loader"
 	log "github.com/sirupsen/logrus"
 	assert "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	require "github.com/stretchr/testify/require"
 	yaml "go.yaml.in/yaml/v4"
 )
@@ -224,6 +226,12 @@ func (fakeContainer) Create([]string, []string) common.Executor {
 func (fakeContainer) Copy(string, ...*container.FileEntry) common.Executor {
 	return func(context.Context) error { return nil }
 }
+
+func (fakeContainer) Inspect(context.Context) (*container.Info, error) {
+	return &container.Info{ID: "fake", State: "running", Health: container.HealthNone}, nil
+}
+
+func (fakeContainer) DumpLogs(context.Context) error { return nil }
 
 // Regression test: a service without a `credentials:` block resolves to empty
 // credentials, which used to overwrite the job container's own credentials.
@@ -563,7 +571,7 @@ func TestCleanupJobResourcesCleansServicesWithoutJobContainer(t *testing.T) {
 
 	rc := &RunContext{
 		Config:            &Config{},
-		ServiceContainers: []container.ExecutionsEnvironment{service},
+		serviceContainers: []*serviceContainer{{name: "svc", container: service}},
 	}
 
 	err := rc.cleanupJobResources("external-network", false)(context.Background())
@@ -586,7 +594,7 @@ func TestCleanupJobResourcesContinuesAfterFailure(t *testing.T) {
 		Config:            &Config{},
 		Run:               &model.Run{Workflow: &model.Workflow{Name: "wf"}, JobID: "job"},
 		JobContainer:      jobContainer,
-		ServiceContainers: []container.ExecutionsEnvironment{service},
+		serviceContainers: []*serviceContainer{{name: "svc", container: service}},
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1043,6 +1051,199 @@ func TestRunContext_cleanupFailedStart(t *testing.T) {
 	t.Run("no-op when there is nothing to clean up", func(t *testing.T) {
 		assert.NotPanics(t, func() { (&RunContext{}).cleanupFailedStart(context.Background()) })
 	})
+}
+
+func TestWaitForServiceContainers(t *testing.T) {
+	origInterval := serviceReadyPollInterval
+	serviceReadyPollInterval = time.Millisecond
+	defer func() { serviceReadyPollInterval = origInterval }()
+
+	newRunContext := func(timeout time.Duration, services ...*serviceContainer) *RunContext {
+		return &RunContext{
+			Config:            &Config{ServiceReadyTimeout: timeout},
+			serviceContainers: services,
+		}
+	}
+
+	t.Run("returns as soon as a service without a healthcheck runs", func(t *testing.T) {
+		service := &containerMock{}
+		service.On("Inspect", mock.Anything).
+			Return(&container.Info{ID: "id", State: "running", Health: container.HealthNone}, nil).Once()
+
+		rc := newRunContext(0, &serviceContainer{name: "redis", container: service})
+		require.NoError(t, rc.waitForServiceContainers()(context.Background()))
+		service.AssertExpectations(t)
+	})
+
+	t.Run("waits while a service is still starting", func(t *testing.T) {
+		service := &containerMock{}
+		service.On("Inspect", mock.Anything).
+			Return(&container.Info{ID: "id", State: "running", Health: container.HealthStarting}, nil).Twice()
+		service.On("Inspect", mock.Anything).
+			Return(&container.Info{ID: "id", State: "running", Health: container.HealthHealthy}, nil).Once()
+
+		rc := newRunContext(0, &serviceContainer{name: "postgres", container: service})
+		require.NoError(t, rc.waitForServiceContainers()(context.Background()))
+		service.AssertExpectations(t)
+	})
+
+	t.Run("fails with the probe output when a service is unhealthy", func(t *testing.T) {
+		service := &containerMock{}
+		service.On("Inspect", mock.Anything).Return(&container.Info{
+			State:        "running",
+			Health:       container.HealthUnhealthy,
+			HealthOutput: "connection refused",
+		}, nil).Once()
+		service.On("DumpLogs", mock.Anything).Return(nil).Once()
+
+		rc := newRunContext(0, &serviceContainer{name: "postgres", container: service})
+		err := rc.waitForServiceContainers()(context.Background())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "the service 'postgres' is unhealthy: connection refused")
+		service.AssertExpectations(t)
+	})
+
+	t.Run("lets the steps run when a service exits without a healthcheck", func(t *testing.T) {
+		service := &containerMock{}
+		service.On("Inspect", mock.Anything).
+			Return(&container.Info{State: "exited", ExitCode: 2, Health: container.HealthNone}, nil).Once()
+
+		rc := newRunContext(0, &serviceContainer{name: "postgres", container: service})
+		require.NoError(t, rc.waitForServiceContainers()(context.Background()))
+	})
+
+	t.Run("proceeds when the container is gone", func(t *testing.T) {
+		service := &containerMock{}
+		service.On("Inspect", mock.Anything).
+			Return((*container.Info)(nil), container.ErrContainerNotFound).Once()
+
+		rc := newRunContext(0, &serviceContainer{name: "postgres", container: service})
+		require.NoError(t, rc.waitForServiceContainers()(context.Background()))
+	})
+
+	t.Run("fails right away when one service fails while another is still starting", func(t *testing.T) {
+		failing := &containerMock{}
+		failing.On("Inspect", mock.Anything).
+			Return(&container.Info{State: "running", Health: container.HealthUnhealthy}, nil)
+		failing.On("DumpLogs", mock.Anything).Return(nil).Once()
+		starting := &containerMock{}
+		starting.On("Inspect", mock.Anything).
+			Return(&container.Info{State: "running", Health: container.HealthStarting}, nil)
+
+		rc := newRunContext(10*time.Second,
+			&serviceContainer{name: "failing", container: failing},
+			&serviceContainer{name: "starting", container: starting})
+
+		done := make(chan error, 1)
+		go func() { done <- rc.waitForServiceContainers()(context.Background()) }()
+
+		select {
+		case err := <-done:
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "the service 'failing' is unhealthy")
+		case <-time.After(2 * time.Second):
+			t.Fatal("waitForServiceContainers did not fail fast; it waited for the starting service")
+		}
+	})
+
+	t.Run("gives up once the timeout expires", func(t *testing.T) {
+		service := &containerMock{}
+		service.On("Inspect", mock.Anything).
+			Return(&container.Info{State: "running", Health: container.HealthStarting}, nil)
+
+		rc := newRunContext(20*time.Millisecond, &serviceContainer{name: "postgres", container: service})
+		err := rc.waitForServiceContainers()(context.Background())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "did not become healthy within")
+	})
+
+	t.Run("gives up with the same message when the deadline stops an inspect", func(t *testing.T) {
+		service := &containerMock{}
+		service.On("Inspect", mock.Anything).
+			Run(func(args mock.Arguments) { <-args.Get(0).(context.Context).Done() }).
+			Return((*container.Info)(nil), errors.New("inspect aborted"))
+
+		rc := newRunContext(20*time.Millisecond, &serviceContainer{name: "postgres", container: service})
+		err := rc.waitForServiceContainers()(context.Background())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "did not become healthy within")
+	})
+
+	t.Run("does not wait when the timeout is negative", func(t *testing.T) {
+		service := &containerMock{}
+		// Still described once, so the `job.services` context is filled either way.
+		service.On("Inspect", mock.Anything).
+			Return(&container.Info{ID: "id", State: "running", Health: container.HealthStarting}, nil).Once()
+
+		svc := &serviceContainer{name: "postgres", container: service}
+		rc := newRunContext(-1, svc)
+		require.NoError(t, rc.waitForServiceContainers()(context.Background()))
+		service.AssertExpectations(t)
+		assert.Equal(t, "id", svc.info.ID)
+	})
+
+	t.Run("fails on an inspect error even when the timeout is negative", func(t *testing.T) {
+		service := &containerMock{}
+		service.On("Inspect", mock.Anything).Return((*container.Info)(nil), errors.New("daemon is gone")).Once()
+
+		rc := newRunContext(-1, &serviceContainer{name: "postgres", container: service})
+		err := rc.waitForServiceContainers()(context.Background())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to inspect service 'postgres'")
+	})
+
+	t.Run("is a no-op without services", func(t *testing.T) {
+		require.NoError(t, newRunContext(0).waitForServiceContainers()(context.Background()))
+	})
+}
+
+func TestReportUnstartedServices(t *testing.T) {
+	dead := &containerMock{}
+	dead.On("Inspect", mock.Anything).Return(&container.Info{ID: "dead-id", State: "exited", ExitCode: 1}, nil).Once()
+	dead.On("DumpLogs", mock.Anything).Return(nil).Once()
+	running := &containerMock{}
+	running.On("Inspect", mock.Anything).Return(&container.Info{ID: "run-id", State: "running"}, nil).Once()
+
+	rc := &RunContext{serviceContainers: []*serviceContainer{
+		{name: "postgres", container: dead},
+		{name: "redis", container: running},
+	}}
+
+	require.NoError(t, rc.reportUnstartedServices()(context.Background()))
+	dead.AssertExpectations(t)
+	running.AssertExpectations(t)
+}
+
+func TestGetJobContextReportsContainers(t *testing.T) {
+	rc := &RunContext{
+		jobNetworkName: "job-network",
+		jobContainerID: "job-container-id",
+		serviceContainers: []*serviceContainer{
+			{name: "postgres", info: &container.Info{ID: "svc-id", Ports: map[string]string{"5432": "49153"}}},
+			// A service that publishes no port reports an empty map, as GitHub does.
+			{name: "redis", info: &container.Info{ID: "redis-id", Ports: map[string]string{}}},
+			// A service that never reported is left out rather than reported as empty.
+			{name: "mailhog"},
+		},
+	}
+
+	jobContext := rc.getJobContext()
+
+	assert.Equal(t, "job-container-id", jobContext.Container.ID)
+	assert.Equal(t, "job-network", jobContext.Container.Network)
+	assert.Equal(t, map[string]model.JobService{
+		"postgres": {ID: "svc-id", Network: "job-network", Ports: map[string]string{"5432": "49153"}},
+		"redis":    {ID: "redis-id", Network: "job-network", Ports: map[string]string{}},
+	}, jobContext.Services)
+}
+
+// A job that never started a container reports an empty context, not a placeholder.
+func TestGetJobContextWithoutContainer(t *testing.T) {
+	jobContext := (&RunContext{}).getJobContext()
+
+	assert.Empty(t, jobContext.Container.ID)
+	assert.Empty(t, jobContext.Container.Network)
+	assert.Empty(t, jobContext.Services)
 }
 
 func TestImageOSFromImage(t *testing.T) {

@@ -154,6 +154,14 @@ func (e *HostEnvironment) CopyDir(destPath, srcPath string, useGitIgnore bool) c
 	}
 }
 
+func (e *HostEnvironment) DumpLogs(_ context.Context) error {
+	return nil
+}
+
+func (e *HostEnvironment) Inspect(_ context.Context) (*Info, error) {
+	return &Info{Health: HealthNone, Ports: map[string]string{}}, nil
+}
+
 func (e *HostEnvironment) GetContainerArchive(ctx context.Context, srcPath string) (io.ReadCloser, error) {
 	buf := &bytes.Buffer{}
 	tw := tar.NewWriter(buf)

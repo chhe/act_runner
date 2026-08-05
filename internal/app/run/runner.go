@@ -510,6 +510,7 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 			RunnerUUID: r.uuid,
 		},
 		ContainerOptions:                  r.cfg.Container.Options,
+		ServiceReadyTimeout:               r.cfg.Container.ServiceReadyTimeout,
 		ContainerDaemonSocket:             r.cfg.Container.DockerHost,
 		Privileged:                        r.cfg.Container.Privileged,
 		DefaultActionInstance:             r.getDefaultActionsURL(task),

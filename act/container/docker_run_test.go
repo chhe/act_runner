@@ -25,6 +25,7 @@ import (
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/network"
 	mobyclient "github.com/moby/moby/client"
 	"github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
@@ -548,7 +549,7 @@ func TestRejectsMissingContainer(t *testing.T) {
 	cr := &containerReference{cli: client, input: &NewContainerInput{Name: "job-1"}}
 	check := func(op string, err error) {
 		t.Helper()
-		require.Error(t, err, op)
+		require.ErrorIs(t, err, ErrContainerNotFound, op)
 		assert.Contains(t, err.Error(), `container "job-1" does not exist`, op)
 	}
 	check("copyContent", cr.copyContent("/var/run/act", &FileEntry{Name: "x", Mode: 0o644})(ctx))
@@ -557,6 +558,15 @@ func TestRejectsMissingContainer(t *testing.T) {
 	check("exec", cr.exec([]string{"echo"}, nil, "", "")(ctx))
 	_, err := cr.GetContainerArchive(ctx, "/var/run/act/x")
 	check("GetContainerArchive", err)
+	_, err = cr.Inspect(ctx)
+	check("Inspect", err)
+
+	// a known id the daemon has since dropped
+	client.On("ContainerInspect", ctx, "gone", mobyclient.ContainerInspectOptions{}).
+		Return(mobyclient.ContainerInspectResult{}, cerrdefs.ErrNotFound)
+	removed := &containerReference{id: "gone", cli: client, input: &NewContainerInput{Name: "job-1"}}
+	_, err = removed.Inspect(ctx)
+	check("Inspect after removal", err)
 }
 
 // End-to-end: a stale cr.id is cleared, repopulated from name lookup,
@@ -823,6 +833,59 @@ func TestCheckVolumesRejectsEscapingHostPaths(t *testing.T) {
 		Binds: []string{filepath.Join(linkPath, "missing") + ":/mnt"},
 	})
 	assert.Empty(t, hostConf.Binds)
+}
+
+func TestContainerInfoFromInspect(t *testing.T) {
+	t.Run("reports no healthcheck when the image declares none", func(t *testing.T) {
+		info := containerInfoFromInspect(container.InspectResponse{
+			ID:    "abc123",
+			State: &container.State{Status: "running", Running: true},
+		})
+
+		assert.Equal(t, "abc123", info.ID)
+		assert.Equal(t, "running", info.State)
+		assert.Equal(t, HealthNone, info.Health)
+		assert.Empty(t, info.Ports)
+	})
+
+	t.Run("reports the health status and the last probe output", func(t *testing.T) {
+		info := containerInfoFromInspect(container.InspectResponse{
+			State: &container.State{
+				Status: "running",
+				Health: &container.Health{
+					Status: container.Unhealthy,
+					Log: []*container.HealthcheckResult{
+						{Output: "first\n"},
+						{Output: "connection refused\n"},
+					},
+				},
+			},
+		})
+
+		assert.Equal(t, HealthUnhealthy, info.Health)
+		assert.Equal(t, "connection refused", info.HealthOutput)
+	})
+
+	t.Run("reports the published ports", func(t *testing.T) {
+		info := containerInfoFromInspect(container.InspectResponse{
+			State: &container.State{Status: "running"},
+			NetworkSettings: &container.NetworkSettings{
+				Ports: network.PortMap{
+					network.MustParsePort("5432/tcp"): []network.PortBinding{{HostPort: "49153"}},
+					network.MustParsePort("6379/tcp"): nil,
+				},
+			},
+		})
+
+		assert.Equal(t, map[string]string{"5432": "49153"}, info.Ports)
+	})
+
+	t.Run("tolerates a container without state", func(t *testing.T) {
+		info := containerInfoFromInspect(container.InspectResponse{ID: "abc123"})
+
+		assert.Equal(t, "abc123", info.ID)
+		assert.Equal(t, HealthNone, info.Health)
+	})
 }
 
 func TestMergeContainerConfigsVolumesReplaceRunnerMounts(t *testing.T) {
