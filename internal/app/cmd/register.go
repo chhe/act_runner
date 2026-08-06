@@ -230,9 +230,9 @@ func initInputs(regArgs *registerArgs) (*registerInputs, error) {
 		token = envToken
 	}
 	inputs := &registerInputs{
-		InstanceAddr: regArgs.InstanceAddr,
-		Token:        token,
-		RunnerName:   regArgs.RunnerName,
+		InstanceAddr: strings.TrimSpace(regArgs.InstanceAddr),
+		Token:        strings.TrimSpace(token),
+		RunnerName:   strings.TrimSpace(regArgs.RunnerName),
 		Ephemeral:    regArgs.Ephemeral,
 	}
 	regArgs.Labels = strings.TrimSpace(regArgs.Labels)

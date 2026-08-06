@@ -184,9 +184,9 @@ func TestInitInputs(t *testing.T) {
 	t.Run("valid token", func(t *testing.T) {
 		t.Setenv(registerTokenEnvVar, "from-env")
 		inputs, err := initInputs(&registerArgs{
-			InstanceAddr: "http://localhost:3000",
-			Token:        "from-plain-arg",
-			RunnerName:   "runner",
+			InstanceAddr: " http://localhost:3000 ",
+			Token:        "from-plain-arg\n",
+			RunnerName:   "runner\n",
 			Ephemeral:    true,
 			Labels:       " ubuntu:host , ubuntu:docker://node:18 ",
 		})
@@ -203,7 +203,7 @@ func TestInitInputs(t *testing.T) {
 		tokenFile, createErr := os.CreateTemp(t.TempDir(), "from-file")
 		require.NoError(t, createErr)
 		defer tokenFile.Close()
-		_, writeErr := tokenFile.WriteString("from-file")
+		_, writeErr := tokenFile.WriteString("from-file\n")
 		require.NoError(t, writeErr)
 		_ = tokenFile.Sync()
 
