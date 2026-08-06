@@ -85,43 +85,51 @@ func NewInterpeter(env *EvaluationEnvironment, config Config) Interpreter {
 	}
 }
 
+// Evaluate evaluates one expression. An empty input asks defaultStatusCheck on its own, which is
+// what a value that carries no expression of its own runs under.
 func (impl *interperterImpl) Evaluate(input string, defaultStatusCheck DefaultStatusCheck) (any, error) {
 	input = strings.TrimPrefix(input, "${{")
-	if defaultStatusCheck != DefaultStatusCheckNone && input == "" {
-		input = "success()"
+
+	if input == "" && defaultStatusCheck != DefaultStatusCheckNone {
+		return impl.evaluateNode(statusCheckNode(defaultStatusCheck))
 	}
+
 	parser := actionlint.NewExprParser()
 	exprNode, err := parser.Parse(actionlint.NewExprLexer(input + "}}"))
 	if err != nil {
 		return nil, fmt.Errorf("Failed to parse: %s", err.Message)
 	}
 
-	if defaultStatusCheck != DefaultStatusCheckNone {
-		hasStatusCheckFunction := false
-		actionlint.VisitExprNode(exprNode, func(node, _ actionlint.ExprNode, entering bool) {
-			if funcCallNode, ok := node.(*actionlint.FuncCallNode); entering && ok {
-				switch strings.ToLower(funcCallNode.Callee) {
-				case "success", "always", "cancelled", "failure":
-					hasStatusCheckFunction = true
-				}
-			}
-		})
-
-		if !hasStatusCheckFunction {
-			exprNode = &actionlint.LogicalOpNode{
-				Kind: actionlint.LogicalOpNodeKindAnd,
-				Left: &actionlint.FuncCallNode{
-					Callee: defaultStatusCheck.String(),
-					Args:   []actionlint.ExprNode{},
-				},
-				Right: exprNode,
-			}
+	if defaultStatusCheck != DefaultStatusCheckNone && !CallsStatusFunction(exprNode) {
+		exprNode = &actionlint.LogicalOpNode{
+			Kind:  actionlint.LogicalOpNodeKindAnd,
+			Left:  statusCheckNode(defaultStatusCheck),
+			Right: exprNode,
 		}
 	}
 
 	result, err2 := impl.evaluateNode(exprNode)
 
 	return result, err2
+}
+
+func statusCheckNode(defaultStatusCheck DefaultStatusCheck) *actionlint.FuncCallNode {
+	return &actionlint.FuncCallNode{Callee: defaultStatusCheck.String(), Args: []actionlint.ExprNode{}}
+}
+
+// CallsStatusFunction reports whether the expression calls a status function, which counts as the
+// expression asking its own status question instead of the default one.
+func CallsStatusFunction(exprNode actionlint.ExprNode) bool {
+	found := false
+	actionlint.VisitExprNode(exprNode, func(node, _ actionlint.ExprNode, entering bool) {
+		if funcCallNode, ok := node.(*actionlint.FuncCallNode); entering && ok {
+			switch strings.ToLower(funcCallNode.Callee) {
+			case "success", "always", "cancelled", "failure":
+				found = true
+			}
+		}
+	})
+	return found
 }
 
 func (impl *interperterImpl) evaluateNode(exprNode actionlint.ExprNode) (any, error) {

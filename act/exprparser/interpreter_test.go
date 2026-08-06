@@ -682,3 +682,10 @@ func TestCoerceToString(t *testing.T) {
 		})
 	}
 }
+
+func TestEvaluateEmptyInputAsksItsOwnStatusCheck(t *testing.T) {
+	// always() needs no job or step context, so it shows which function an empty input asks for
+	output, err := NewInterpeter(&EvaluationEnvironment{}, Config{}).Evaluate("", DefaultStatusCheckAlways)
+	require.NoError(t, err)
+	assert.Equal(t, true, output)
+}

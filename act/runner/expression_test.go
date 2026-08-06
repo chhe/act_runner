@@ -259,6 +259,15 @@ func TestInterpolate(t *testing.T) {
 		{"${{ env.SOMETHING_FALSE || false }}", "false"},
 		{"${{ env.SOMETHING_FALSE }} && ${{ env.SOMETHING_TRUE }}", "false && true"},
 		{"${{ fromJSON('{}') < 2 }}", "false"},
+		{"${{ 1 }}", "1"},
+		{"${{ 1.0 }}", "1"},
+		{"${{ null }}", ""},
+		{"${{ fromJSON('[1,2]') }}", "Array"},
+		{"${{ fromJSON('{\"a\":1}') }}", "Object"},
+		// a malformed part must not restructure its neighbours, and it interpolates to nothing
+		{"${{ 1) && (2 }}", ""},
+		{"run ${{ 1) && (2 }} now", ""},
+		{"${{ 1", "${{ 1"},
 	}
 
 	for _, table := range tables {
@@ -270,57 +279,38 @@ func TestInterpolate(t *testing.T) {
 	}
 }
 
-func TestRewriteSubExpression(t *testing.T) {
-	table := []struct {
-		in  string
-		out string
+func TestSplitSubExpressions(t *testing.T) {
+	expr := func(text string) exprPart { return exprPart{text: text, isExpr: true} }
+	literal := func(text string) exprPart { return exprPart{text: text} }
+
+	for _, tt := range []struct {
+		in   string
+		want []exprPart
 	}{
-		{in: "Hello World", out: "Hello World"},
-		{in: "${{ true }}", out: "${{ true }}"},
-		{in: "${{ true }} ${{ true }}", out: "format('{0} {1}', true, true)"},
-		{in: "${{ true || false }} ${{ true && true }}", out: "format('{0} {1}', true || false, true && true)"},
-		{in: "${{ '}}' }}", out: "${{ '}}' }}"},
-		{in: "${{ '''}}''' }}", out: "${{ '''}}''' }}"},
-		{in: "${{ '''' }}", out: "${{ '''' }}"},
-		{in: `${{ fromJSON('"}}"') }}`, out: `${{ fromJSON('"}}"') }}`},
-		{in: `${{ fromJSON('"\"}}\""') }}`, out: `${{ fromJSON('"\"}}\""') }}`},
-		{in: `${{ fromJSON('"''}}"') }}`, out: `${{ fromJSON('"''}}"') }}`},
-		{in: "Hello ${{ 'World' }}", out: "format('Hello {0}', 'World')"},
+		{"Hello World", []exprPart{literal("Hello World")}},
+		{"${{ true }}", []exprPart{expr("true")}},
+		{"${{ true }} ${{ false }}", []exprPart{expr("true"), literal(" "), expr("false")}},
+		{"Hello ${{ 'World' }}", []exprPart{literal("Hello "), expr("'World'")}},
+		// a quote toggles string state, so a `}}` inside a string does not end the expression
+		{"${{ '}}' }}", []exprPart{expr("'}}'")}},
+		{"${{ '''}}''' }}", []exprPart{expr("'''}}'''")}},
+		{"${{ '''' }}", []exprPart{expr("''''")}},
+		{`${{ fromJSON('"}}"') }}`, []exprPart{expr(`fromJSON('"}}"')`)}},
+		{`${{ fromJSON('"\"}}\""') }}`, []exprPart{expr(`fromJSON('"\"}}\""')`)}},
+		{`${{ fromJSON('"''}}"') }}`, []exprPart{expr(`fromJSON('"''}}"')`)}},
+		// without a complete literal the value stays text, as GitHub's template reader leaves it
+		{"${{ 1", []exprPart{literal("${{ 1")}},
+		// a malformed part stays one part, so it cannot restructure its neighbours
+		{"${{ 1) && (2 }}", []exprPart{expr("1) && (2")}},
+	} {
+		got, err := splitSubExpressions(tt.in)
+		require.NoError(t, err, tt.in)
+		assert.Equal(t, tt.want, got, tt.in)
 	}
 
-	for _, table := range table {
-		t.Run("TestRewriteSubExpression", func(t *testing.T) {
-			assertObject := assert.New(t)
-			out, err := rewriteSubExpression(context.Background(), table.in, false)
-			if err != nil {
-				t.Fatal(err)
-			}
-			assertObject.Equal(table.out, out, table.in)
-		})
-	}
-}
-
-func TestRewriteSubExpressionForceFormat(t *testing.T) {
-	table := []struct {
-		in  string
-		out string
-	}{
-		{in: "Hello World", out: "Hello World"},
-		{in: "${{ true }}", out: "format('{0}', true)"},
-		{in: "${{ '}}' }}", out: "format('{0}', '}}')"},
-		{in: `${{ fromJSON('"}}"') }}`, out: `format('{0}', fromJSON('"}}"'))`},
-		{in: "Hello ${{ 'World' }}", out: "format('Hello {0}', 'World')"},
-	}
-
-	for _, table := range table {
-		t.Run("TestRewriteSubExpressionForceFormat", func(t *testing.T) {
-			assertObject := assert.New(t)
-			out, err := rewriteSubExpression(context.Background(), table.in, true)
-			if err != nil {
-				t.Fatal(err)
-			}
-			assertObject.Equal(table.out, out, table.in)
-		})
+	for _, in := range []string{"${{ 'a' }} ${{ b", "${{ 'a }}"} {
+		_, err := splitSubExpressions(in)
+		assert.ErrorContains(t, err, "unclosed expression", in)
 	}
 }
 

@@ -7,6 +7,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"path"
@@ -22,12 +23,14 @@ import (
 
 	_ "embed"
 
+	"github.com/rhysd/actionlint"
 	"go.yaml.in/yaml/v4"
 )
 
 // ExpressionEvaluator is the interface for evaluating expressions
 type ExpressionEvaluator interface {
 	evaluate(context.Context, string, exprparser.DefaultStatusCheck) (any, error)
+	interpolate(context.Context, string) (string, error)
 	EvaluateYamlNode(context.Context, *yaml.Node) error
 	Interpolate(context.Context, string) string
 }
@@ -240,8 +243,7 @@ func (ee expressionEvaluator) evaluateScalarYamlNode(ctx context.Context, node *
 	if !strings.Contains(in, "${{") || !strings.Contains(in, "}}") {
 		return nil, nil //nolint:nilnil // pre-existing issue from nektos/act
 	}
-	expr, _ := rewriteSubExpression(ctx, in, false)
-	res, err := ee.evaluate(ctx, expr, exprparser.DefaultStatusCheckNone)
+	res, err := ee.evaluateScalar(ctx, in)
 	if err != nil {
 		return nil, err
 	}
@@ -367,105 +369,146 @@ func (ee expressionEvaluator) EvaluateYamlNode(ctx context.Context, node *yaml.N
 }
 
 func (ee expressionEvaluator) Interpolate(ctx context.Context, in string) string {
-	if !strings.Contains(in, "${{") || !strings.Contains(in, "}}") {
-		return in
-	}
-
-	expr, _ := rewriteSubExpression(ctx, in, true)
-	evaluated, err := ee.evaluate(ctx, expr, exprparser.DefaultStatusCheckNone)
+	out, err := ee.interpolate(ctx, in)
 	if err != nil {
-		common.Logger(ctx).Errorf("Unable to interpolate expression '%s': %s", expr, err)
+		common.Logger(ctx).Errorf("Unable to interpolate expression '%s': %s", in, err)
 		return ""
 	}
-
-	value, ok := evaluated.(string)
-	if !ok {
-		panic(fmt.Sprintf("Expression %s did not evaluate to a string", expr))
-	}
-
-	return value
+	return out
 }
 
-// EvalBool evaluates an expression against given evaluator
-func EvalBool(ctx context.Context, evaluator ExpressionEvaluator, expr string, defaultStatusCheck exprparser.DefaultStatusCheck) (bool, error) {
-	nextExpr, _ := rewriteSubExpression(ctx, expr, false)
+// interpolate evaluates every part on its own, so a malformed one cannot restructure its neighbours
+func (ee expressionEvaluator) interpolate(ctx context.Context, in string) (string, error) {
+	parts, err := splitSubExpressions(in)
+	if err != nil {
+		return "", err
+	}
+	if len(parts) == 1 && !parts[0].isExpr {
+		return in, nil
+	}
+	var out strings.Builder
+	out.Grow(len(in))
+	for _, part := range parts {
+		if !part.isExpr {
+			out.WriteString(part.text)
+			continue
+		}
+		evaluated, err := ee.evaluate(ctx, part.text, exprparser.DefaultStatusCheckNone)
+		if err != nil {
+			return "", err
+		}
+		out.WriteString(exprparser.CoerceToString(evaluated))
+	}
+	return out.String(), nil
+}
 
-	evaluated, err := evaluator.evaluate(ctx, nextExpr, defaultStatusCheck)
+// evaluateScalar keeps the type of a lone expression, so `${{ fromJSON('[1,2]') }}` stays an array
+func (ee expressionEvaluator) evaluateScalar(ctx context.Context, in string) (any, error) {
+	parts, err := splitSubExpressions(in)
+	if err != nil {
+		return nil, err
+	}
+	if len(parts) == 1 && parts[0].isExpr {
+		return ee.evaluate(ctx, parts[0].text, exprparser.DefaultStatusCheckNone)
+	}
+	return ee.interpolate(ctx, in)
+}
+
+// EvalBool evaluates an expression against given evaluator. An `if:` is an expression even without
+// `${{ }}`, while literal text around one makes the whole value a string.
+func EvalBool(ctx context.Context, evaluator ExpressionEvaluator, expr string, defaultStatusCheck exprparser.DefaultStatusCheck) (bool, error) {
+	parts, err := splitSubExpressions(expr)
 	if err != nil {
 		return false, err
 	}
-
-	return exprparser.IsTruthy(evaluated), nil
-}
-
-func escapeFormatString(in string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(in, "{", "{{"), "}", "}}")
-}
-
-func rewriteSubExpression(ctx context.Context, in string, forceFormat bool) (string, error) { //nolint:unparam // pre-existing issue from nektos/act
-	if !strings.Contains(in, "${{") || !strings.Contains(in, "}}") {
-		return in, nil
+	if len(parts) == 1 {
+		evaluated, err := evaluator.evaluate(ctx, parts[0].text, defaultStatusCheck)
+		if err != nil {
+			return false, err
+		}
+		return exprparser.IsTruthy(evaluated), nil
 	}
 
-	strPattern := regexp.MustCompile("(?:''|[^'])*'")
-	pos := 0
-	exprStart := -1
-	strStart := -1
-	var results []string
-	var formatOut strings.Builder
-	for pos < len(in) {
-		if strStart > -1 {
-			matches := strPattern.FindStringIndex(in[pos:])
-			if matches == nil {
-				panic("unclosed string.")
-			}
-
-			strStart = -1
-			pos += matches[1]
-		} else if exprStart > -1 {
-			exprEnd := strings.Index(in[pos:], "}}")
-			strStart = strings.Index(in[pos:], "'")
-
-			if exprEnd > -1 && strStart > -1 {
-				if exprEnd < strStart {
-					strStart = -1
-				} else {
-					exprEnd = -1
-				}
-			}
-
-			if exprEnd > -1 {
-				fmt.Fprintf(&formatOut, "{%d}", len(results))
-				results = append(results, strings.TrimSpace(in[exprStart:pos+exprEnd]))
-				pos += exprEnd + 2
-				exprStart = -1
-			} else if strStart > -1 {
-				pos += strStart + 1
-			} else {
-				panic("unclosed expression.")
-			}
-		} else {
-			exprStart = strings.Index(in[pos:], "${{")
-			if exprStart != -1 {
-				formatOut.WriteString(escapeFormatString(in[pos : pos+exprStart]))
-				exprStart = pos + exprStart + 3
-				pos = exprStart
-			} else {
-				formatOut.WriteString(escapeFormatString(in[pos:]))
-				pos = len(in)
-			}
+	// mixed content is a string, so the status check applies to it separately
+	if defaultStatusCheck != exprparser.DefaultStatusCheckNone && !callsStatusFunction(parts) {
+		status, err := evaluator.evaluate(ctx, "", defaultStatusCheck)
+		if err != nil {
+			return false, err
+		}
+		if !exprparser.IsTruthy(status) {
+			return false, nil
 		}
 	}
+	interpolated, err := evaluator.interpolate(ctx, expr)
+	if err != nil {
+		return false, err
+	}
+	return exprparser.IsTruthy(interpolated), nil
+}
 
-	if len(results) == 1 && formatOut.String() == "{0}" && !forceFormat {
-		return in, nil
+// callsStatusFunction reports whether any part calls a status function. A part that does not parse
+// counts as one, so the evaluation reports it against the real values.
+func callsStatusFunction(parts []exprPart) bool {
+	for _, part := range parts {
+		if !part.isExpr {
+			continue
+		}
+		// The lexer needs the closing `}}` that the scanner strips.
+		exprNode, err := actionlint.NewExprParser().Parse(actionlint.NewExprLexer(part.text + "}}"))
+		if err != nil || exprparser.CallsStatusFunction(exprNode) {
+			return true
+		}
+	}
+	return false
+}
+
+type exprPart struct {
+	text   string
+	isExpr bool
+}
+
+// splitSubExpressions splits in the way GitHub's template reader does, leaving a value without a
+// complete expression literal.
+func splitSubExpressions(in string) ([]exprPart, error) {
+	if !strings.Contains(in, "${{") || !strings.Contains(in, "}}") {
+		return []exprPart{{text: in}}, nil
 	}
 
-	out := fmt.Sprintf("format('%s', %s)", strings.ReplaceAll(formatOut.String(), "'", "''"), strings.Join(results, ", "))
-	if in != out {
-		common.Logger(ctx).Debugf("expression '%s' rewritten to '%s'", in, out)
+	parts := make([]exprPart, 0, 2*strings.Count(in, "${{")+1)
+	for {
+		start := strings.Index(in, "${{")
+		if start < 0 {
+			if in != "" {
+				parts = append(parts, exprPart{text: in})
+			}
+			return parts, nil
+		}
+		if start > 0 {
+			parts = append(parts, exprPart{text: in[:start]})
+		}
+		rest := in[start+len("${{"):]
+		end := indexExprEnd(rest)
+		if end < 0 {
+			return nil, errors.New("unclosed expression")
+		}
+		parts = append(parts, exprPart{text: strings.TrimSpace(rest[:end]), isExpr: true})
+		in = rest[end+len("}}"):]
 	}
-	return out, nil
+}
+
+// indexExprEnd returns the offset of the `}}` ending an expression, or -1. A quote toggles string
+// state, so a `}}` inside a string does not end it.
+func indexExprEnd(in string) int {
+	inString := false
+	for i := range len(in) {
+		switch {
+		case in[i] == '\'':
+			inString = !inString
+		case !inString && in[i] == '}' && i+1 < len(in) && in[i+1] == '}':
+			return i
+		}
+	}
+	return -1
 }
 
 func getEvaluatorInputs(ctx context.Context, rc *RunContext, step step, ghc *model.GithubContext) map[string]any {
