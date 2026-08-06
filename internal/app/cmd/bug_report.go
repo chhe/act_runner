@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"runtime"
 
-	"gitea.com/gitea/runner/v3/internal/pkg/ver"
+	"gitea.com/gitea/runner/internal/pkg/ver"
 
 	"github.com/spf13/cobra"
 )

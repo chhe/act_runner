@@ -6,7 +6,7 @@ package cmd
 import (
 	"testing"
 
-	"gitea.com/gitea/runner/v3/internal/pkg/config"
+	"gitea.com/gitea/runner/internal/pkg/config"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"

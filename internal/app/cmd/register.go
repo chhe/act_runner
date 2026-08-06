@@ -14,12 +14,12 @@ import (
 	"strings"
 	"time"
 
-	"gitea.com/gitea/runner/v3/internal/app/run"
-	"gitea.com/gitea/runner/v3/internal/pkg/client"
-	"gitea.com/gitea/runner/v3/internal/pkg/config"
-	"gitea.com/gitea/runner/v3/internal/pkg/labels"
-	"gitea.com/gitea/runner/v3/internal/pkg/lock"
-	"gitea.com/gitea/runner/v3/internal/pkg/ver"
+	"gitea.com/gitea/runner/internal/app/run"
+	"gitea.com/gitea/runner/internal/pkg/client"
+	"gitea.com/gitea/runner/internal/pkg/config"
+	"gitea.com/gitea/runner/internal/pkg/labels"
+	"gitea.com/gitea/runner/internal/pkg/lock"
+	"gitea.com/gitea/runner/internal/pkg/ver"
 
 	"connectrpc.com/connect"
 	pingv1 "gitea.dev/actions-proto-go/ping/v1"

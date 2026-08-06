@@ -65,7 +65,7 @@ builds:
   flags:
   - -trimpath
   ldflags:
-  - -s -w
+  - -s -w -X gitea.com/gitea/runner/internal/pkg/ver.version={{ .Summary }}
   binary: >-
     {{ .ProjectName }}-
     {{- .Version }}-

@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
-	"gitea.com/gitea/runner/v3/act/common"
-	"gitea.com/gitea/runner/v3/act/common/git"
-	"gitea.com/gitea/runner/v3/act/model"
+	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/act/common/git"
+	"gitea.com/gitea/runner/act/model"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"

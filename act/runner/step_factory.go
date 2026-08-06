@@ -7,7 +7,7 @@ package runner
 import (
 	"fmt"
 
-	"gitea.com/gitea/runner/v3/act/model"
+	"gitea.com/gitea/runner/act/model"
 )
 
 type stepFactory interface {

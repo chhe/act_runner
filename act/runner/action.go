@@ -20,10 +20,10 @@ import (
 	"runtime"
 	"strings"
 
-	"gitea.com/gitea/runner/v3/act/common"
-	"gitea.com/gitea/runner/v3/act/common/git"
-	"gitea.com/gitea/runner/v3/act/container"
-	"gitea.com/gitea/runner/v3/act/model"
+	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/act/common/git"
+	"gitea.com/gitea/runner/act/container"
+	"gitea.com/gitea/runner/act/model"
 
 	"github.com/kballard/go-shellquote"
 )

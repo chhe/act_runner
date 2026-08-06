@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"strings"
 
-	"gitea.com/gitea/runner/v3/act/model"
+	"gitea.com/gitea/runner/act/model"
 
 	"github.com/rhysd/actionlint"
 )

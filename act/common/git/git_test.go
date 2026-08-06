@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"gitea.com/gitea/runner/v3/act/common"
+	"gitea.com/gitea/runner/act/common"
 
 	log "github.com/sirupsen/logrus"
 	logrustest "github.com/sirupsen/logrus/hooks/test"

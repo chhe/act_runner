@@ -15,8 +15,8 @@ import (
 	"strings"
 	"sync"
 
-	"gitea.com/gitea/runner/v3/act/common"
-	"gitea.com/gitea/runner/v3/internal/pkg/lock"
+	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/internal/pkg/lock"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"

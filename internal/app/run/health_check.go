@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"gitea.com/gitea/runner/v3/act/common"
-	"gitea.com/gitea/runner/v3/internal/pkg/process"
+	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/internal/pkg/process"
 )
 
 func (r *Runner) checkConfiguredHealth(ctx context.Context) (bool, string) {

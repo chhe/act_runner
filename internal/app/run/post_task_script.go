@@ -13,11 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"gitea.com/gitea/runner/v3/act/common"
-	"gitea.com/gitea/runner/v3/internal/pkg/config"
-	"gitea.com/gitea/runner/v3/internal/pkg/metrics"
-	"gitea.com/gitea/runner/v3/internal/pkg/process"
-	"gitea.com/gitea/runner/v3/internal/pkg/report"
+	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/internal/pkg/config"
+	"gitea.com/gitea/runner/internal/pkg/metrics"
+	"gitea.com/gitea/runner/internal/pkg/process"
+	"gitea.com/gitea/runner/internal/pkg/report"
 
 	runnerv1 "gitea.dev/actions-proto-go/runner/v1"
 	log "github.com/sirupsen/logrus"

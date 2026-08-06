@@ -10,7 +10,7 @@ import (
 	"slices"
 	"strings"
 
-	"gitea.com/gitea/runner/v3/internal/pkg/config"
+	"gitea.com/gitea/runner/internal/pkg/config"
 
 	"github.com/spf13/cobra"
 )

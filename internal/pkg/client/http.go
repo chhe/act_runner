@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"gitea.com/gitea/runner/v3/internal/pkg/ver"
+	"gitea.com/gitea/runner/internal/pkg/ver"
 
 	"connectrpc.com/connect"
 	"gitea.dev/actions-proto-go/ping/v1/pingv1connect"

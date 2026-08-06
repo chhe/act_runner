@@ -23,8 +23,8 @@ import (
 	"strings"
 	"time"
 
-	"gitea.com/gitea/runner/v3/act/common"
-	"gitea.com/gitea/runner/v3/act/filecollector"
+	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/act/filecollector"
 
 	"dario.cat/mergo"
 	cerrdefs "github.com/containerd/errdefs"

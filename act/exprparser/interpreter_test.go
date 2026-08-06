@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"testing"
 
-	"gitea.com/gitea/runner/v3/act/model"
+	"gitea.com/gitea/runner/act/model"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

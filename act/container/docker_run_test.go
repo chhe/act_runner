@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"gitea.com/gitea/runner/v3/act/common"
+	"gitea.com/gitea/runner/act/common"
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/pkg/stdcopy"

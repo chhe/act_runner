@@ -11,8 +11,8 @@ import (
 	"path"
 	"strings"
 
-	"gitea.com/gitea/runner/v3/act/common"
-	"gitea.com/gitea/runner/v3/act/container"
+	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/act/container"
 )
 
 // GitHub's job-hook variables, read as a fallback when the settings are unset.

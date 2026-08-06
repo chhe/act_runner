@@ -26,7 +26,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"gitea.com/gitea/runner/v3/act/common"
+	"gitea.com/gitea/runner/act/common"
 
 	"github.com/julienschmidt/httprouter"
 	"github.com/sirupsen/logrus"
