@@ -11,8 +11,8 @@ import (
 	"maps"
 	"testing"
 
-	"gitea.com/gitea/runner/act/common"
-	"gitea.com/gitea/runner/act/model"
+	"gitea.com/gitea/runner/v3/act/common"
+	"gitea.com/gitea/runner/v3/act/model"
 
 	"github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"

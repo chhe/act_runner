@@ -14,9 +14,9 @@ import (
 	"regexp"
 	"strings"
 
-	"gitea.com/gitea/runner/act/common"
-	"gitea.com/gitea/runner/act/common/git"
-	"gitea.com/gitea/runner/act/model"
+	"gitea.com/gitea/runner/v3/act/common"
+	"gitea.com/gitea/runner/v3/act/common/git"
+	"gitea.com/gitea/runner/v3/act/model"
 )
 
 func newLocalReusableWorkflowExecutor(rc *RunContext) common.Executor {

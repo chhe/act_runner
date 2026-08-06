@@ -12,7 +12,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/v3/act/common"
 
 	"github.com/moby/go-archive"
 	"github.com/moby/go-archive/compression"

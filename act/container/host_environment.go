@@ -21,10 +21,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"gitea.com/gitea/runner/act/common"
-	"gitea.com/gitea/runner/act/filecollector"
-	"gitea.com/gitea/runner/act/lookpath"
-	"gitea.com/gitea/runner/internal/pkg/process"
+	"gitea.com/gitea/runner/v3/act/common"
+	"gitea.com/gitea/runner/v3/act/filecollector"
+	"gitea.com/gitea/runner/v3/act/lookpath"
+	"gitea.com/gitea/runner/v3/internal/pkg/process"
 
 	"github.com/go-git/go-billy/v5/helper/polyfill"
 	"github.com/go-git/go-billy/v5/osfs"

@@ -12,7 +12,7 @@ import (
 	"io"
 	"strings"
 
-	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/v3/act/common"
 
 	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"

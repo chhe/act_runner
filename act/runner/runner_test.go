@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"gitea.com/gitea/runner/act/common"
-	"gitea.com/gitea/runner/act/model"
+	"gitea.com/gitea/runner/v3/act/common"
+	"gitea.com/gitea/runner/v3/act/model"
 
 	"github.com/joho/godotenv"
 	log "github.com/sirupsen/logrus"

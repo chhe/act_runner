@@ -25,11 +25,11 @@ import (
 	"sync"
 	"time"
 
-	"gitea.com/gitea/runner/act/common"
-	"gitea.com/gitea/runner/act/container"
-	"gitea.com/gitea/runner/act/exprparser"
-	"gitea.com/gitea/runner/act/model"
-	"gitea.com/gitea/runner/internal/pkg/lock"
+	"gitea.com/gitea/runner/v3/act/common"
+	"gitea.com/gitea/runner/v3/act/container"
+	"gitea.com/gitea/runner/v3/act/exprparser"
+	"gitea.com/gitea/runner/v3/act/model"
+	"gitea.com/gitea/runner/v3/internal/pkg/lock"
 
 	"github.com/docker/cli/cli/compose/loader"
 	"github.com/docker/go-connections/nat"

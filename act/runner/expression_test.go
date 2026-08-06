@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"gitea.com/gitea/runner/act/exprparser"
-	"gitea.com/gitea/runner/act/model"
+	"gitea.com/gitea/runner/v3/act/exprparser"
+	"gitea.com/gitea/runner/v3/act/model"
 
 	assert "github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

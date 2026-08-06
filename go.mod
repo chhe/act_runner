@@ -1,4 +1,4 @@
-module gitea.com/gitea/runner
+module gitea.com/gitea/runner/v3
 
 go 1.26.0
 

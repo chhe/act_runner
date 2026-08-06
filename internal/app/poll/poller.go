@@ -12,9 +12,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"gitea.com/gitea/runner/internal/pkg/client"
-	"gitea.com/gitea/runner/internal/pkg/config"
-	"gitea.com/gitea/runner/internal/pkg/metrics"
+	"gitea.com/gitea/runner/v3/internal/pkg/client"
+	"gitea.com/gitea/runner/v3/internal/pkg/config"
+	"gitea.com/gitea/runner/v3/internal/pkg/metrics"
 
 	"connectrpc.com/connect"
 	runnerv1 "gitea.dev/actions-proto-go/runner/v1"

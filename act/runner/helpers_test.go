@@ -9,7 +9,7 @@ import (
 	"runtime"
 	"testing"
 
-	"gitea.com/gitea/runner/act/container"
+	"gitea.com/gitea/runner/v3/act/container"
 
 	mobyclient "github.com/moby/moby/client"
 )

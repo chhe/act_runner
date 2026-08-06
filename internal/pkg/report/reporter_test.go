@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"gitea.com/gitea/runner/act/runner"
-	"gitea.com/gitea/runner/internal/pkg/client/mocks"
-	"gitea.com/gitea/runner/internal/pkg/config"
+	"gitea.com/gitea/runner/v3/act/runner"
+	"gitea.com/gitea/runner/v3/internal/pkg/client/mocks"
+	"gitea.com/gitea/runner/v3/internal/pkg/config"
 
 	connect_go "connectrpc.com/connect"
 	runnerv1 "gitea.dev/actions-proto-go/runner/v1"

@@ -9,8 +9,8 @@ import (
 	"errors"
 	"testing"
 
-	"gitea.com/gitea/runner/act/common"
-	"gitea.com/gitea/runner/act/model"
+	"gitea.com/gitea/runner/v3/act/common"
+	"gitea.com/gitea/runner/v3/act/model"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"

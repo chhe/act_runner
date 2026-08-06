@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"strings"
 
-	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/v3/act/common"
 
 	"github.com/distribution/reference"
 	"github.com/moby/moby/api/pkg/authconfig"

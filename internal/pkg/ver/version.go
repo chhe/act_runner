@@ -3,9 +3,17 @@
 
 package ver
 
-// go build -ldflags "-X gitea.com/gitea/runner/internal/pkg/ver.version=1.2.3"
-var version = "dev"
+import "runtime/debug"
+
+// version is a fallback for builds without a VCS stamp, such as from a source tarball
+var version string
 
 func Version() string {
-	return version
+	if version != "" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return "dev"
 }

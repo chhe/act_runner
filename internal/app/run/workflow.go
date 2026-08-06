@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"gitea.com/gitea/runner/act/model"
+	"gitea.com/gitea/runner/v3/act/model"
 
 	runnerv1 "gitea.dev/actions-proto-go/runner/v1"
 	"go.yaml.in/yaml/v4"

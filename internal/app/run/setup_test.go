@@ -10,8 +10,8 @@ import (
 	"runtime"
 	"testing"
 
-	"gitea.com/gitea/runner/internal/pkg/labels"
-	"gitea.com/gitea/runner/internal/pkg/ver"
+	"gitea.com/gitea/runner/v3/internal/pkg/labels"
+	"gitea.com/gitea/runner/v3/internal/pkg/ver"
 
 	runnerv1 "gitea.dev/actions-proto-go/runner/v1"
 	"github.com/stretchr/testify/assert"

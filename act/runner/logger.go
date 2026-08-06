@@ -17,7 +17,7 @@ import (
 	"strings"
 	"sync"
 
-	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/v3/act/common"
 
 	"github.com/sirupsen/logrus"
 	"golang.org/x/term"

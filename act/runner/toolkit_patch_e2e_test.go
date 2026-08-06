@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"gitea.com/gitea/runner/act/artifactcache"
+	"gitea.com/gitea/runner/v3/act/artifactcache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

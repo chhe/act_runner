@@ -51,28 +51,18 @@ else
 	GO_ENV_WINDOWS := GOOS=windows
 endif
 
-STORED_VERSION_FILE := VERSION
-
 ifneq ($(DRONE_TAG),)
 	VERSION ?= $(subst v,,$(DRONE_TAG))
-	RELASE_VERSION ?= $(VERSION)
 else
 	ifneq ($(DRONE_BRANCH),)
 		VERSION ?= $(subst release/v,,$(DRONE_BRANCH))
 	else
 		VERSION ?= main
 	endif
-
-	STORED_VERSION=$(shell cat $(STORED_VERSION_FILE) 2>/dev/null)
-	ifneq ($(STORED_VERSION),)
-		RELASE_VERSION ?= $(STORED_VERSION)
-	else
-		RELASE_VERSION ?= $(shell git describe --tags --always | sed 's/-/+/' | sed 's/^v//')
-	endif
 endif
 
 TAGS ?=
-LDFLAGS ?= -X "gitea.com/gitea/runner/internal/pkg/ver.version=v$(RELASE_VERSION)"
+LDFLAGS ?=
 
 .PHONY: all
 all: build

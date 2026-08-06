@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"gitea.com/gitea/runner/act/common"
-	"gitea.com/gitea/runner/act/container"
-	"gitea.com/gitea/runner/act/exprparser"
-	"gitea.com/gitea/runner/act/model"
+	"gitea.com/gitea/runner/v3/act/common"
+	"gitea.com/gitea/runner/v3/act/container"
+	"gitea.com/gitea/runner/v3/act/exprparser"
+	"gitea.com/gitea/runner/v3/act/model"
 )
 
 type step interface {

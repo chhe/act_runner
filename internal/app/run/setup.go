@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"gitea.com/gitea/runner/internal/pkg/report"
-	"gitea.com/gitea/runner/internal/pkg/ver"
+	"gitea.com/gitea/runner/v3/internal/pkg/report"
+	"gitea.com/gitea/runner/v3/internal/pkg/ver"
 
 	runnerv1 "gitea.dev/actions-proto-go/runner/v1"
 )

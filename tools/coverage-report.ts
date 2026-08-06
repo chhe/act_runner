@@ -14,7 +14,7 @@ import {readFileSync, writeFileSync} from 'node:fs';
 import {basename, dirname} from 'node:path';
 import {argv, exit, stderr} from 'node:process';
 
-const modulePrefix = 'gitea.com/gitea/runner/';
+const modulePrefix = 'gitea.com/gitea/runner/v3/';
 
 type Counter = {
   covered: number;

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/v3/act/common"
 
 	"github.com/moby/moby/client"
 )
