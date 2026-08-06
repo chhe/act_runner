@@ -32,6 +32,30 @@ func TestConfigCmdGeneratePrintsTheExample(t *testing.T) {
 	assert.Equal(t, string(config.Example), out)
 }
 
+func TestConfigCmdInitWritesTheMinimalConfig(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "config.yaml")
+
+	out, _, err := runConfigCmd(t, file, "init")
+	require.NoError(t, err)
+	assert.Contains(t, out, file)
+	content, err := os.ReadFile(file)
+	require.NoError(t, err)
+	assert.Equal(t, config.Minimal, string(content))
+
+	_, _, err = runConfigCmd(t, file, "init")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--force")
+
+	_, _, err = runConfigCmd(t, file, "init", "--force")
+	require.NoError(t, err)
+
+	t.Chdir(t.TempDir())
+	_, _, err = runConfigCmd(t, "", "init")
+	require.NoError(t, err)
+	assert.FileExists(t, defaultConfigFileNames[0])
+}
+
 // The subcommands only wire arguments through, so one pass over all of them is enough.
 func TestConfigCmdEditsTheFile(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "config.yaml")

@@ -129,48 +129,38 @@ Same idea as `dind`, but built on `docker:dind-rootless` so the bundled daemon a
 
 ### Configuration
 
-The runner is configured with a YAML file. Generate a starting point (this matches what ships in the tree):
+The runner reads a YAML file. Without one, every option keeps its default.
 
 ```bash
-./gitea-runner config generate > config.yaml
+./gitea-runner config init             # write config.yaml, with no option set
+./gitea-runner config generate | less  # read what the options do
+./gitea-runner -c config.yaml daemon   # -c also works on register and cache-server
 ```
 
-> The top-level `generate-config` command still does the same thing, but is deprecated in favour of `config generate`.
-
-Pass it with `-c` / `--config` on any command that loads configuration (`register`, `daemon`, `cache-server`):
-
-```bash
-./gitea-runner -c config.yaml register
-./gitea-runner -c config.yaml daemon
-./gitea-runner -c config.yaml cache-server
-```
-
-Every option is described in [config.example.yaml](internal/pkg/config/config.example.yaml) (the same content `config generate` prints).
+`config generate` prints [config.example.yaml](internal/pkg/config/config.example.yaml). Every value in it is commented out, so copy the lines you want to change into your own file and uncomment them.
 
 #### Editing a config file
 
-`config` changes an existing file in place, keeping its comments and key order, which is handy in provisioning scripts:
+`config` edits a file in place, which is handy in provisioning scripts:
 
 ```bash
-./gitea-runner -c config.yaml config set runner.capacity 4
-./gitea-runner -c config.yaml config set runner.timeout 90m  # written as 1h30m0s
-./gitea-runner -c config.yaml config set runner.envs.MY_VAR value
-./gitea-runner -c config.yaml config add runner.labels 'ubuntu:docker://node:22'
-./gitea-runner -c config.yaml config remove runner.labels 'ubuntu:docker://node:22'
-./gitea-runner -c config.yaml config get runner.labels
+./gitea-runner config set runner.capacity 4
+./gitea-runner config set runner.timeout 90m  # written as 1h30m0s
+./gitea-runner config set runner.envs.MY_VAR value
+./gitea-runner config add runner.labels 'ubuntu:docker://node:22'
+./gitea-runner config remove runner.labels 'ubuntu:docker://node:22'
+./gitea-runner config get runner.labels
 ```
 
-`-c` is optional for these subcommands: without it they use `config.yaml` (or `config.yml`) from the working directory, falling back to the directory of the `gitea-runner` binary, and print which file they picked to stderr.
+A key is its dotted YAML path. An unknown key, a value of the wrong type, or `add`/`remove` on anything but a list is refused before the file is touched. `set` replaces a whole list when you give it several values.
 
-Keys are the dotted YAML path and are validated against the known options, so a typo is rejected instead of being written. `add` and `remove` only work on list options such as `runner.labels` and `container.valid_volumes`, and fail if the value is already present or missing. `set` replaces the whole list when given several values.
+An edit keeps the comments and the key order of the file. Indentation becomes two spaces, and a blank line between two values is dropped.
 
-The file is re-encoded on every edit, so indentation is normalised to two spaces and blank lines inside a section are dropped.
+`config get`, `set`, `add` and `remove` use `config.yaml` (or `config.yml`) from the working directory, then from the directory of the binary, and print their choice to stderr. `config init` writes `config.yaml` in the working directory, and refuses to overwrite an existing config without `--force`. Pass `-c` for another path.
 
-#### Without a config file
+#### Environment variables
 
-If you omit `-c`, built-in defaults apply (same as an empty YAML document).
-
-Earlier releases let a small set of environment variables (`GITEA_DEBUG`, `GITEA_TRACE`, `GITEA_RUNNER_CAPACITY`, `GITEA_RUNNER_FILE`, `GITEA_RUNNER_ENVIRON`, `GITEA_RUNNER_ENV_FILE`) override parts of the default config. Those overrides have been removed — use a YAML config file for all settings instead. For the Docker images, the entrypoint still understands a separate set of variables (such as `RUNNER_STATE_FILE`); see [scripts/run.sh](scripts/run.sh) and the container documentation below.
+Earlier releases let a few environment variables (`GITEA_DEBUG`, `GITEA_TRACE`, `GITEA_RUNNER_CAPACITY`, `GITEA_RUNNER_FILE`, `GITEA_RUNNER_ENVIRON`, `GITEA_RUNNER_ENV_FILE`) override parts of the config. They are gone, use the YAML file for all settings. The Docker images still read their own variables, such as `RUNNER_STATE_FILE`, see [scripts/run.sh](scripts/run.sh) and the container documentation below.
 
 ### Labels
 

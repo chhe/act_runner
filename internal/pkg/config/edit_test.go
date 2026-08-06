@@ -252,16 +252,39 @@ func TestEditValuesFileHandling(t *testing.T) {
 	})
 }
 
-// The example config is the file users edit, so it has to stay written the way
-// the encoder emits it, down to the single space before a trailing comment.
-func TestEditValuesKeepsExampleConfigIntact(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "config.yaml")
-	require.NoError(t, os.WriteFile(file, Example, 0o600))
+// An edit has to give the file back unchanged around it, down to the indentation of
+// a commented-out option, as that documentation is what the user reads and edits.
+func TestEditValuesPreservesFileText(t *testing.T) {
+	tests := []struct {
+		name    string
+		content []byte
+		edit    func(file string) error
+		added   string // the only text the edit may add
+	}{
+		{
+			name:    "example config",
+			content: Example,
+			edit:    func(file string) error { return AddValue(file, "runner.labels", "ubuntu:docker://node:22") },
+			added:   "  labels:\n    - ubuntu:docker://node:22\n",
+		},
+		{
+			name:    "minimal config",
+			content: []byte(Minimal),
+			edit:    func(file string) error { return SetValue(file, "runner.capacity", "4") },
+			added:   "runner:\n  capacity: 4\n",
+		},
+	}
 
-	require.NoError(t, AddValue(file, "runner.labels", "ubuntu:docker://node:22"))
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "config.yaml")
+			require.NoError(t, os.WriteFile(file, tc.content, 0o600))
 
-	content, err := os.ReadFile(file)
-	require.NoError(t, err)
-	withoutAdded := strings.Replace(string(content), "    - ubuntu:docker://node:22\n", "", 1)
-	assert.Equal(t, string(Example), withoutAdded, "only the appended label may differ")
+			require.NoError(t, tc.edit(file))
+
+			content, err := os.ReadFile(file)
+			require.NoError(t, err)
+			assert.Equal(t, string(tc.content), strings.Replace(string(content), tc.added, "", 1))
+		})
+	}
 }

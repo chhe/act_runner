@@ -24,6 +24,12 @@ import (
 // (so a programmatically built config still gets a sane bound).
 const DefaultPostTaskScriptTimeout = 5 * time.Minute
 
+// Minimal is the smallest config file that runs the runner: options it does not
+// name keep their default, and it names none.
+const Minimal = `# Minimal config file. Every option it does not set keeps its default.
+# "gitea-runner config generate" prints all options, "config set <key> <value>" sets one here.
+`
+
 // Log represents the configuration for logging.
 type Log struct {
 	Level string `yaml:"level"` // Level indicates the logging level.

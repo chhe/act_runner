@@ -26,6 +26,7 @@ func loadConfigCmd(configFile *string) *cobra.Command {
 	}
 
 	configCmd.AddCommand(loadGenerateConfigCmd("generate"))
+	configCmd.AddCommand(loadInitConfigCmd(configFile))
 
 	configCmd.AddCommand(&cobra.Command{
 		Use:   "get <key>",
@@ -73,10 +74,38 @@ func loadConfigCmd(configFile *string) *cobra.Command {
 	return configCmd
 }
 
+func loadInitConfigCmd(configFile *string) *cobra.Command {
+	var force bool
+	initCmd := &cobra.Command{
+		Use:   "init",
+		Short: "Write a minimal config file",
+		Long:  "Write a minimal config file, leaving every option at its default.\nWithout --config it writes config.yaml in the working directory.",
+		Args:  cobra.MaximumNArgs(0),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			file, taken := *configFile, []string{*configFile}
+			if file == "" {
+				file, taken = defaultConfigFileNames[0], defaultConfigFileNames // any of them would shadow the new file
+			}
+			for _, name := range taken {
+				if _, err := os.Stat(name); err == nil && !force {
+					return fmt.Errorf("config file %q already exists, pass --force to overwrite it", name)
+				}
+			}
+			if err := config.WriteFile(file, []byte(config.Minimal)); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "wrote config file %q\n", file)
+			return nil
+		},
+	}
+	initCmd.Flags().BoolVarP(&force, "force", "f", false, "overwrite an existing config file")
+	return initCmd
+}
+
 func loadGenerateConfigCmd(use string) *cobra.Command {
 	return &cobra.Command{
 		Use:   use,
-		Short: "Generate an example config file",
+		Short: "Print the example config, which documents every option",
 		Args:  cobra.MaximumNArgs(0),
 		Run: func(cmd *cobra.Command, _ []string) {
 			fmt.Fprintf(cmd.OutOrStdout(), "%s", config.Example)

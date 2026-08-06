@@ -160,6 +160,7 @@ type editSession struct {
 	root     *yaml.Node
 	field    *fieldInfo
 	segments []string
+	preamble []byte // text of a file that holds no YAML node, which the encoder cannot give back
 }
 
 // loadForEdit validates the path and parses the file, so every caller fails before anything is written.
@@ -176,7 +177,7 @@ func loadForEdit(file, path string) (*editSession, error) {
 	content, err := os.ReadFile(file)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("config file %q does not exist, create one with `config generate`", file)
+			return nil, fmt.Errorf("config file %q does not exist, create one with `config init`", file)
 		}
 		return nil, err
 	}
@@ -185,7 +186,9 @@ func loadForEdit(file, path string) (*editSession, error) {
 	if err := yaml.Unmarshal(content, &root); err != nil {
 		return nil, fmt.Errorf("parse config file %q: %w", file, err)
 	}
+	var preamble []byte
 	if root.Kind == 0 || len(root.Content) == 0 {
+		preamble = bytes.TrimSpace(content) // all the file has is comments
 		root = yaml.Node{
 			Kind:    yaml.DocumentNode,
 			Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}},
@@ -195,7 +198,7 @@ func loadForEdit(file, path string) (*editSession, error) {
 		return nil, fmt.Errorf("config file %q is not a YAML mapping", file)
 	}
 
-	return &editSession{file: file, path: path, original: content, root: &root, field: field, segments: segments}, nil
+	return &editSession{file: file, path: path, original: content, root: &root, field: field, segments: segments, preamble: preamble}, nil
 }
 
 func loadSequenceEdit(file, path string, values []string) (*editSession, error) {
@@ -319,16 +322,28 @@ func encodeYAML(node *yaml.Node) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// restoreBlankLines re-inserts the blank lines between top-level sections that the encoder drops.
-func restoreBlankLines(original, generated []byte) []byte {
+// restoreLayout re-applies the spacing the encoder drops: the blank lines between
+// top-level sections, and the indentation of comments, which the encoder emits at the
+// indentation of the node it attached them to rather than the one they were written at.
+func restoreLayout(original, generated []byte) []byte {
+	type comment struct {
+		line        string // as written, indentation included
+		trimmed     string
+		blankBefore bool
+	}
+
+	var comments []comment
 	spaced := map[string]bool{}
 	blank := false
 	for line := range strings.Lines(string(original)) {
 		line = strings.TrimRight(line, "\r\n")
+		trimmed := strings.TrimSpace(line)
 		switch {
-		case strings.TrimSpace(line) == "":
+		case trimmed == "":
 			blank = true
-		case strings.HasPrefix(line, "#"): // the block belongs to the key below it
+		case strings.HasPrefix(trimmed, "#"):
+			comments = append(comments, comment{line: line, trimmed: trimmed, blankBefore: blank})
+			blank = false
 		default:
 			if key, ok := topLevelKey(line); ok && blank {
 				spaced[key] = true
@@ -338,16 +353,26 @@ func restoreBlankLines(original, generated []byte) []byte {
 	}
 
 	var out []string
+	appendBlank := func() {
+		if len(out) > 0 && strings.TrimSpace(out[len(out)-1]) != "" {
+			out = append(out, "")
+		}
+	}
 	for line := range strings.Lines(string(generated)) {
 		line = strings.TrimRight(line, "\r\n")
-		if key, ok := topLevelKey(line); ok && spaced[key] {
-			start := len(out)
-			for start > 0 && strings.HasPrefix(out[start-1], "#") {
-				start--
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			if i := slices.IndexFunc(comments, func(c comment) bool { return c.trimmed == trimmed }); i >= 0 {
+				if comments[i].blankBefore {
+					appendBlank()
+				} else if len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
+					out = out[:len(out)-1] // the encoder separates a comment block it moved
+				}
+				line = comments[i].line
+				comments = comments[i+1:] // the encoder keeps their order, so earlier ones cannot match again
 			}
-			if start > 0 && strings.TrimSpace(out[start-1]) != "" {
-				out = slices.Insert(out, start, "")
-			}
+		} else if key, ok := topLevelKey(line); ok && spaced[key] {
+			appendBlank()
 		}
 		out = append(out, line)
 	}
@@ -377,12 +402,21 @@ func (s *editSession) write() error {
 		return fmt.Errorf("the edit would produce a config the runner cannot load: %w", err)
 	}
 
-	content := restoreBlankLines(s.original, generated)
+	if len(s.preamble) > 0 { // before restoreLayout, so that it spaces the preamble too
+		generated = slices.Concat(s.preamble, []byte("\n"), generated)
+	}
+
+	content := restoreLayout(s.original, generated)
 	if bytes.Contains(s.original, []byte("\r\n")) { // the encoder only ever emits LF
 		content = bytes.ReplaceAll(content, []byte("\n"), []byte("\r\n"))
 	}
 
-	file := s.file
+	return WriteFile(s.file, content)
+}
+
+// WriteFile replaces the config file in one step, keeping the mode and owner of the
+// file it replaces, so a half-written config never reaches a runner reading it.
+func WriteFile(file string, content []byte) error {
 	if resolved, err := filepath.EvalSymlinks(file); err == nil {
 		file = resolved // keeps a config linked in from elsewhere intact
 	}

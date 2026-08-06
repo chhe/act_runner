@@ -348,12 +348,23 @@ cache:
 	assert.Contains(t, err.Error(), "contains no secret")
 }
 
-// The shipped example must parse, and every key in it must be one the config knows.
-func TestLoadDefault_ExampleConfigParses(t *testing.T) {
+// The shipped configs must parse, hold no key the config does not know, and leave
+// every option at its default, as all of their values are commented out.
+func TestLoadDefault_ShippedConfigsChangeNothing(t *testing.T) {
 	hook := test.NewGlobal()
 	defer hook.Reset()
 
-	_, err := LoadDefault("config.example.yaml")
+	defaults, err := LoadDefault("")
 	require.NoError(t, err)
+
+	dir := t.TempDir()
+	for name, content := range map[string][]byte{"config.example.yaml": Example, "minimal.yaml": []byte(Minimal)} {
+		file := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(file, content, 0o600))
+
+		cfg, err := LoadDefault(file)
+		require.NoError(t, err, name)
+		assert.Equal(t, defaults, cfg, name)
+	}
 	assert.Empty(t, hook.AllEntries())
 }

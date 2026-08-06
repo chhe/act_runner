@@ -12,11 +12,13 @@ the runner as a background service on a systemd host.
    sudo useradd --system --home-dir /var/lib/gitea-runner --create-home gitea-runner
    ```
 
-3. Generate a config and register the runner (as the service user), so the
+3. Write a config, hand it to the service user, and register as that user so the
    `.runner` file ends up in the working directory:
 
    ```bash
-   sudo -u gitea-runner gitea-runner config generate > /etc/gitea-runner/config.yaml
+   sudo mkdir -p /etc/gitea-runner
+   sudo gitea-runner config init --config /etc/gitea-runner/config.yaml
+   sudo chown gitea-runner /etc/gitea-runner/config.yaml
    cd /var/lib/gitea-runner
    sudo -u gitea-runner gitea-runner register --config /etc/gitea-runner/config.yaml
    ```
