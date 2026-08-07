@@ -17,7 +17,7 @@ RUN make clean && make build
 ### DIND VARIANT
 #
 #
-FROM docker:29.6.2-dind AS dind
+FROM docker:29.7.0-dind AS dind
 
 ARG VERSION=dev
 
