@@ -39,6 +39,9 @@ type stepActionRemote struct {
 
 var stepActionRemoteNewCloneExecutor = git.NewGitCloneExecutor
 
+// selfRepoPrefix introduces a self-repository reference: the action lives in the repo holding the file that wrote the `uses:`.
+const selfRepoPrefix = "$/"
+
 func (sar *stepActionRemote) prepareActionExecutor() common.Executor {
 	return func(ctx context.Context) error {
 		if sar.remoteAction != nil && sar.action != nil {
@@ -52,12 +55,16 @@ func (sar *stepActionRemote) prepareActionExecutor() common.Executor {
 		// so we need to interpolate the expression value for uses first.
 		sar.Step.Uses = sar.RunContext.NewExpressionEvaluator(ctx).Interpolate(ctx, sar.Step.Uses)
 
-		sar.remoteAction = newRemoteAction(sar.Step.Uses)
+		github := sar.getGithubContext(ctx) // read before remoteAction is set, so `$/` resolves against the enclosing action
+		if strings.HasPrefix(sar.Step.Uses, selfRepoPrefix) {
+			sar.remoteAction = newSelfRepoAction(sar.Step.Uses, github)
+		} else {
+			sar.remoteAction = newRemoteAction(sar.Step.Uses)
+		}
 		if sar.remoteAction == nil {
-			return fmt.Errorf("Expected format {org}/{repo}[/path]@ref. Actual '%s' Input string was not in a correct format", sar.Step.Uses)
+			return fmt.Errorf("Expected format {org}/{repo}[/path]@ref or %s{path}. Actual '%s' Input string was not in a correct format", selfRepoPrefix, sar.Step.Uses)
 		}
 
-		github := sar.getGithubContext(ctx)
 		if sar.remoteAction.IsCheckout() && isLocalCheckout(github, sar.Step) && !sar.RunContext.Config.NoSkipCheckout {
 			common.Logger(ctx).Debugf("Skipping local actions/checkout because workdir was already copied")
 			return nil
@@ -260,7 +267,12 @@ func (sar *stepActionRemote) revertToolkitOnFailure(exec common.Executor) common
 }
 
 func (sar *stepActionRemote) actionDir() string {
-	return fmt.Sprintf("%s/%s", sar.RunContext.ActionCacheDir(), sar.Step.UsesHash())
+	uses := sar.Step.Uses
+	if strings.HasPrefix(uses, selfRepoPrefix) {
+		// The same `$/x` names a different action per enclosing repo, so key the cache on what it resolved to.
+		uses = sar.remoteAction.URL + "/" + sar.remoteAction.Reference()
+	}
+	return fmt.Sprintf("%s/%s", sar.RunContext.ActionCacheDir(), model.UsesHash(uses))
 }
 
 func (sar *stepActionRemote) getRunContext() *RunContext {
@@ -388,6 +400,23 @@ func (ra *remoteAction) IsCheckout() bool {
 		return true
 	}
 	return false
+}
+
+// newSelfRepoAction resolves `$/{path}` against the enclosing composite action, falling back to the workflow's own repo and commit.
+func newSelfRepoAction(action string, github *model.GithubContext) *remoteAction {
+	subPath := strings.TrimLeft(strings.TrimPrefix(action, selfRepoPrefix), "/")
+	if subPath == "" || strings.Contains(subPath, "@") || path.Clean("/"+subPath) != "/"+subPath { // rooted, so a leading ".." is rejected too
+		return nil
+	}
+	repo, ref := github.ActionRepository, github.ActionRef
+	if repo == "" || ref == "" {
+		repo, ref = github.Repository, github.Sha
+	}
+	org, name, _ := strings.Cut(repo, "/")
+	if org == "" || name == "" || ref == "" {
+		return nil
+	}
+	return &remoteAction{URL: github.ServerURL, Org: org, Repo: name, Path: subPath, Ref: ref}
 }
 
 func newRemoteAction(action string) *remoteAction {

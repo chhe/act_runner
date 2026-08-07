@@ -829,13 +829,19 @@ func (s *Step) Type() StepType {
 	} else if strings.HasPrefix(s.Uses, "./") {
 		return StepTypeUsesActionLocal
 	}
-	return StepTypeUsesActionRemote
+	return StepTypeUsesActionRemote // `$/` self-repository refs land here and resolve in prepareActionExecutor
 }
 
 // UsesHash returns a hash of the uses string.
 // For Gitea.
 func (s *Step) UsesHash() string {
-	return fmt.Sprintf("%x", sha256.Sum256([]byte(s.Uses)))
+	return UsesHash(s.Uses)
+}
+
+// UsesHash returns a hash of a `uses:` value.
+// For Gitea.
+func UsesHash(uses string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(uses)))
 }
 
 // ReadWorkflow returns a list of jobs for a given workflow file reader

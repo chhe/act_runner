@@ -653,6 +653,8 @@ func TestStepActionRemotePost(t *testing.T) {
 				},
 				Step:   tt.stepModel,
 				action: tt.actionModel,
+				// post only ever runs after prepareActionExecutor resolved the action
+				remoteAction: newRemoteAction(tt.stepModel.Uses),
 			}
 			sar.RunContext.ExprEval = sar.RunContext.NewExpressionEvaluator(ctx)
 
@@ -819,6 +821,73 @@ func Test_newRemoteAction(t *testing.T) {
 			assert.Equalf(t, tt.wantCloneURL, cloneURL, "newRemoteAction(%v).CloneURL()", tt.action)
 		})
 	}
+}
+
+func Test_newSelfRepoAction(t *testing.T) {
+	workflow := &model.GithubContext{
+		ServerURL:  "https://gitea.example.com",
+		Repository: "owner/workflow-repo",
+		Sha:        "abc123",
+	}
+	composite := &model.GithubContext{
+		ServerURL:        "https://gitea.example.com",
+		Repository:       "owner/workflow-repo",
+		Sha:              "abc123",
+		ActionRepository: "other/action-repo",
+		ActionRef:        "v1",
+	}
+	tests := []struct {
+		name   string
+		action string
+		github *model.GithubContext
+		want   *remoteAction
+	}{
+		{
+			name:   "top level resolves to the workflow repo at its commit",
+			action: "$/.gitea/actions/build",
+			github: workflow,
+			want: &remoteAction{
+				URL:  "https://gitea.example.com",
+				Org:  "owner",
+				Repo: "workflow-repo",
+				Path: ".gitea/actions/build",
+				Ref:  "abc123",
+			},
+		},
+		{
+			name:   "inside a composite resolves to the enclosing action",
+			action: "$/.gitea/actions/build",
+			github: composite,
+			want: &remoteAction{
+				URL:  "https://gitea.example.com",
+				Org:  "other",
+				Repo: "action-repo",
+				Path: ".gitea/actions/build",
+				Ref:  "v1",
+			},
+		},
+		{name: "empty path", action: "$/", github: workflow},
+		{name: "ref suffix is not allowed", action: "$/.gitea/actions/build@v1", github: workflow},
+		{name: "path traversal", action: "$/../escape", github: workflow},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, newSelfRepoAction(tt.action, tt.github))
+		})
+	}
+}
+
+func Test_stepActionRemoteSelfRepoActionDir(t *testing.T) {
+	dirFor := func(repo string) string {
+		sar := &stepActionRemote{
+			Step:         &model.Step{Uses: "$/.gitea/actions/build"},
+			RunContext:   &RunContext{Config: &Config{ActionCacheDir: "/cache"}},
+			remoteAction: &remoteAction{Org: "owner", Repo: repo, Ref: "v1"},
+		}
+		return sar.actionDir()
+	}
+	// The same `$/x` in two repos must not share a cache directory.
+	assert.NotEqual(t, dirFor("one"), dirFor("two"))
 }
 
 func Test_remoteActionReference(t *testing.T) {
