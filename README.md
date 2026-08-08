@@ -313,6 +313,8 @@ Run one dedicated `gitea-runner cache-server` that all runners point at.
      # external_secret_file: /path/to/secret # secret can also be passed via a file
    ```
 
+Jobs reach the cache server at `external_server`, so when a reverse proxy fronts the server, point `external_server` at the proxy. The cache server itself needs no extra configuration.
+
 Alternatively, mount the same NFS/CIFS share on every runner and point `cache.dir` at it — simpler, but with weaker isolation between repositories.
 
 **S3 / MinIO** — mount object storage as a FUSE filesystem (e.g. [s3fs](https://github.com/s3fs-fuse/s3fs-fuse) or [goofys](https://github.com/kahing/goofys)) and set `cache.dir` to the mount point.

@@ -45,7 +45,7 @@ var testClient = &http.Client{Transport: &bearerTransport{token: testToken}}
 // tests use it to reach the get handler directly without going through a
 // find/cache-hit round trip.
 func signArtifactURL(h *Handler, id int64) string {
-	return h.signedArtifactURL(uint64(id), time.Now().Add(artifactURLTTL))
+	return h.signedArtifactURL(JobCredential{}, uint64(id), time.Now().Add(artifactURLTTL))
 }
 
 func TestHandler(t *testing.T) {
@@ -998,7 +998,7 @@ func TestHandler_ArtifactSignature(t *testing.T) {
 	})
 
 	t.Run("tampered signature", func(t *testing.T) {
-		good := handler.signedArtifactURL(1, time.Now().Add(artifactURLTTL))
+		good := signArtifactURL(handler, 1)
 		bad := good[:len(good)-4] + "dead"
 		resp, err := testClient.Get(bad)
 		require.NoError(t, err)
@@ -1007,7 +1007,7 @@ func TestHandler_ArtifactSignature(t *testing.T) {
 	})
 
 	t.Run("expired signature", func(t *testing.T) {
-		expired := handler.signedArtifactURL(1, time.Now().Add(-time.Second))
+		expired := handler.signedArtifactURL(JobCredential{}, 1, time.Now().Add(-time.Second))
 		resp, err := testClient.Get(expired)
 		require.NoError(t, err)
 		resp.Body.Close()
@@ -1019,7 +1019,7 @@ func TestHandler_ArtifactSignature(t *testing.T) {
 		other, err := StartHandler(dir2, "", 0, "", nil)
 		require.NoError(t, err)
 		defer other.Close()
-		otherURL := other.signedArtifactURL(1, time.Now().Add(artifactURLTTL))
+		otherURL := signArtifactURL(other, 1)
 		// Rewrite the host so the request still lands on our handler, but
 		// the signature was computed with a different secret.
 		parts := strings.SplitN(otherURL, apiPath, 2)

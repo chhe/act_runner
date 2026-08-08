@@ -59,6 +59,9 @@ type JobCredential struct {
 	// remote runner registers with.
 	Results     string `json:"results"`
 	InsecureTLS bool   `json:"insecure_tls"`
+
+	// PublicURL is this server as a reverse proxy makes the job reach it, not the listen address.
+	PublicURL string `json:"public_url"`
 }
 
 // credEntry holds a registered job's credential along with an active
@@ -212,6 +215,13 @@ func (h *Handler) ExternalURL() string {
 	return fmt.Sprintf("http://%s:%d", h.outboundIP, h.port)
 }
 
+func (h *Handler) baseURL(cred JobCredential) string {
+	if base := strings.TrimRight(cred.PublicURL, "/"); base != "" {
+		return base
+	}
+	return h.ExternalURL()
+}
+
 // RegisterJob makes token a valid bearer credential for cache requests from
 // the given repository and returns a function that removes it. The runner
 // calls this at job start and defers the returned func so that the credential
@@ -359,7 +369,7 @@ func (h *Handler) find(w http.ResponseWriter, r *http.Request, _ httprouter.Para
 	}
 	h.responseJSON(w, r, 200, map[string]any{
 		"result":          "hit",
-		"archiveLocation": h.signedArtifactURL(cache.ID, time.Now().Add(artifactURLTTL)),
+		"archiveLocation": h.signedArtifactURL(cred, cache.ID, time.Now().Add(artifactURLTTL)),
 		"cacheKey":        cache.Key,
 	})
 }
@@ -641,7 +651,7 @@ func (h *Handler) ResultsURL(cred JobCredential) string {
 	if h == nil || cred.Results == "" {
 		return ""
 	}
-	return h.ExternalURL()
+	return h.baseURL(cred)
 }
 
 func (h *Handler) internalRegister(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
@@ -700,16 +710,16 @@ func (h *Handler) computeSignature(purpose string, cacheID, exp int64) string {
 }
 
 // signedURL builds a URL under path that signedAuth accepts for the same purpose.
-func (h *Handler) signedURL(path, purpose string, cacheID uint64, exp time.Time) string {
+func (h *Handler) signedURL(cred JobCredential, path, purpose string, cacheID uint64, exp time.Time) string {
 	expUnix := exp.Unix()
 	q := url.Values{}
 	q.Set("exp", strconv.FormatInt(expUnix, 10))
 	q.Set("sig", h.computeSignature(purpose, int64(cacheID), expUnix))
-	return fmt.Sprintf("%s%s/%d?%s", h.ExternalURL(), path, cacheID, q.Encode())
+	return fmt.Sprintf("%s%s/%d?%s", h.baseURL(cred), path, cacheID, q.Encode())
 }
 
-func (h *Handler) signedArtifactURL(cacheID uint64, exp time.Time) string {
-	return h.signedURL(apiPath+"/artifacts", "", cacheID, exp)
+func (h *Handler) signedArtifactURL(cred JobCredential, cacheID uint64, exp time.Time) string {
+	return h.signedURL(cred, apiPath+"/artifacts", "", cacheID, exp)
 }
 
 // if not found, return (nil, nil) instead of an error.

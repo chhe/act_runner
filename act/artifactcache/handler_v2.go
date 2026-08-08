@@ -97,7 +97,7 @@ func (h *Handler) v2CreateCacheEntry(w http.ResponseWriter, r *http.Request, _ h
 
 	h.responseJSON(w, r, http.StatusOK, map[string]any{
 		"ok":                true,
-		"signed_upload_url": h.signedURL(blobPath, blobUploadPurpose, cache.ID, time.Now().Add(blobUploadURLTTL)),
+		"signed_upload_url": h.signedURL(cred, blobPath, blobUploadPurpose, cache.ID, time.Now().Add(blobUploadURLTTL)),
 	})
 }
 
@@ -168,7 +168,7 @@ func (h *Handler) v2GetCacheEntryDownloadURL(w http.ResponseWriter, r *http.Requ
 
 	h.responseJSON(w, r, http.StatusOK, map[string]any{
 		"ok":                  true,
-		"signed_download_url": h.signedArtifactURL(cache.ID, time.Now().Add(artifactURLTTL)),
+		"signed_download_url": h.signedArtifactURL(cred, cache.ID, time.Now().Add(artifactURLTTL)),
 		"matched_key":         cache.Key,
 	})
 }

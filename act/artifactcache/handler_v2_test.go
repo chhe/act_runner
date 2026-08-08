@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -196,6 +197,18 @@ func TestCacheServiceV2Lookups(t *testing.T) {
 		reserved := v2Call(t, handler, testClient, "CreateCacheEntry", map[string]any{"key": "deps", "version": "v1"})
 		require.Equal(t, true, reserved["ok"])
 		assert.NotEmpty(t, reserved["signed_upload_url"])
+	})
+
+	t.Run("a proxied job is handed the address its runner registered", func(t *testing.T) {
+		const proxy = "https://cache.example.invalid"
+		handler.RegisterJob("proxied", JobCredential{Repo: testRepo, PublicURL: proxy + "/"})
+		client := &http.Client{Transport: &bearerTransport{token: "proxied"}}
+
+		created := v2Call(t, handler, client, "CreateCacheEntry", map[string]any{"key": "proxied-key", "version": "v1"})
+		assert.True(t, strings.HasPrefix(created["signed_upload_url"].(string), proxy+blobPath+"/"))
+
+		got := v2Call(t, handler, client, "GetCacheEntryDownloadURL", map[string]any{"key": "deps-abc", "version": "v1"})
+		assert.True(t, strings.HasPrefix(got["signed_download_url"].(string), proxy+apiPath+"/artifacts/"))
 	})
 
 	t.Run("finalizing without a reservation is not ok", func(t *testing.T) {

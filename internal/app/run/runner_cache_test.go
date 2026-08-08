@@ -157,14 +157,15 @@ func decodeJSON(resp *http.Response, v any) error {
 
 // End-to-end against a remote cache-server: token unknown → 401, register →
 // reserve/upload/commit/find/download all OK, revoke → 401 again. Registering also names the
-// instance, and the server answering with its own address is what makes a shared cache server the
+// instance and the address its jobs reach the server at, which makes a shared cache server the
 // whole results service, as the built-in one is.
 func TestRunner_ExternalCacheServer_RegisterRevoke(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "remote-cache")
 	const secret = "shared-secret-for-tests"
-	remote, err := artifactcache.StartHandler(dir, "127.0.0.1", 0, secret, nil)
+	remote, err := artifactcache.StartHandler(dir, "127.0.0.2", 0, secret, nil) // advertised, never dialled
 	require.NoError(t, err)
 	defer remote.Close()
+	external := strings.Replace(remote.ExternalURL(), "127.0.0.2", "127.0.0.1", 1)
 	gitea := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"ok":true}`)
 	}))
@@ -172,7 +173,7 @@ func TestRunner_ExternalCacheServer_RegisterRevoke(t *testing.T) {
 
 	r := &Runner{
 		cfg: &config.Config{Cache: config.Cache{
-			ExternalServer: remote.ExternalURL(),
+			ExternalServer: external,
 			ExternalSecret: secret,
 		}},
 		envs: map[string]string{"ACTIONS_RESULTS_URL": gitea.URL},
@@ -180,7 +181,7 @@ func TestRunner_ExternalCacheServer_RegisterRevoke(t *testing.T) {
 
 	token := "external-task-token"
 	repo := "owner/repoX"
-	base := remote.ExternalURL() + "/_apis/artifactcache"
+	base := external + "/_apis/artifactcache"
 	probe := func() int {
 		req, _ := http.NewRequest(http.MethodGet, base+"/cache?keys=k&version=v", nil)
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -198,7 +199,7 @@ func TestRunner_ExternalCacheServer_RegisterRevoke(t *testing.T) {
 		"token must be accepted after registerCacheForTask")
 
 	// The server took the results service over, so the artifact half reaches Gitea through it.
-	require.Equal(t, remote.ExternalURL(), resultsURL)
+	require.Equal(t, external, resultsURL)
 	artifact, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
 		resultsURL+"/twirp/github.actions.results.api.v1.ArtifactService/CreateArtifact", nil)
 	require.NoError(t, err)
@@ -248,7 +249,7 @@ func TestRunner_ExternalCacheServer_RegisterRevoke(t *testing.T) {
 		ArchiveLocation string `json:"archiveLocation"`
 	}
 	require.NoError(t, decodeJSON(resp, &hit))
-	require.NotEmpty(t, hit.ArchiveLocation)
+	require.True(t, strings.HasPrefix(hit.ArchiveLocation, external), hit.ArchiveLocation)
 
 	dl, err := http.Get(hit.ArchiveLocation)
 	require.NoError(t, err)
