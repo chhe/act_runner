@@ -13,7 +13,7 @@ import (
 	"gitea.com/gitea/runner/internal/pkg/report"
 	"gitea.com/gitea/runner/internal/pkg/ver"
 
-	runnerv1 "gitea.dev/actions-proto-go/runner/v1"
+	runnerv1 "gitea.dev/actionslib/runner/v1"
 )
 
 // osReleasePath describes the host distribution on Linux; absent elsewhere, where the platform

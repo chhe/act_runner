@@ -4,8 +4,8 @@
 package client
 
 import (
-	"gitea.dev/actions-proto-go/ping/v1/pingv1connect"
-	"gitea.dev/actions-proto-go/runner/v1/runnerv1connect"
+	"gitea.dev/actionslib/ping/v1/pingv1connect"
+	"gitea.dev/actionslib/runner/v1/runnerv1connect"
 )
 
 // A Client manages communication with the runner.

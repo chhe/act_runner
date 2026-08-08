@@ -3,7 +3,11 @@
 
 package client
 
+import "gitea.dev/actionslib/pkg/protocol"
+
+// The headers are defined in the shared protocol package so that Gitea and the
+// runner cannot drift apart.
 const (
-	UUIDHeader  = "x-runner-uuid"
-	TokenHeader = "x-runner-token"
+	UUIDHeader  = protocol.UUIDHeader
+	TokenHeader = protocol.TokenHeader
 )

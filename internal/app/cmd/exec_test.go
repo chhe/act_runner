@@ -12,8 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"gitea.com/gitea/runner/act/model"
-
+	"gitea.dev/actionslib/pkg/model"
 	"github.com/stretchr/testify/require"
 	"go.yaml.in/yaml/v4"
 )

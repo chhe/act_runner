@@ -19,8 +19,8 @@ import (
 	"time"
 
 	"gitea.com/gitea/runner/act/common"
-	"gitea.com/gitea/runner/act/model"
 
+	"gitea.dev/actionslib/pkg/model"
 	"github.com/joho/godotenv"
 	log "github.com/sirupsen/logrus"
 	assert "github.com/stretchr/testify/assert"
@@ -312,7 +312,7 @@ func TestRunEvent(t *testing.T) {
 		{workdir, "workflow_dispatch-scalar", "workflow_dispatch", "", platforms, secrets},
 		{workdir, "workflow_dispatch-scalar-composite-action", "workflow_dispatch", "", platforms, secrets},
 		{workdir, "job-needs-context-contains-result", "push", "", platforms, secrets},
-		{"../model/testdata", "container-volumes", "push", "", platforms, secrets},
+		{workdir, "container-volumes", "push", "", platforms, secrets},
 		{workdir, "path-handling", "push", "", platforms, secrets},
 		{workdir, "do-not-leak-step-env-in-composite", "push", "", platforms, secrets},
 		{workdir, "set-env-step-env-override", "push", "", platforms, secrets},

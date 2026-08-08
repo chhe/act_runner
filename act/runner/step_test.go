@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"gitea.com/gitea/runner/act/common"
-	"gitea.com/gitea/runner/act/model"
 
+	"gitea.dev/actionslib/pkg/model"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"

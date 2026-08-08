@@ -17,9 +17,9 @@ import (
 
 	"gitea.com/gitea/runner/act/common"
 	"gitea.com/gitea/runner/act/container"
-	"gitea.com/gitea/runner/act/exprparser"
-	"gitea.com/gitea/runner/act/model"
 
+	"gitea.dev/actionslib/pkg/exprparser"
+	"gitea.dev/actionslib/pkg/model"
 	"github.com/docker/cli/cli/compose/loader"
 	log "github.com/sirupsen/logrus"
 	assert "github.com/stretchr/testify/assert"

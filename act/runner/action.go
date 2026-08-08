@@ -23,8 +23,8 @@ import (
 	"gitea.com/gitea/runner/act/common"
 	"gitea.com/gitea/runner/act/common/git"
 	"gitea.com/gitea/runner/act/container"
-	"gitea.com/gitea/runner/act/model"
 
+	"gitea.dev/actionslib/pkg/model"
 	"github.com/kballard/go-shellquote"
 )
 

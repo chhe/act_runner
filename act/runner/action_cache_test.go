@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"gitea.com/gitea/runner/act/common"
-	"gitea.com/gitea/runner/act/model"
 
+	"gitea.dev/actionslib/pkg/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

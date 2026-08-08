@@ -6,9 +6,8 @@ package run
 import (
 	"testing"
 
-	"gitea.com/gitea/runner/act/model"
-
-	runnerv1 "gitea.dev/actions-proto-go/runner/v1"
+	"gitea.dev/actionslib/pkg/model"
+	runnerv1 "gitea.dev/actionslib/runner/v1"
 	"github.com/stretchr/testify/require"
 	"go.yaml.in/yaml/v4"
 	"gotest.tools/v3/assert"

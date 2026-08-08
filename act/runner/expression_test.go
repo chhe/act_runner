@@ -9,9 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"gitea.com/gitea/runner/act/exprparser"
-	"gitea.com/gitea/runner/act/model"
-
+	"gitea.dev/actionslib/pkg/exprparser"
+	"gitea.dev/actionslib/pkg/model"
 	assert "github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	yaml "go.yaml.in/yaml/v4"
@@ -276,41 +275,6 @@ func TestInterpolate(t *testing.T) {
 			out := ee.Interpolate(context.Background(), table.in)
 			assertObject.Equal(table.out, out, table.in)
 		})
-	}
-}
-
-func TestSplitSubExpressions(t *testing.T) {
-	expr := func(text string) exprPart { return exprPart{text: text, isExpr: true} }
-	literal := func(text string) exprPart { return exprPart{text: text} }
-
-	for _, tt := range []struct {
-		in   string
-		want []exprPart
-	}{
-		{"Hello World", []exprPart{literal("Hello World")}},
-		{"${{ true }}", []exprPart{expr("true")}},
-		{"${{ true }} ${{ false }}", []exprPart{expr("true"), literal(" "), expr("false")}},
-		{"Hello ${{ 'World' }}", []exprPart{literal("Hello "), expr("'World'")}},
-		// a quote toggles string state, so a `}}` inside a string does not end the expression
-		{"${{ '}}' }}", []exprPart{expr("'}}'")}},
-		{"${{ '''}}''' }}", []exprPart{expr("'''}}'''")}},
-		{"${{ '''' }}", []exprPart{expr("''''")}},
-		{`${{ fromJSON('"}}"') }}`, []exprPart{expr(`fromJSON('"}}"')`)}},
-		{`${{ fromJSON('"\"}}\""') }}`, []exprPart{expr(`fromJSON('"\"}}\""')`)}},
-		{`${{ fromJSON('"''}}"') }}`, []exprPart{expr(`fromJSON('"''}}"')`)}},
-		// without a complete literal the value stays text, as GitHub's template reader leaves it
-		{"${{ 1", []exprPart{literal("${{ 1")}},
-		// a malformed part stays one part, so it cannot restructure its neighbours
-		{"${{ 1) && (2 }}", []exprPart{expr("1) && (2")}},
-	} {
-		got, err := splitSubExpressions(tt.in)
-		require.NoError(t, err, tt.in)
-		assert.Equal(t, tt.want, got, tt.in)
-	}
-
-	for _, in := range []string{"${{ 'a' }} ${{ b", "${{ 'a }}"} {
-		_, err := splitSubExpressions(in)
-		assert.ErrorContains(t, err, "unclosed expression", in)
 	}
 }
 

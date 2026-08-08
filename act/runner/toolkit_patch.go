@@ -13,7 +13,8 @@ import (
 
 	"gitea.com/gitea/runner/act/common"
 	"gitea.com/gitea/runner/act/common/git"
-	"gitea.com/gitea/runner/act/model"
+
+	"gitea.dev/actionslib/pkg/model"
 )
 
 // Actions bundle the @actions toolkit into their own JavaScript, and two of its lines keep it

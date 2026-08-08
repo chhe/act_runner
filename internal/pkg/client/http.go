@@ -13,8 +13,8 @@ import (
 	"gitea.com/gitea/runner/internal/pkg/ver"
 
 	"connectrpc.com/connect"
-	"gitea.dev/actions-proto-go/ping/v1/pingv1connect"
-	"gitea.dev/actions-proto-go/runner/v1/runnerv1connect"
+	"gitea.dev/actionslib/ping/v1/pingv1connect"
+	"gitea.dev/actionslib/runner/v1/runnerv1connect"
 )
 
 func getHTTPClient(endpoint string, insecure bool) *http.Client {

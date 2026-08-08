@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	pingv1 "gitea.dev/actions-proto-go/ping/v1"
+	pingv1 "gitea.dev/actionslib/ping/v1"
 	"github.com/stretchr/testify/require"
 )
 

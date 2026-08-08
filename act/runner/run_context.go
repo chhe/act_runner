@@ -27,10 +27,11 @@ import (
 
 	"gitea.com/gitea/runner/act/common"
 	"gitea.com/gitea/runner/act/container"
-	"gitea.com/gitea/runner/act/exprparser"
-	"gitea.com/gitea/runner/act/model"
+	"gitea.com/gitea/runner/act/ghcontext"
 	"gitea.com/gitea/runner/internal/pkg/lock"
 
+	"gitea.dev/actionslib/pkg/exprparser"
+	"gitea.dev/actionslib/pkg/model"
 	"github.com/docker/cli/cli/compose/loader"
 	"github.com/docker/go-connections/nat"
 	"github.com/moby/moby/api/types/mount"
@@ -1355,12 +1356,12 @@ func (rc *RunContext) getGithubContext(ctx context.Context) *model.GithubContext
 
 	ghc.SetBaseAndHeadRef()
 	repoPath := rc.Config.Workdir
-	ghc.SetRepositoryAndOwner(ctx, rc.Config.GitHubInstance, rc.Config.RemoteName, repoPath)
+	ghcontext.SetRepositoryAndOwner(ctx, ghc, rc.Config.GitHubInstance, rc.Config.RemoteName, repoPath)
 	if ghc.Ref == "" {
-		ghc.SetRef(ctx, rc.Config.DefaultBranch, repoPath)
+		ghcontext.SetRef(ctx, ghc, rc.Config.DefaultBranch, repoPath)
 	}
 	if ghc.Sha == "" {
-		ghc.SetSha(ctx, repoPath)
+		ghcontext.SetSha(ctx, ghc, repoPath)
 	}
 
 	ghc.SetRefTypeAndName()

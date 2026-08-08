@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"gitea.com/gitea/runner/act/common/git"
-	"gitea.com/gitea/runner/act/model"
 
+	"gitea.dev/actionslib/pkg/model"
 	"github.com/stretchr/testify/require"
 )
 

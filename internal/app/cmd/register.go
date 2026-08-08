@@ -22,8 +22,8 @@ import (
 	"gitea.com/gitea/runner/internal/pkg/ver"
 
 	"connectrpc.com/connect"
-	pingv1 "gitea.dev/actions-proto-go/ping/v1"
-	runnerv1 "gitea.dev/actions-proto-go/runner/v1"
+	pingv1 "gitea.dev/actionslib/ping/v1"
+	runnerv1 "gitea.dev/actionslib/runner/v1"
 	"github.com/mattn/go-isatty"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
