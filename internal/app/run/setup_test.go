@@ -56,6 +56,45 @@ func TestSetupLines(t *testing.T) {
 	}, r.setupLines(&runnerv1.Task{Id: 268506, Context: taskCtx}))
 }
 
+func TestSetupLinesInputs(t *testing.T) {
+	original := osReleasePath
+	osReleasePath = filepath.Join(t.TempDir(), "absent")
+	defer func() { osReleasePath = original }()
+
+	r := &Runner{name: "gitea-com-gitea-0003"}
+	taskCtx, err := structpb.NewStruct(map[string]any{
+		"job":        "test",
+		"repository": "gitea/runner",
+		"event_name": "workflow_dispatch",
+		"event": map[string]any{
+			"inputs": map[string]any{
+				"with_default": "default",
+				"required":     "required input",
+				"boolean":      true,
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{
+		"gitea-com-gitea-0003(version:" + ver.Version() + ")",
+		"::group::Runner Information",
+		"Task: 1",
+		"Job: test",
+		"Repository: gitea/runner",
+		"Triggered by event: workflow_dispatch",
+		"::endgroup::",
+		"::group::Inputs",
+		"boolean: true",
+		"required: required input",
+		"with_default: default",
+		"::endgroup::",
+		"::group::Operating System",
+		fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
+		"::endgroup::",
+	}, r.setupLines(&runnerv1.Task{Id: 1, Context: taskCtx}))
+}
+
 func TestPrettyOSName(t *testing.T) {
 	tests := map[string]struct {
 		osRelease string

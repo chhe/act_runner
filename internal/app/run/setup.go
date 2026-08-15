@@ -5,8 +5,10 @@ package run
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -14,6 +16,7 @@ import (
 	"gitea.com/gitea/runner/internal/pkg/ver"
 
 	runnerv1 "gitea.dev/actionslib/runner/v1"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // osReleasePath describes the host distribution on Linux; absent elsewhere, where the platform
@@ -46,9 +49,24 @@ func (r *Runner) setupLines(task *runnerv1.Task) []string {
 		"Repository: "+fields["repository"].GetStringValue(),
 		"Triggered by event: "+fields["event_name"].GetStringValue(),
 		"::endgroup::",
-		"::group::Operating System",
 	)
+	lines = append(lines, inputLines(fields)...)
+	lines = append(lines, "::group::Operating System")
 	lines = append(lines, osInfo()...)
+	return append(lines, "::endgroup::")
+}
+
+// inputLines lists the inputs the run was triggered with, as workflow_dispatch and workflow_call
+// carry them in the event payload. Empty when the event has none.
+func inputLines(fields map[string]*structpb.Value) []string {
+	inputs := fields["event"].GetStructValue().GetFields()["inputs"].GetStructValue().GetFields()
+	if len(inputs) == 0 {
+		return nil
+	}
+	lines := []string{"::group::Inputs"}
+	for _, name := range slices.Sorted(maps.Keys(inputs)) {
+		lines = append(lines, fmt.Sprintf("%s: %v", name, inputs[name].AsInterface()))
+	}
 	return append(lines, "::endgroup::")
 }
 
