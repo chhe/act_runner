@@ -502,7 +502,8 @@ func TestRunContext_GetBindsAndMounts(t *testing.T) {
 						},
 					},
 					Config: &Config{
-						BindWorkdir: false,
+						BindWorkdir:     false,
+						SharedToolCache: true, // so OverridesToolCache has a mount to displace
 					},
 				}
 				rc.Run.JobID = "job1"
@@ -543,25 +544,44 @@ func TestRunContext_GetBindsAndMounts(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("ToolCacheMount", func(t *testing.T) {
+		rc := &RunContext{
+			Name:   "TestRCName",
+			Run:    &model.Run{Workflow: &model.Workflow{Name: "TestWorkflowName"}},
+			Config: &Config{},
+		}
+
+		_, gotmount := rc.GetBindsAndMounts()
+		assert.NotContains(t, gotmount, sharedToolCacheVolume)
+
+		rc.Config.SharedToolCache = true
+		_, gotmount = rc.GetBindsAndMounts()
+		assert.Equal(t, container.DefaultToolCache, gotmount[sharedToolCacheVolume])
+	})
 }
 
 func TestRunContextValidVolumes(t *testing.T) {
 	rc := &RunContext{
 		Name:   "job",
 		Run:    &model.Run{Workflow: &model.Workflow{Name: "wf"}},
-		Config: &Config{ValidVolumes: []string{"my-vol", "/host/path"}},
+		Config: &Config{ValidVolumes: []string{"my-vol", "/host/path"}, SharedToolCache: true},
 	}
 	name := rc.jobContainerName()
 
 	got := rc.validVolumes()
 
-	// the configured volumes plus the four the runner mounts automatically
-	assert.Subset(t, got, []string{"my-vol", "/host/path", "act-toolcache", name, name + "-env", "/var/run/docker.sock"})
+	// the configured volumes plus the ones the runner mounts automatically
+	assert.Subset(t, got, []string{"my-vol", "/host/path", sharedToolCacheVolume, name, name + "-env", "/var/run/docker.sock"})
 
 	// deriving the list must never mutate or grow the shared Config slice: parallel matrix
 	// combinations share one *Config, and the previous in-place append was a data race.
 	assert.Equal(t, []string{"my-vol", "/host/path"}, rc.Config.ValidVolumes)
 	assert.Len(t, rc.validVolumes(), len(got), "repeated calls must be stable, not accumulate")
+
+	// a job may mount it only while the runner does
+	rc.Config.SharedToolCache = false
+	assert.NotContains(t, rc.validVolumes(), sharedToolCacheVolume)
 }
 
 func TestCleanupJobResourcesCleansServicesWithoutJobContainer(t *testing.T) {

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"gitea.com/gitea/runner/internal/pkg/config"
+
 	"gitea.dev/actionslib/pkg/model"
 	"github.com/stretchr/testify/require"
 	"go.yaml.in/yaml/v4"
@@ -26,6 +28,19 @@ func TestExecuteArgsResolve(t *testing.T) {
 
 	abs := filepath.Join(workdir, "abs")
 	require.Equal(t, abs, args.resolve(abs))
+}
+
+func TestSharedToolCache(t *testing.T) {
+	shared, err := sharedToolCache(config.ToolCacheModeShared)
+	require.NoError(t, err)
+	require.True(t, shared)
+
+	shared, err = sharedToolCache(config.ToolCacheModeNone)
+	require.NoError(t, err)
+	require.False(t, shared)
+
+	_, err = sharedToolCache("everyone")
+	require.ErrorContains(t, err, "tool-cache-mode")
 }
 
 func TestExecuteArgsPaths(t *testing.T) {

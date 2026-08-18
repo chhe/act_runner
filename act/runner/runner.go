@@ -91,6 +91,7 @@ type Config struct {
 	PlatformPicker                    func(labels []string) string // platform picker, it will take precedence over Platforms if isn't nil
 	JobLoggerLevel                    *log.Level                   // the level of job logger
 	ValidVolumes                      []string                     // only volumes (and bind mounts) in this slice can be mounted on the job container or service containers
+	SharedToolCache                   bool                         // one tool cache for all jobs instead of one per job
 	InsecureSkipTLS                   bool                         // whether to skip verifying TLS certificate of the Gitea instance
 	MaxParallel                       int                          // max parallel jobs to run across all workflows (0 = no limit, uses CPU count)
 	AllocatePTY                       bool                         // allocate a pseudo-TTY for each step's process

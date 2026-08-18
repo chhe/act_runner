@@ -42,6 +42,23 @@ cache:
 	require.NoError(t, err)
 }
 
+func TestLoadDefault_ToolCacheMode(t *testing.T) {
+	cfg, err := LoadDefault("")
+	require.NoError(t, err)
+	assert.Equal(t, ToolCacheModeNone, cfg.Runner.ToolCacheMode)
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("runner:\n  tool_cache_mode: shared\n"), 0o600))
+	cfg, err = LoadDefault(path)
+	require.NoError(t, err)
+	assert.Equal(t, ToolCacheModeShared, cfg.Runner.ToolCacheMode)
+
+	require.NoError(t, os.WriteFile(path, []byte("runner:\n  tool_cache_mode: everyone\n"), 0o600))
+	_, err = LoadDefault(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tool_cache_mode")
+}
+
 func TestLoadDefault_DefaultsWorkdirCleanupAge(t *testing.T) {
 	cfg, err := LoadDefault("")
 	require.NoError(t, err)

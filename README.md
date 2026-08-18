@@ -158,6 +158,32 @@ An edit keeps the comments and the key order of the file. Indentation becomes tw
 
 `config get`, `set`, `add` and `remove` use `config.yaml` (or `config.yml`) from the working directory, then from the directory of the binary, and print their choice to stderr. `config init` writes `config.yaml` in the working directory, and refuses to overwrite an existing config without `--force`. Pass `-c` for another path.
 
+#### Tool cache
+
+Setup actions like `setup-go` install tools into `RUNNER_TOOL_CACHE`, which is `/opt/hostedtoolcache` inside a job. `runner.tool_cache_mode` selects what backs it:
+
+| Mode | Tool cache | Trade-off |
+| --- | --- | --- |
+| `none` (default) | Per job, provided by the job image | A version the image lacks is downloaded in every job |
+| `shared` | One volume reused by every job | Two jobs writing the same tool version at once corrupt it, so use it only with `runner.capacity: 1` |
+
+With `none`, tools must come from the job image. Install them into `/opt/hostedtoolcache/<tool>/<version>/<arch>`, with an empty `<arch>.complete` file next to the directory:
+
+```dockerfile
+RUN GO=$(curl -fsSL 'https://go.dev/dl/?mode=json' | grep -oP '"version": "\Kgo1\.26\.[0-9]*' | head -1); \
+  DIR="/opt/hostedtoolcache/go/${GO#go}/x64" && \
+  mkdir -p "$(dirname "$DIR")" && \
+  curl -fsSL "https://dl.google.com/go/${GO}.linux-amd64.tar.gz" | tar -xz -C /tmp && \
+  mv /tmp/go "$DIR" && \
+  touch "${DIR}.complete"
+```
+
+A workflow requesting a minor version, `go-version: "1.26"`, resolves to the newest matching version in the cache, so a patch update in the image still hits it.
+
+Of the [runner images](https://gitea.com/gitea/runner-images), the `-full` flavour is the one that ships tools in this layout.
+
+`gitea-runner exec` reads no config file and takes `--tool-cache-mode` instead, defaulting to `none`.
+
 #### Environment variables
 
 Earlier releases let a few environment variables (`GITEA_DEBUG`, `GITEA_TRACE`, `GITEA_RUNNER_CAPACITY`, `GITEA_RUNNER_FILE`, `GITEA_RUNNER_ENVIRON`, `GITEA_RUNNER_ENV_FILE`) override parts of the config. They are gone, use the YAML file for all settings. The Docker images still read their own variables, such as `RUNNER_STATE_FILE`, see [scripts/run.sh](scripts/run.sh) and the container documentation below.

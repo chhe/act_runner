@@ -229,14 +229,19 @@ func (rc *RunContext) containerDaemonSocket() string {
 	return rc.Config.ContainerDaemonSocket
 }
 
+const sharedToolCacheVolume = "act-toolcache" // mounted only when the tool cache is shared
+
 // validVolumes returns the volumes allowed on this job's containers: the configured base
 // plus the volumes the runner mounts automatically. It derives a fresh slice every call and
 // never mutates the shared Config (see containerDaemonSocket).
 func (rc *RunContext) validVolumes() []string {
 	name := rc.jobContainerName()
 	volumes := slices.Clone(rc.Config.ValidVolumes)
+	if rc.Config.SharedToolCache {
+		volumes = append(volumes, sharedToolCacheVolume)
+	}
 	// TODO: add a new configuration to control whether the docker daemon can be mounted
-	return append(volumes, "act-toolcache", name, name+"-env",
+	return append(volumes, name, name+"-env",
 		getDockerDaemonSocketMountPath(rc.containerDaemonSocket()))
 }
 
@@ -309,8 +314,10 @@ func (rc *RunContext) GetBindsAndMounts() ([]string, map[string]string) {
 	if daemonSocket := rc.containerDaemonSocket(); daemonSocket != "-" && !claimed["/var/run/docker.sock"] {
 		binds = append(binds, getDockerDaemonSocketMountPath(daemonSocket)+":/var/run/docker.sock")
 	}
-	if toolCache := rc.toolCache(container.DefaultToolCache); !claimed[toolCache] {
-		mounts["act-toolcache"] = toolCache
+	if rc.Config.SharedToolCache {
+		if toolCache := rc.toolCache(container.DefaultToolCache); !claimed[toolCache] {
+			mounts[sharedToolCacheVolume] = toolCache
+		}
 	}
 	mounts[name+"-env"] = ext.GetActPath() // runner-internal, never overridable
 
@@ -360,7 +367,11 @@ func (rc *RunContext) startHostEnvironment() common.Executor {
 		if err := os.MkdirAll(runnerTmp, 0o777); err != nil {
 			return err
 		}
-		toolCache := rc.toolCache(filepath.Join(cacheDir, "tool_cache"))
+		toolCacheParent := miscpath // per job, so cleanup removes it with the job
+		if rc.Config.SharedToolCache {
+			toolCacheParent = cacheDir
+		}
+		toolCache := rc.toolCache(filepath.Join(toolCacheParent, "tool_cache"))
 		if err := os.MkdirAll(toolCache, 0o777); err != nil {
 			return err
 		}

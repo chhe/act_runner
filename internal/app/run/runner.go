@@ -159,8 +159,8 @@ func (r *Runner) OnIdle(ctx context.Context) {
 	}
 	// Host mode: reclaim per-job scratch dirs left behind when HostEnvironment
 	// cleanup timed out (e.g. a delete stalled by an AV/EDR filter driver). They
-	// sit under the host workdir parent alongside the shared tool_cache, which
-	// the name match leaves untouched. No-op when no host-mode job ever ran.
+	// sit under the host workdir parent next to a shared tool_cache, which the name
+	// match leaves untouched. No-op when no host-mode job ever ran.
 	if hostRoot := filepath.FromSlash(r.cfg.Host.WorkdirParent); hostRoot != "" {
 		r.cleanupStaleDirs(ctx, hostRoot, isHostScratchDir)
 	}
@@ -219,7 +219,7 @@ func isTaskIDDir(name string) bool {
 // isHostScratchDir reports whether name is a per-job host-mode scratch dir:
 // hex.EncodeToString of 8 random bytes, i.e. exactly 16 lowercase hex chars
 // (see startHostEnvironment in act/runner/run_context.go). The narrow match
-// leaves the sibling shared "tool_cache" dir and any operator data untouched.
+// leaves a sibling shared "tool_cache" dir and any operator data untouched.
 func isHostScratchDir(name string) bool {
 	if len(name) != 16 {
 		return false
@@ -522,6 +522,7 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 		JobCompletedHook:                  r.cfg.Runner.Hooks.JobCompleted,
 		Vars:                              task.Vars,
 		ValidVolumes:                      r.cfg.Container.ValidVolumes,
+		SharedToolCache:                   r.cfg.Runner.ToolCacheMode == config.ToolCacheModeShared,
 		InsecureSkipTLS:                   r.cfg.Runner.Insecure,
 		RunnerName:                        r.name,
 	}
