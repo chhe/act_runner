@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/joho/godotenv"
 	log "github.com/sirupsen/logrus"
 	"go.yaml.in/yaml/v4"
@@ -81,6 +82,47 @@ type Cache struct {
 	ExternalSecretFile string `yaml:"external_secret_file"` // ExternalSecretFile is the path to a file holding the ExternalSecret value, so the secret can be mounted instead of stored in the config file. LoadDefault reads it into ExternalSecret; setting both is an error.
 	OfflineMode        bool   `yaml:"offline_mode"`         // OfflineMode reuses a cached action without fetching from the remote; a moved tag or branch stays at the cached commit until the cache entry is removed.
 	V2                 *bool  `yaml:"v2"`                   // V2 serves the actions cache service v2 API to jobs, used by actions/cache@v4.2 and later, and edits the action bundles that would otherwise refuse it. Unset means enabled.
+
+	// Eviction settings, ignored when ExternalServer is set since that server applies its own.
+	Retention     time.Duration `yaml:"retention"`       // Retention removes entries nothing has read or written within this window. Default 168h, 0 keeps them regardless of age.
+	RepoSizeLimit Size          `yaml:"repo_size_limit"` // RepoSizeLimit caps one repository, evicting least recently accessed first. Default 10GB, 0 is no limit.
+	SizeLimit     Size          `yaml:"size_limit"`      // SizeLimit caps the whole cache the same way. No limit by default.
+	SweepInterval time.Duration `yaml:"sweep_interval"`  // SweepInterval is the minimum time between two eviction sweeps. Default 1h; a cadence has no "off".
+}
+
+// DefaultCache returns the cache eviction defaults, seeded before the file is read so a
+// written 0 can mean off. SizeLimit stays zero: the free space floor bounds the whole cache.
+func DefaultCache() Cache {
+	return Cache{
+		Retention:     7 * 24 * time.Hour,
+		RepoSizeLimit: 10 * 1024 * 1024 * 1024,
+		SweepInterval: time.Hour,
+	}
+}
+
+// Size is a byte count written the way people say it: 10GB, 512mb, 1TiB, or a plain number
+// of bytes. Units are binary and case-insensitive, so GB and GiB both mean 1024³.
+type Size int64
+
+func (s *Size) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.ScalarNode {
+		return fmt.Errorf("line %d: size must be a scalar such as 10GB", value.Line)
+	}
+	size, err := parseSize(value.Value)
+	if err != nil {
+		return fmt.Errorf("line %d: %w", value.Line, err)
+	}
+	*s = size
+	return nil
+}
+
+// parseSize reads a Size such as 10GB, 512mb, 1TiB or a plain byte count.
+func parseSize(value string) (Size, error) {
+	bytes, err := units.RAMInBytes(strings.TrimSpace(value))
+	if err != nil {
+		return 0, fmt.Errorf("%q is not a size such as 10GB, 512MB or a plain byte count", value)
+	}
+	return Size(bytes), nil
 }
 
 // Container represents the configuration for the container.
@@ -142,7 +184,7 @@ type Config struct {
 // LoadDefault returns the default configuration.
 // If file is not empty, it will be used to load the configuration.
 func LoadDefault(file string) (*Config, error) {
-	cfg := &Config{}
+	cfg := &Config{Cache: DefaultCache()}
 	definedRunnerKeys := map[string]bool{}
 	if file != "" {
 		content, err := os.ReadFile(file)

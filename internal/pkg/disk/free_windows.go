@@ -3,11 +3,12 @@
 
 //go:build windows
 
-package run
+package disk
 
 import "golang.org/x/sys/windows"
 
-func freeDiskBytes(path string) (uint64, error) {
+// FreeBytes reports the space available to an unprivileged user on the volume holding path.
+func FreeBytes(path string) (uint64, error) {
 	pathPtr, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return 0, err

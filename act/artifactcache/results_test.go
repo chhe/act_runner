@@ -24,7 +24,7 @@ func TestFrontResultsService(t *testing.T) {
 	}))
 	defer gitea.Close()
 
-	handler, err := StartHandler(t.TempDir(), "127.0.0.1", 0, "", nil)
+	handler, err := StartHandler(Options{Dir: t.TempDir(), OutboundIP: "127.0.0.1"})
 	require.NoError(t, err)
 	defer handler.Close()
 	const token = "forward-token"

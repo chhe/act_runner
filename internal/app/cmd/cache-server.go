@@ -10,6 +10,7 @@ import (
 	"os/signal"
 
 	"gitea.com/gitea/runner/act/artifactcache"
+	"gitea.com/gitea/runner/internal/app/run"
 	"gitea.com/gitea/runner/internal/pkg/config"
 
 	log "github.com/sirupsen/logrus"
@@ -52,13 +53,14 @@ func runCacheServer(configFile *string, cacheArgs *cacheServerArgs) func(cmd *co
 		if secret == "" {
 			return errors.New("cache.external_secret (or cache.external_secret_file) must be set for cache-server; configure the same value on each runner that points at this server via cache.external_server")
 		}
-		cacheHandler, err := artifactcache.StartHandler(
-			dir,
-			host,
-			port,
-			secret,
-			log.StandardLogger().WithField("module", "cache_request"),
-		)
+		cacheHandler, err := artifactcache.StartHandler(artifactcache.Options{
+			Dir:            dir,
+			OutboundIP:     host,
+			Port:           port,
+			InternalSecret: secret,
+			Policy:         run.CachePolicy(cfg),
+			Logger:         log.StandardLogger().WithField("module", "cache_request"),
+		})
 		if err != nil {
 			return err
 		}

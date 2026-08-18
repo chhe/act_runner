@@ -27,6 +27,7 @@ import (
 	"gitea.com/gitea/runner/act/runner"
 	"gitea.com/gitea/runner/internal/pkg/client"
 	"gitea.com/gitea/runner/internal/pkg/config"
+	"gitea.com/gitea/runner/internal/pkg/disk"
 	"gitea.com/gitea/runner/internal/pkg/labels"
 	"gitea.com/gitea/runner/internal/pkg/metrics"
 	"gitea.com/gitea/runner/internal/pkg/report"
@@ -89,17 +90,18 @@ func NewRunner(cfg *config.Config, reg *config.Registration, cli client.Client) 
 	var cacheHandler *artifactcache.Handler
 	if cfg.Cache.Enabled == nil || *cfg.Cache.Enabled {
 		if cfg.Cache.ExternalServer != "" {
+			warnIgnoredCachePolicy(cfg)
 			// The v1 client appends its path to this without a separator, so the slash is required.
 			envs["ACTIONS_CACHE_URL"] = strings.TrimRight(cfg.Cache.ExternalServer, "/") + "/"
 		} else {
 			warnIgnoredCacheSecret(cfg)
-			handler, err := artifactcache.StartHandler(
-				cfg.Cache.Dir,
-				cfg.Cache.Host,
-				cfg.Cache.Port,
-				"",
-				log.StandardLogger().WithField("module", "cache_request"),
-			)
+			handler, err := artifactcache.StartHandler(artifactcache.Options{
+				Dir:        cfg.Cache.Dir,
+				OutboundIP: cfg.Cache.Host,
+				Port:       cfg.Cache.Port,
+				Policy:     CachePolicy(cfg),
+				Logger:     log.StandardLogger().WithField("module", "cache_request"),
+			})
 			if err != nil {
 				log.Errorf("cannot init cache server, it will be disabled: %v", err)
 				// go on
@@ -693,7 +695,7 @@ func checkFreeDisk(cfg *config.Config) (bool, string) {
 		root = filepath.FromSlash("/" + strings.TrimLeft(cfg.Container.WorkdirParent, "/"))
 	}
 	root = nearestExistingPath(root)
-	available, err := freeDiskBytes(root)
+	available, err := disk.FreeBytes(root)
 	if err != nil {
 		return false, fmt.Sprintf("cannot determine free disk space for %s: %v", root, err)
 	}
@@ -724,6 +726,35 @@ func (r *Runner) Declare(ctx context.Context, labels []string) (*connect.Respons
 		Labels:       labels,
 		Capabilities: RunnerCapabilities(),
 	}))
+}
+
+// minFreeDisk keeps the cache from growing past the point where the runner stops taking
+// work, but only when health checks are on, since the key is documented as opt-in.
+func minFreeDisk(cfg *config.Config) int64 {
+	if !cfg.HealthCheck.Enabled {
+		return 0
+	}
+	return cfg.HealthCheck.MinFreeDiskSpaceMB * 1024 * 1024
+}
+
+// CachePolicy maps the cache config onto the cache server's own type, in bytes not MiB.
+func CachePolicy(cfg *config.Config) artifactcache.Policy {
+	return artifactcache.Policy{
+		Retention:     cfg.Cache.Retention,
+		RepoSizeLimit: int64(cfg.Cache.RepoSizeLimit),
+		SizeLimit:     int64(cfg.Cache.SizeLimit),
+		SweepInterval: cfg.Cache.SweepInterval,
+		MinFreeDisk:   minFreeDisk(cfg),
+	}
+}
+
+// warnIgnoredCachePolicy flags eviction settings configured on a runner that points at an external cache server.
+func warnIgnoredCachePolicy(cfg *config.Config) {
+	defaults := config.DefaultCache()
+	if cfg.Cache.Retention != defaults.Retention || cfg.Cache.RepoSizeLimit != defaults.RepoSizeLimit ||
+		cfg.Cache.SizeLimit != defaults.SizeLimit || cfg.Cache.SweepInterval != defaults.SweepInterval {
+		log.Warn("cache eviction settings are ignored when cache.external_server is set; configure them on that server instead")
+	}
 }
 
 // warnIgnoredCacheSecret flags an external cache server secret configured on a runner that uses the built-in cache server.

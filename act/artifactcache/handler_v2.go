@@ -77,6 +77,7 @@ func (h *Handler) v2CreateCacheEntry(w http.ResponseWriter, r *http.Request, _ h
 		h.twirpError(w, r, twirpInternal, err)
 		return
 	} else if existing != nil {
+		h.touch(db, existing) // the client skips the upload, so this is the only sign the entry is still in use
 		h.twirpNotOK(w, r)
 		return
 	}

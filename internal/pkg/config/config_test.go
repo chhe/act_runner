@@ -168,6 +168,37 @@ runner:
 	assert.Equal(t, 5*time.Minute, cfg.Runner.PostTaskScriptTimeout)
 }
 
+func TestLoadDefault_LoadsCacheEviction(t *testing.T) {
+	write := func(t *testing.T, body string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+		return path
+	}
+
+	t.Run("sizes accept any spelling of the unit", func(t *testing.T) {
+		cfg, err := LoadDefault(write(t, "cache:\n  retention: 336h\n  repo_size_limit: 50gb\n  size_limit: 1TiB\n  sweep_interval: 15m\n"))
+		require.NoError(t, err)
+		assert.Equal(t, 336*time.Hour, cfg.Cache.Retention)
+		assert.Equal(t, Size(50*1024*1024*1024), cfg.Cache.RepoSizeLimit)
+		assert.Equal(t, Size(1024*1024*1024*1024), cfg.Cache.SizeLimit)
+		assert.Equal(t, 15*time.Minute, cfg.Cache.SweepInterval)
+	})
+
+	t.Run("zero turns a limit off where an absent key keeps its default", func(t *testing.T) {
+		cfg, err := LoadDefault(write(t, "cache:\n  repo_size_limit: 0\n"))
+		require.NoError(t, err)
+		assert.Zero(t, cfg.Cache.RepoSizeLimit)
+		assert.Equal(t, DefaultCache().Retention, cfg.Cache.Retention, "an absent key still defaults")
+	})
+
+	t.Run("a bad size names the offending value", func(t *testing.T) {
+		_, err := LoadDefault(write(t, "cache:\n  repo_size_limit: banana\n"))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "banana")
+	})
+}
+
 func TestLoadDefault_LoadsJobHooks(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")

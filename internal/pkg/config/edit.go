@@ -26,7 +26,10 @@ const (
 	kindSection
 )
 
-var durationType = reflect.TypeFor[time.Duration]()
+var (
+	durationType = reflect.TypeFor[time.Duration]()
+	sizeType     = reflect.TypeFor[Size]()
+)
 
 // GetValue renders a flat list or mapping one entry per line, and anything nested as YAML.
 func GetValue(file, path string) (string, error) {
@@ -535,6 +538,13 @@ func scalarNode(typ reflect.Type, value string) (*yaml.Node, error) {
 			return nil, fmt.Errorf("%q is not a duration such as 30s, 5m or 3h", value)
 		}
 		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: duration.String()}, nil
+	}
+
+	if typ == sizeType {
+		if _, err := parseSize(value); err != nil {
+			return nil, err
+		}
+		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}, nil
 	}
 
 	switch typ.Kind() {

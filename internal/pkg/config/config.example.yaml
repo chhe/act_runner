@@ -159,6 +159,20 @@ cache:
   # the action's own bundle, keeping the untouched copy beside it. The same edit lets the stock
   # upload-artifact and download-artifact work here. A bundle that does not match is left alone.
   #v2: true
+  # How the cache server discards entries, ignored when external_server is set since that
+  # server applies its own. Leave a setting out for its default; 0s or 0 turns the three
+  # limits off. Sizes accept 10GB, 512mb, 1TiB or a plain byte count, binary either way.
+  # Whatever these allow, the cache still sheds entries to keep free space on its volume
+  # above health_check.min_free_disk_space_mb when health checks are enabled.
+  # Remove entries nothing has read or written within this window. Only last access counts.
+  #retention: 168h
+  # Cap one repository, removing its least recently accessed entries until it fits. An entry
+  # larger than the limit is dropped rather than emptying the repository to make room.
+  #repo_size_limit: 10GB
+  # Cap the whole cache the same way. Off by default, since the free space floor bounds it.
+  #size_limit: 0
+  # Minimum time between two eviction sweeps. This one has no "off".
+  #sweep_interval: 1h
 
 container:
   # Specifies the network to which the container will connect.

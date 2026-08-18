@@ -143,9 +143,13 @@ func (s *Storage) Serve(w http.ResponseWriter, r *http.Request, id uint64) {
 	http.ServeFile(w, r, name)
 }
 
-func (s *Storage) Remove(id uint64) {
-	_ = os.Remove(s.filename(id))
-	_ = os.RemoveAll(s.tempDir(id))
+// Remove deletes an entry's blob and any staged parts. It reports failure so the caller can
+// keep the entry and retry, rather than dropping the only reference to bytes on disk.
+func (s *Storage) Remove(id uint64) error {
+	if err := os.Remove(s.filename(id)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.RemoveAll(s.tempDir(id))
 }
 
 func (s *Storage) filename(id uint64) string {

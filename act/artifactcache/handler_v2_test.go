@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -67,16 +66,6 @@ func getURL(t *testing.T, url string) []byte {
 	return body
 }
 
-func startTestHandler(t *testing.T) *Handler {
-	t.Helper()
-
-	handler, err := StartHandler(filepath.Join(t.TempDir(), "artifactcache"), "127.0.0.1", 0, "", nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = handler.Close() })
-	handler.RegisterJob(testToken, JobCredential{Repo: testRepo})
-	return handler
-}
-
 // saveV2 runs the reserve/upload/finalize sequence and returns the finalize response along
 // with the upload URL it used.
 func saveV2(t *testing.T, handler *Handler, key, version string, content []byte) (finalized map[string]any, uploadURL string) {
@@ -98,7 +87,7 @@ func saveV2(t *testing.T, handler *Handler, key, version string, content []byte)
 // URLs it is handed: unsigned requests are refused, an upload URL cannot be replayed to read
 // or to replace a finalized entry.
 func TestCacheServiceV2RoundTrip(t *testing.T) {
-	handler := startTestHandler(t)
+	handler := newTestHandler(t, Policy{})
 	content := []byte("the cached archive")
 
 	unsigned := fmt.Sprintf("%s%s/1", handler.ExternalURL(), blobPath)
@@ -127,7 +116,7 @@ func TestCacheServiceV2RoundTrip(t *testing.T) {
 // A large archive is staged as blocks and only put in order by the final block list, so
 // blocks that arrive out of order must still be assembled the way the client asked.
 func TestCacheServiceV2BlockUpload(t *testing.T) {
-	handler := startTestHandler(t)
+	handler := newTestHandler(t, Policy{})
 
 	created := v2Call(t, handler, testClient, "CreateCacheEntry", map[string]any{"key": "blocks", "version": "v1"})
 	uploadURL, _ := created["signed_upload_url"].(string)
@@ -164,7 +153,7 @@ func TestCacheServiceV2BlockUpload(t *testing.T) {
 }
 
 func TestCacheServiceV2Lookups(t *testing.T) {
-	handler := startTestHandler(t)
+	handler := newTestHandler(t, Policy{})
 	saved, _ := saveV2(t, handler, "deps-abc", "v1", []byte("x"))
 	require.Equal(t, true, saved["ok"])
 

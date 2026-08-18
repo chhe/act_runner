@@ -5,6 +5,7 @@
 package artifactcache
 
 import (
+	"cmp"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -20,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +29,7 @@ import (
 	"time"
 
 	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/internal/pkg/disk"
 
 	"github.com/julienschmidt/httprouter"
 	"github.com/sirupsen/logrus"
@@ -103,19 +106,38 @@ type Handler struct {
 
 	credMu sync.RWMutex
 	creds  map[string]*credEntry
+
+	policy Policy
+
+	// freeDisk is a field so tests can drive evictForFreeSpace without a full volume.
+	freeDisk func(string) (uint64, error)
+}
+
+// Options configures a cache server started by StartHandler; the zero value is usable.
+type Options struct {
+	Dir        string
+	OutboundIP string
+	Port       uint16
+
+	// InternalSecret, when non-empty, enables a control-plane API at
+	// /_internal/{register,revoke} that lets a remote runner pre-register the
+	// per-job ACTIONS_RUNTIME_TOKENs it expects this server to honor. The
+	// embedded in-process handler leaves it empty and registers tokens via the
+	// in-process RegisterJob method directly.
+	InternalSecret string
+
+	Policy Policy
+	Logger logrus.FieldLogger
 }
 
 // StartHandler opens the on-disk cache store and starts the HTTP server.
-//
-// internalSecret, when non-empty, enables a control-plane API at
-// /_internal/{register,revoke} that lets a remote runner pre-register the
-// per-job ACTIONS_RUNTIME_TOKENs it expects this server to honor. The
-// embedded in-process handler leaves it empty and registers tokens via the
-// in-process RegisterJob method directly.
-func StartHandler(dir, outboundIP string, port uint16, internalSecret string, logger logrus.FieldLogger) (*Handler, error) {
+func StartHandler(opts Options) (*Handler, error) {
+	dir, logger := opts.Dir, opts.Logger
 	h := &Handler{
 		creds:          make(map[string]*credEntry),
-		internalSecret: internalSecret,
+		internalSecret: opts.InternalSecret,
+		policy:         opts.Policy.withDefaults(),
+		freeDisk:       disk.FreeBytes,
 	}
 
 	if logger == nil {
@@ -145,8 +167,8 @@ func StartHandler(dir, outboundIP string, port uint16, internalSecret string, lo
 	}
 	h.storage = storage
 
-	if outboundIP != "" {
-		h.outboundIP = outboundIP
+	if opts.OutboundIP != "" {
+		h.outboundIP = opts.OutboundIP
 	} else if ip := common.GetOutboundIP(); ip == nil {
 		return nil, errors.New("unable to determine outbound IP address")
 	} else {
@@ -185,7 +207,7 @@ func StartHandler(dir, outboundIP string, port uint16, internalSecret string, lo
 	// can break Docker Desktop variants where the host's outbound IP is not
 	// routable from inside the container network. Authentication is enforced
 	// by the bearer middleware and per-repo scoping, not by reachability.
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", opts.Port))
 	if err != nil {
 		return nil, err
 	}
@@ -390,6 +412,9 @@ func (h *Handler) lookupCache(db *bolthold.Store, repo string, keys []string, ve
 		_ = db.Delete(cache.ID, cache)
 		return nil, nil //nolint:nilnil // absence is not an error here
 	}
+	// Handing out a download URL counts as access, or eviction could drop the entry between
+	// this call and the GET that follows it.
+	h.touch(db, cache)
 	return cache, nil
 }
 
@@ -527,13 +552,22 @@ func (h *Handler) commitCache(cache *Cache) error {
 	// write real size back to cache, it may be different from the current value when the request doesn't specify it.
 	cache.Size = written
 	cache.Complete = true
+	cache.UsedAt = time.Now().Unix() // a just-written entry counts as accessed, so it cannot be its own eviction victim
 
 	db, err := h.openDB()
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	return db.Update(cache.ID, cache)
+	if err := db.Update(cache.ID, cache); err != nil {
+		return err
+	}
+	// A commit is the only thing that grows the store, so the only thing that can push the
+	// volume under the floor.
+	h.evictRepo(db, cache.Repo)
+	h.evictTotal(db)
+	h.evictForFreeSpace(db)
+	return nil
 }
 
 // GET /_apis/artifactcache/artifacts/:id
@@ -821,11 +855,42 @@ func (h *Handler) touchCache(id uint64, requireIncomplete bool) error {
 }
 
 const (
-	keepUsed   = 30 * 24 * time.Hour
-	keepUnused = 7 * 24 * time.Hour
-	keepTemp   = 5 * time.Minute
-	keepOld    = 5 * time.Minute
+	miB = 1024 * 1024
+
+	defaultSweepInterval = time.Hour
+
+	// inUseGrace matches artifactURLTTL so an entry outlives every signed URL still usable
+	// for it, and no sweep cuts off a download in progress.
+	inUseGrace = artifactURLTTL
+
+	// uploadStallTimeout is how long a reservation may sit without a chunk before it counts
+	// as abandoned. Widening it also widens the window for findExactCache to hand a finalize
+	// a stale reservation.
+	uploadStallTimeout = 5 * time.Minute
+
+	defaultMinFreeDisk = 1024 * miB
 )
+
+// Policy bounds what the cache server keeps: a retention window counted from last access,
+// and size limits that evict least recently accessed first. A zero limit is no limit.
+type Policy struct {
+	Retention     time.Duration // Retention removes entries nothing has read or written within this window. Zero keeps them regardless of age.
+	RepoSizeLimit int64         // RepoSizeLimit caps one repository's completed entries in bytes, evicting least recently accessed first.
+	SizeLimit     int64         // SizeLimit caps every repository's completed entries together, in bytes.
+	SweepInterval time.Duration // SweepInterval is the minimum time between two eviction sweeps.
+	MinFreeDisk   int64         // MinFreeDisk is volume headroom the cache will not eat into. Tracks the runner's health-check floor rather than taking a key of its own.
+}
+
+func (p Policy) withDefaults() Policy {
+	// The limits default in config.LoadDefault, so a written 0 means off.
+	if p.MinFreeDisk <= 0 {
+		p.MinFreeDisk = defaultMinFreeDisk
+	}
+	if p.SweepInterval <= 0 {
+		p.SweepInterval = defaultSweepInterval
+	}
+	return p
+}
 
 func (h *Handler) gcCache() {
 	if h.gcing.Load() {
@@ -836,7 +901,7 @@ func (h *Handler) gcCache() {
 	}
 	defer h.gcing.Store(false)
 
-	if time.Since(h.gcAt) < time.Hour {
+	if time.Since(h.gcAt) < h.policy.SweepInterval {
 		h.logger.Debugf("skip gc: %v", h.gcAt.String())
 		return
 	}
@@ -849,93 +914,206 @@ func (h *Handler) gcCache() {
 	}
 	defer db.Close()
 
-	// Remove the caches which are not completed for a while, they are most likely to be broken.
-	var caches []*Cache
-	if err := db.Find(&caches, bolthold.
-		Where("UsedAt").Lt(time.Now().Add(-keepTemp).Unix()).
-		And("Complete").Eq(false),
-	); err != nil {
-		h.logger.Warnf("find caches: %v", err)
-	} else {
-		for _, cache := range caches {
-			h.storage.Remove(cache.ID)
-			if err := db.Delete(cache.ID, cache); err != nil {
-				h.logger.Warnf("delete cache: %v", err)
-				continue
-			}
-			h.logger.Infof("deleted cache: %+v", cache)
-		}
+	h.evictIncomplete(db)
+	h.evictExpired(db)
+	h.evictSuperseded(db)
+	h.evictOversized(db)
+	h.evictForFreeSpace(db)
+}
+
+// evictForFreeSpace bounds the volume itself, so it also covers bytes the cache never
+// accounted for.
+func (h *Handler) evictForFreeSpace(db *bolthold.Store) {
+	free, err := h.freeDisk(h.dir)
+	if err != nil {
+		h.logger.Debugf("free disk check: %v", err) // unsupported platform, treat as unavailable rather than full
+		return
+	}
+	if free >= uint64(h.policy.MinFreeDisk) {
+		return
 	}
 
-	// Remove the old caches which have not been used recently.
-	caches = caches[:0]
-	if err := db.Find(&caches, bolthold.
-		Where("UsedAt").Lt(time.Now().Add(-keepUnused).Unix()),
-	); err != nil {
-		h.logger.Warnf("find caches: %v", err)
-	} else {
-		for _, cache := range caches {
-			h.storage.Remove(cache.ID)
-			if err := db.Delete(cache.ID, cache); err != nil {
-				h.logger.Warnf("delete cache: %v", err)
-				continue
-			}
-			h.logger.Infof("deleted cache: %+v", cache)
-		}
+	caches := h.completedByUse(db)
+	total, shortfall := totalSize(caches), h.policy.MinFreeDisk-int64(free)
+	if total <= shortfall {
+		// Say so, or shedding everything and still being short reads as the backstop working.
+		h.logger.Warnf("cache volume is %d MiB short of the free space floor with only %d MiB of cache on it; something else is filling it", shortfall/miB, total/miB)
 	}
+	h.evictTo(db, caches, total-shortfall, "the cache volume")
+}
 
-	// Remove the old caches which are too old.
-	caches = caches[:0]
-	if err := db.Find(&caches, bolthold.
-		Where("CreatedAt").Lt(time.Now().Add(-keepUsed).Unix()),
-	); err != nil {
-		h.logger.Warnf("find caches: %v", err)
-	} else {
-		for _, cache := range caches {
-			h.storage.Remove(cache.ID)
-			if err := db.Delete(cache.ID, cache); err != nil {
-				h.logger.Warnf("delete cache: %v", err)
-				continue
-			}
-			h.logger.Infof("deleted cache: %+v", cache)
-		}
+// evictIncomplete removes uploads that stopped part way, which are most likely broken.
+func (h *Handler) evictIncomplete(db *bolthold.Store) {
+	h.sweep(db, bolthold.
+		Where("UsedAt").Lt(time.Now().Add(-uploadStallTimeout).Unix()).
+		And("Complete").Eq(false).
+		Index("UsedAt"))
+}
+
+func (h *Handler) evictExpired(db *bolthold.Store) {
+	if h.policy.Retention <= 0 {
+		return
 	}
+	// Never below inUseGrace, or a short retention would outrun a signed URL already issued.
+	window := max(h.policy.Retention, inUseGrace)
+	h.sweep(db, bolthold.Where("UsedAt").Lt(time.Now().Add(-window).Unix()).Index("UsedAt"))
+}
 
-	// Remove the old caches with the same key and version within the same
-	// repository, keep the latest one. Aggregation must include Repo so two
-	// repos that happen to share a (key, version) do not evict each other —
-	// otherwise per-repo scoping holds for reads but one repo can age
-	// another out after keepOld.
-	// Also keep the olds which have been used recently for a while in case of the cache is still in use.
-	if results, err := db.FindAggregate(
-		&Cache{},
-		bolthold.Where("Complete").Eq(true),
-		"Repo", "Key", "Version",
-	); err != nil {
+// evictSuperseded removes entries a newer one with the same key and version replaced. The
+// aggregation includes Repo so two repos sharing a (key, version) do not evict each other.
+func (h *Handler) evictSuperseded(db *bolthold.Store) {
+	results, err := db.FindAggregate(&Cache{}, bolthold.Where("Complete").Eq(true).Index("Complete"), "Repo", "Key", "Version")
+	if err != nil {
 		h.logger.Warnf("find aggregate caches: %v", err)
-	} else {
-		for _, result := range results {
-			if result.Count() <= 1 {
+		return
+	}
+	var caches []*Cache
+	for _, result := range results {
+		if result.Count() <= 1 {
+			continue
+		}
+		result.Sort("CreatedAt")
+		caches = caches[:0]
+		result.Reduction(&caches)
+		for _, cache := range caches[:len(caches)-1] {
+			if inUse(cache) {
 				continue
 			}
-			result.Sort("CreatedAt")
-			caches = caches[:0]
-			result.Reduction(&caches)
-			for _, cache := range caches[:len(caches)-1] {
-				if time.Since(time.Unix(cache.UsedAt, 0)) < keepOld {
-					// Keep it since it has been used recently, even if it's old.
-					// Or it could break downloading in process.
-					continue
-				}
-				h.storage.Remove(cache.ID)
-				if err := db.Delete(cache.ID, cache); err != nil {
-					h.logger.Warnf("delete cache: %v", err)
-					continue
-				}
-				h.logger.Infof("deleted cache: %+v", cache)
-			}
+			h.deleteCache(db, cache)
 		}
 	}
+}
+
+// evictOversized applies the per-repository limit, then the whole-store one. Only completed
+// entries count, since only those carry a size measured at commit rather than claimed.
+func (h *Handler) evictOversized(db *bolthold.Store) {
+	if h.policy.RepoSizeLimit > 0 {
+		byRepo := make(map[string][]*Cache)
+		for _, cache := range h.completedByUse(db) {
+			byRepo[cache.Repo] = append(byRepo[cache.Repo], cache)
+		}
+		for repo, caches := range byRepo {
+			h.evictTo(db, caches, h.policy.RepoSizeLimit, "repository "+repo)
+		}
+	}
+	h.evictTotal(db)
+}
+
+// evictTotal caps the store as a whole. It re-queries because the per-repo pass may have
+// deleted rows an earlier result still holds.
+func (h *Handler) evictTotal(db *bolthold.Store) {
+	if h.policy.SizeLimit <= 0 {
+		return
+	}
+	h.evictTo(db, h.completedByUse(db), h.policy.SizeLimit, "the cache")
+}
+
+// evictRepo reclaims space when a commit pushes a repo over, rather than at the next sweep.
+func (h *Handler) evictRepo(db *bolthold.Store, repo string) {
+	if h.policy.RepoSizeLimit <= 0 {
+		return
+	}
+	h.evictTo(db, h.cachesByUse(db, bolthold.Where("Repo").Eq(repo).And("Complete").Eq(true).Index("Repo")), h.policy.RepoSizeLimit, "repository "+repo)
+}
+
+// evictTo deletes until caches fit limit. caches must be ordered by UsedAt ascending.
+func (h *Handler) evictTo(db *bolthold.Store, caches []*Cache, limit int64, scope string) {
+	// An entry bigger than the limit never fits, so it goes on its own account instead of
+	// dragging every neighbour out first and then following them next sweep.
+	fits := caches[:0]
+	for _, cache := range caches {
+		if cache.Size <= limit {
+			fits = append(fits, cache)
+			continue
+		}
+		if !inUse(cache) {
+			h.logger.Warnf("cache %q is %d MiB on its own, over the limit for %s; dropping it", cache.Key, cache.Size/miB, scope)
+			h.deleteCache(db, cache)
+		}
+	}
+	caches = fits
+
+	total := totalSize(caches)
+	var freed int64
+	for _, cache := range caches {
+		if total <= limit {
+			break
+		}
+		if inUse(cache) || !h.deleteCache(db, cache) {
+			continue
+		}
+		total -= cache.Size
+		freed += cache.Size
+	}
+	if freed > 0 {
+		h.logger.Warnf("evicted %d MiB from %s, least recently used first", freed/miB, scope)
+	}
+}
+
+// inUse reports whether an entry was read or written recently enough that removing it
+// could break a download in progress.
+func inUse(cache *Cache) bool {
+	return time.Since(time.Unix(cache.UsedAt, 0)) < inUseGrace
+}
+
+// touch stamps UsedAt through the caller's store, a bolt write on the read path. It cannot
+// go through touchCache, which opens its own store and would block on the exclusive lock
+// for as long as the caller holds one.
+func (h *Handler) touch(db *bolthold.Store, cache *Cache) {
+	cache.UsedAt = time.Now().Unix()
+	if err := db.Update(cache.ID, cache); err != nil {
+		h.logger.Warnf("touch cache: %v", err)
+	}
+}
+
+func (h *Handler) sweep(db *bolthold.Store, query *bolthold.Query) {
+	for _, cache := range h.caches(db, query) {
+		h.deleteCache(db, cache)
+	}
+}
+
+func (h *Handler) caches(db *bolthold.Store, query *bolthold.Query) []*Cache {
+	var caches []*Cache
+	if err := db.Find(&caches, query); err != nil {
+		h.logger.Warnf("find caches: %v", err)
+	}
+	return caches
+}
+
+// cachesByUse returns matches least recently accessed first, sorting here rather than with
+// bolthold's SortBy, which reflects over every field it compares.
+func (h *Handler) cachesByUse(db *bolthold.Store, query *bolthold.Query) []*Cache {
+	caches := h.caches(db, query)
+	slices.SortFunc(caches, func(a, b *Cache) int { return cmp.Compare(a.UsedAt, b.UsedAt) })
+	return caches
+}
+
+// completedByUse returns every entry the size limits count, least recently accessed first.
+func (h *Handler) completedByUse(db *bolthold.Store) []*Cache {
+	return h.cachesByUse(db, bolthold.Where("Complete").Eq(true).Index("Complete"))
+}
+
+func totalSize(caches []*Cache) int64 {
+	var total int64
+	for _, cache := range caches {
+		total += cache.Size
+	}
+	return total
+}
+
+// deleteCache drops an entry and its bytes, reporting whether it went fully. The blob goes
+// first, so a failed unlink leaves the row for the next sweep instead of orphaning bytes.
+func (h *Handler) deleteCache(db *bolthold.Store, cache *Cache) bool {
+	if err := h.storage.Remove(cache.ID); err != nil {
+		h.logger.Warnf("remove cache blob: %v", err)
+		return false
+	}
+	if err := db.Delete(cache.ID, cache); err != nil {
+		h.logger.Warnf("delete cache: %v", err)
+		return false
+	}
+	h.logger.Infof("deleted cache: %+v", cache)
+	return true
 }
 
 func (h *Handler) responseJSON(w http.ResponseWriter, r *http.Request, code int, v ...any) {

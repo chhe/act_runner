@@ -144,7 +144,7 @@ func TestCacheServiceV2EndToEnd(t *testing.T) {
 	restore := patchedAction(t, "actions/cache", actionsCacheRef, "dist/restore/index.js")
 	save := patchedAction(t, "actions/cache", actionsCacheRef, "dist/save/index.js")
 
-	handler, err := artifactcache.StartHandler(filepath.Join(t.TempDir(), "cache"), "127.0.0.1", 0, "", nil)
+	handler, err := artifactcache.StartHandler(artifactcache.Options{Dir: filepath.Join(t.TempDir(), "cache"), OutboundIP: "127.0.0.1"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = handler.Close() })
 	const token, repo = "e2e-runtime-token", "testuser/testrepo"
@@ -291,7 +291,7 @@ func TestUploadArtifactThroughTheResultsService(t *testing.T) {
 	}))
 	defer gitea.Close()
 
-	handler, err := artifactcache.StartHandler(filepath.Join(t.TempDir(), "cache"), "127.0.0.1", 0, "", nil)
+	handler, err := artifactcache.StartHandler(artifactcache.Options{Dir: filepath.Join(t.TempDir(), "cache"), OutboundIP: "127.0.0.1"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = handler.Close() })
 	// The artifact client decodes the runtime token for the run ids it puts in its requests, where
@@ -345,7 +345,7 @@ func TestSetupActionFindsTheCacheService(t *testing.T) {
 
 	setup := patchedAction(t, "actions/setup-node", "v7.0.0", "dist/setup/index.js")
 
-	handler, err := artifactcache.StartHandler(filepath.Join(t.TempDir(), "cache"), "127.0.0.1", 0, "", nil)
+	handler, err := artifactcache.StartHandler(artifactcache.Options{Dir: filepath.Join(t.TempDir(), "cache"), OutboundIP: "127.0.0.1"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = handler.Close() })
 	const token = "setup-runtime-token"
