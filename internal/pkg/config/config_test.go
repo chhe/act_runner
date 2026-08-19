@@ -64,6 +64,7 @@ func TestLoadDefault_DefaultsWorkdirCleanupAge(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 24*time.Hour, cfg.Runner.WorkdirCleanupAge)
 	assert.Equal(t, 10*time.Minute, cfg.Runner.IdleCleanupInterval)
+	assert.Equal(t, DefaultImage, cfg.Runner.DefaultImage)
 }
 
 func TestLoadDefault_HealthChecksAreOptIn(t *testing.T) {

@@ -94,6 +94,9 @@ runner:
   # terminal; tools like `docker build` emit redrawing progress frames into the captured log
   # when a TTY is present.
   #allocate_pty: false
+  # Image for a job whose runs-on matches none of the labels above. A runner without a
+  # docker daemon runs such a job on the host instead.
+  #default_image: "docker.gitea.com/runner-images:ubuntu-latest"
   # What to mount at RUNNER_TOOL_CACHE (/opt/hostedtoolcache), where setup actions install tools:
   #   none:   nothing. A docker job sees what its image ships there, a host job an empty dir, and
   #           either way what it installs is gone when the job ends.

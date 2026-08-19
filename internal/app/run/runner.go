@@ -28,6 +28,7 @@ import (
 	"gitea.com/gitea/runner/internal/pkg/client"
 	"gitea.com/gitea/runner/internal/pkg/config"
 	"gitea.com/gitea/runner/internal/pkg/disk"
+	"gitea.com/gitea/runner/internal/pkg/envcheck"
 	"gitea.com/gitea/runner/internal/pkg/labels"
 	"gitea.com/gitea/runner/internal/pkg/metrics"
 	"gitea.com/gitea/runner/internal/pkg/report"
@@ -172,7 +173,7 @@ func (r *Runner) OnIdle(ctx context.Context) {
 // directories above, a task beginning during the pass is safe because the cutoff keeps a
 // network it has created but not yet attached a container to out of scope.
 func (r *Runner) cleanupOrphanNetworks(ctx context.Context) {
-	if r.uuid == "" || !r.labels.RequireDocker() && !r.cfg.Container.RequireDocker {
+	if r.uuid == "" || !r.requiresDocker() {
 		return
 	}
 	cutoff := r.now().Add(-r.cfg.Runner.WorkdirCleanupAge)
@@ -347,6 +348,27 @@ func (r *Runner) isSelfHostedActionsURL(task *runnerv1.Task) bool {
 	return giteaDefaultActionsURL != "" && giteaDefaultActionsURL != "https://github.com"
 }
 
+// dockerReachable is a variable so tests can substitute one that needs no Docker daemon. It
+// probes the environment act connects through, not container.docker_host, which act ignores.
+var dockerReachable = func(ctx context.Context) bool {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	return envcheck.CheckIfDockerRunning(ctx, "") == nil
+}
+
+func (r *Runner) requiresDocker() bool {
+	return r.labels.RequireDocker() || r.cfg.Container.RequireDocker
+}
+
+// fallbackPlatform is where a job runs whose runs-on matches no label, as any job without a
+// runs-on does, since Gitea sends those to every runner.
+func (r *Runner) fallbackPlatform(ctx context.Context) string {
+	if r.requiresDocker() || dockerReachable(ctx) {
+		return r.cfg.Runner.DefaultImage
+	}
+	return labels.SelfHostedPlatform
+}
+
 func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.Reporter) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -475,6 +497,15 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 	// Without bind_workdir, the workspace path omits the task id; concurrent host-mode jobs
 	// for the same repository would share this directory and can race with per-job cleanup.
 
+	// act asks for the platform once per step, so resolve the fallback at most once per task.
+	fallbackPlatform := sync.OnceValue(func() string { return r.fallbackPlatform(ctx) })
+	platformPicker := func(runsOn []string) string {
+		if platform := r.labels.PickPlatform(runsOn); platform != "" {
+			return platform
+		}
+		return fallbackPlatform()
+	}
+
 	runnerConfig := &runner.Config{
 		// On Linux, Workdir will be like "/<parent_directory>/<owner>/<repo>"
 		// On Windows, Workdir will be like "\<parent_directory>\<owner>\<repo>"
@@ -517,7 +548,7 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 		Privileged:                        r.cfg.Container.Privileged,
 		DefaultActionInstance:             r.getDefaultActionsURL(task),
 		DefaultActionInstanceIsSelfHosted: r.isSelfHostedActionsURL(task),
-		PlatformPicker:                    r.labels.PickPlatform,
+		PlatformPicker:                    platformPicker,
 		JobStartedHook:                    r.cfg.Runner.Hooks.JobStarted,
 		JobCompletedHook:                  r.cfg.Runner.Hooks.JobCompleted,
 		Vars:                              task.Vars,

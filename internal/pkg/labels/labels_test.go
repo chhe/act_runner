@@ -123,10 +123,10 @@ func TestPickPlatform(t *testing.T) {
 		want   string
 	}{
 		{"docker strips leading slashes", []string{"ubuntu"}, "node:18"},
-		{"host maps to self-hosted marker", []string{"self-hosted"}, "-self-hosted"},
-		{"first match wins", []string{"self-hosted", "ubuntu"}, "-self-hosted"},
-		{"unknown falls back to default", []string{"windows"}, "docker.gitea.com/runner-images:ubuntu-latest"},
-		{"no runsOn falls back to default", nil, "docker.gitea.com/runner-images:ubuntu-latest"},
+		{"host maps to self-hosted marker", []string{"self-hosted"}, SelfHostedPlatform},
+		{"first match wins", []string{"self-hosted", "ubuntu"}, SelfHostedPlatform},
+		{"unknown label picks nothing", []string{"windows"}, ""},
+		{"no runsOn picks nothing", nil, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -167,5 +167,5 @@ func TestOpaqueLabelRoundTrip(t *testing.T) {
 	require.Equal(t, ls, again)
 	require.Equal(t, []string{raw}, again.Names())
 	require.False(t, again.RequireDocker())
-	require.Equal(t, "-self-hosted", again.PickPlatform([]string{raw}))
+	require.Equal(t, SelfHostedPlatform, again.PickPlatform([]string{raw}))
 }

@@ -12,6 +12,7 @@ import (
 	"gitea.com/gitea/runner/act/runner"
 	clientmocks "gitea.com/gitea/runner/internal/pkg/client/mocks"
 	"gitea.com/gitea/runner/internal/pkg/config"
+	"gitea.com/gitea/runner/internal/pkg/labels"
 	"gitea.com/gitea/runner/internal/pkg/ver"
 
 	"connectrpc.com/connect"
@@ -96,6 +97,34 @@ func TestNewRunnerInitializesLabelsAndEnvironment(t *testing.T) {
 	require.NotEmpty(t, r.envs["GITEA_ACTIONS_RUNNER_VERSION"])
 	require.Nil(t, r.cacheHandler)
 	require.Empty(t, r.envs[runner.CacheServiceV2Env], "no cache server, nothing to serve v2 from")
+}
+
+func TestRunnerFallbackPlatform(t *testing.T) {
+	tests := []struct {
+		name          string
+		label         string
+		dockerRunning bool
+		want          string
+	}{
+		{"a docker label needs no daemon probe", "ubuntu:docker://node:18", false, "mirror.example/ci:noble"},
+		{"host labels keep the image where docker runs", "ubuntu:host", true, "mirror.example/ci:noble"},
+		{"host labels without docker run on the host", "ubuntu:host", false, labels.SelfHostedPlatform},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reachable := dockerReachable
+			dockerReachable = func(context.Context) bool { return tt.dockerRunning }
+			t.Cleanup(func() { dockerReachable = reachable })
+
+			label, err := labels.Parse(tt.label)
+			require.NoError(t, err)
+			cfg := &config.Config{}
+			cfg.Runner.DefaultImage = "mirror.example/ci:noble"
+			r := &Runner{cfg: cfg, labels: labels.Labels{label}}
+
+			require.Equal(t, tt.want, r.fallbackPlatform(t.Context()))
+		})
+	}
 }
 
 // Proxy variables are assembled per task, because a job's service containers have to be

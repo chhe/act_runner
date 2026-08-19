@@ -11,6 +11,9 @@ import (
 const (
 	SchemeHost   = "host"
 	SchemeDocker = "docker"
+
+	// SelfHostedPlatform is the platform marker act treats as "run on the host".
+	SelfHostedPlatform = "-self-hosted"
 )
 
 type Label struct {
@@ -61,6 +64,7 @@ func (l Labels) RequireDocker() bool {
 	return false
 }
 
+// PickPlatform returns the platform of the first runs-on entry this runner has a label for, or "".
 func (l Labels) PickPlatform(runsOn []string) string {
 	platforms := make(map[string]string, len(l))
 	for _, label := range l {
@@ -69,7 +73,7 @@ func (l Labels) PickPlatform(runsOn []string) string {
 			// "//" will be ignored
 			platforms[label.Name] = strings.TrimPrefix(label.Arg, "//")
 		case SchemeHost:
-			platforms[label.Name] = "-self-hosted"
+			platforms[label.Name] = SelfHostedPlatform
 		default:
 			// unreachable: Parse only produces host or docker schemas
 			continue
@@ -80,18 +84,7 @@ func (l Labels) PickPlatform(runsOn []string) string {
 			return v
 		}
 	}
-
-	// TODO: support multiple labels
-	// like:
-	//   ["ubuntu-22.04"] => "ubuntu:22.04"
-	//   ["with-gpu"] => "linux:with-gpu"
-	//   ["ubuntu-22.04", "with-gpu"] => "ubuntu:22.04_with-gpu"
-
-	// return default.
-	// So the runner receives a task with a label that the runner doesn't have,
-	// it happens when the user have edited the label of the runner in the web UI.
-	// TODO: it may be not correct, what if the runner is used as host mode only?
-	return "docker.gitea.com/runner-images:ubuntu-latest"
+	return ""
 }
 
 func (l Labels) Names() []string {
