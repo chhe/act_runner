@@ -34,6 +34,7 @@ runner:
   # Whether skip verifying the TLS certificate of the Gitea instance.
   #insecure: false
   # The timeout for fetching the job from the Gitea instance.
+  # Values above the 60s RPC timeout are capped to it.
   #fetch_timeout: 5s
   # The interval for fetching the job from the Gitea instance.
   #fetch_interval: 2s

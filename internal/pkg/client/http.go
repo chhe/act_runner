@@ -17,7 +17,7 @@ import (
 	"gitea.dev/actionslib/runner/v1/runnerv1connect"
 )
 
-func getHTTPClient(endpoint string, insecure bool) *http.Client {
+func getHTTPClient(endpoint string, insecure bool, timeout time.Duration) *http.Client {
 	transport := &http.Transport{
 		Proxy:               http.ProxyFromEnvironment,
 		MaxIdleConns:        10,
@@ -29,11 +29,13 @@ func getHTTPClient(endpoint string, insecure bool) *http.Client {
 			InsecureSkipVerify: true,
 		}
 	}
-	return &http.Client{Transport: transport}
+	return &http.Client{Transport: transport, Timeout: timeout}
 }
 
-// New returns a new runner client.
-func New(endpoint string, insecure bool, uuid, token string, opts ...connect.ClientOption) *HTTPClient {
+// New returns a new runner client. timeout bounds every RPC: without it a
+// stalled connection parks the reporter for the whole job context, so logs and
+// heartbeats stop together and the task is reaped as a zombie.
+func New(endpoint string, insecure bool, uuid, token string, timeout time.Duration, opts ...connect.ClientOption) *HTTPClient {
 	baseURL := strings.TrimRight(endpoint, "/") + "/api/actions"
 
 	opts = append(opts, connect.WithInterceptors(connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
@@ -49,7 +51,7 @@ func New(endpoint string, insecure bool, uuid, token string, opts ...connect.Cli
 		}
 	})))
 
-	httpClient := getHTTPClient(endpoint, insecure)
+	httpClient := getHTTPClient(endpoint, insecure, timeout)
 	return &HTTPClient{
 		PingServiceClient: pingv1connect.NewPingServiceClient(
 			httpClient,

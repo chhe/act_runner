@@ -416,3 +416,15 @@ func TestLoadDefault_ShippedConfigsChangeNothing(t *testing.T) {
 	}
 	assert.Empty(t, hook.AllEntries())
 }
+
+func TestLoadDefault_ClampsFetchTimeout(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+runner:
+  fetch_timeout: 120s
+`), 0o600))
+
+	cfg, err := LoadDefault(path)
+	require.NoError(t, err)
+	assert.Equal(t, RequestTimeout, cfg.Runner.FetchTimeout)
+}

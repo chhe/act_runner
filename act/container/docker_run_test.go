@@ -79,6 +79,11 @@ type mockDockerClient struct {
 	mock.Mock
 }
 
+func (m *mockDockerClient) ServerVersion(ctx context.Context, opts mobyclient.ServerVersionOptions) (mobyclient.ServerVersionResult, error) {
+	args := m.Called(ctx, opts)
+	return args.Get(0).(mobyclient.ServerVersionResult), args.Error(1)
+}
+
 func (m *mockDockerClient) ExecCreate(ctx context.Context, id string, opts mobyclient.ExecCreateOptions) (mobyclient.ExecCreateResult, error) {
 	args := m.Called(ctx, id, opts)
 	return args.Get(0).(mobyclient.ExecCreateResult), args.Error(1)
@@ -929,4 +934,16 @@ func TestMergeContainerConfigsVolumesReplaceRunnerMounts(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"/var/run/docker.sock:/var/run/docker.sock", "/host/tools:/opt/hostedtoolcache"}, hostConf.Binds)
 	assert.Empty(t, hostConf.Mounts)
+}
+
+// A dead daemon must fail the job, not panic through logrus and not silently
+// drop the requested platform.
+func TestSupportsContainerImagePlatformDaemonError(t *testing.T) {
+	cli := &mockDockerClient{}
+	cli.On("ServerVersion", mock.Anything, mock.Anything).
+		Return(mobyclient.ServerVersionResult{}, errors.New("cannot connect to the Docker daemon"))
+
+	supported, err := supportsContainerImagePlatform(t.Context(), cli)
+	require.ErrorContains(t, err, "cannot connect to the Docker daemon")
+	assert.False(t, supported)
 }

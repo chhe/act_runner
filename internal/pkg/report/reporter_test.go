@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,10 +20,12 @@ import (
 	"gitea.com/gitea/runner/act/runner"
 	"gitea.com/gitea/runner/internal/pkg/client/mocks"
 	"gitea.com/gitea/runner/internal/pkg/config"
+	"gitea.com/gitea/runner/internal/pkg/metrics"
 
 	connect_go "connectrpc.com/connect"
 	runnerv1 "gitea.dev/actionslib/runner/v1"
 	log "github.com/sirupsen/logrus"
+	logrustest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -1168,4 +1171,133 @@ func TestReporter_masksEncodedSecrets(t *testing.T) {
 		assert.NotContains(t, row.Content, secret)
 		assert.NotContains(t, row.Content, base64.StdEncoding.EncodeToString([]byte(secret)))
 	}
+}
+
+// A server that acknowledges more rows than were sent must not take the runner
+// process down with it.
+func TestReporter_AckIndexBeyondBuffer(t *testing.T) {
+	client := mocks.NewClient(t)
+	client.On("UpdateLog", mock.Anything, mock.Anything).Return(func(_ context.Context, _ *connect_go.Request[runnerv1.UpdateLogRequest]) (*connect_go.Response[runnerv1.UpdateLogResponse], error) {
+		return connect_go.NewResponse(&runnerv1.UpdateLogResponse{AckIndex: 1000}), nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	taskCtx, err := structpb.NewStruct(map[string]any{})
+	require.NoError(t, err)
+	cfg, _ := config.LoadDefault("")
+	reporter := NewReporter(ctx, cancel, client, &runnerv1.Task{Context: taskCtx}, cfg)
+	reporter.ResetSteps(1)
+
+	require.NoError(t, reporter.Fire(&log.Entry{
+		Message: "hello",
+		Data:    log.Fields{"stage": "Main", "stepNumber": 0, "raw_output": true},
+		Level:   log.InfoLevel,
+	}))
+
+	require.NoError(t, reporter.ReportLog(false))
+}
+
+// Close has to survive giving up on a daemon still parked in an RPC.
+func TestReporter_CloseWithStuckDaemon(t *testing.T) {
+	release := make(chan struct{})
+	entered := make(chan struct{})
+	var once sync.Once
+
+	client := mocks.NewClient(t)
+	client.On("UpdateLog", mock.Anything, mock.Anything).Return(func(_ context.Context, req *connect_go.Request[runnerv1.UpdateLogRequest]) (*connect_go.Response[runnerv1.UpdateLogResponse], error) {
+		once.Do(func() {
+			close(entered)
+			<-release
+		})
+		return connect_go.NewResponse(&runnerv1.UpdateLogResponse{
+			AckIndex: req.Msg.Index + int64(len(req.Msg.Rows)),
+		}), nil
+	})
+	client.On("UpdateTask", mock.Anything, mock.Anything).Return(func(_ context.Context, _ *connect_go.Request[runnerv1.UpdateTaskRequest]) (*connect_go.Response[runnerv1.UpdateTaskResponse], error) {
+		return connect_go.NewResponse(&runnerv1.UpdateTaskResponse{}), nil
+	}).Maybe()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	taskCtx, err := structpb.NewStruct(map[string]any{})
+	require.NoError(t, err)
+	cfg, _ := config.LoadDefault("")
+	cfg.Runner.LogReportInterval = 10 * time.Millisecond
+	reporter := NewReporter(ctx, cancel, client, &runnerv1.Task{Context: taskCtx}, cfg)
+	reporter.daemonWait = time.Millisecond
+	reporter.RunDaemon()
+	reporter.ResetSteps(1)
+
+	require.NoError(t, reporter.Fire(&log.Entry{
+		Message: "hello",
+		Data:    log.Fields{"stage": "Main", "stepNumber": 0, "raw_output": true},
+		Level:   log.InfoLevel,
+	}))
+
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("daemon never reached UpdateLog")
+	}
+	go func() {
+		time.Sleep(10 * reporter.daemonWait)
+		close(release)
+	}()
+
+	require.NoError(t, reporter.Close(""))
+}
+
+// The zombie reaper marks a task failed, and cancelling the context is how the
+// runner stops, so the two must not be conflated into "cancelled".
+func TestReporter_ServerFailureResultIsReportedAsFailure(t *testing.T) {
+	var lastState *runnerv1.TaskState
+	client := mocks.NewClient(t)
+	client.On("UpdateTask", mock.Anything, mock.Anything).Return(func(_ context.Context, req *connect_go.Request[runnerv1.UpdateTaskRequest]) (*connect_go.Response[runnerv1.UpdateTaskResponse], error) {
+		lastState = req.Msg.State
+		return connect_go.NewResponse(&runnerv1.UpdateTaskResponse{
+			State: &runnerv1.TaskState{Result: runnerv1.Result_RESULT_FAILURE},
+		}), nil
+	})
+	client.On("UpdateLog", mock.Anything, mock.Anything).Return(func(_ context.Context, req *connect_go.Request[runnerv1.UpdateLogRequest]) (*connect_go.Response[runnerv1.UpdateLogResponse], error) {
+		return connect_go.NewResponse(&runnerv1.UpdateLogResponse{
+			AckIndex: req.Msg.Index + int64(len(req.Msg.Rows)),
+		}), nil
+	}).Maybe()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	taskCtx, err := structpb.NewStruct(map[string]any{})
+	require.NoError(t, err)
+	cfg, _ := config.LoadDefault("")
+	reporter := NewReporter(ctx, cancel, client, &runnerv1.Task{Context: taskCtx}, cfg)
+	close(reporter.daemon) // no daemon loop to acknowledge
+
+	require.NoError(t, reporter.ReportState(false))
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
+	require.NoError(t, reporter.Close(""))
+
+	require.NotNil(t, lastState)
+	assert.Equal(t, runnerv1.Result_RESULT_FAILURE, lastState.Result)
+}
+
+func TestReporter_NoteReport(t *testing.T) {
+	hook := logrustest.NewGlobal()
+	defer hook.Reset()
+
+	reporter := &Reporter{reportFailing: map[string]bool{}}
+
+	// A pending output is not a transport failure and must not read as one.
+	reporter.noteReport(metrics.LabelMethodUpdateTask, fmt.Errorf("wrapped: %w", errOutputsNotSent))
+	assert.Empty(t, hook.AllEntries())
+
+	// An outage logs once at each end, not every report interval for hours.
+	reporter.noteReport(metrics.LabelMethodUpdateTask, errors.New("connection refused"))
+	reporter.noteReport(metrics.LabelMethodUpdateTask, errors.New("connection refused"))
+	require.Len(t, hook.AllEntries(), 1)
+	assert.Contains(t, hook.LastEntry().Message, "connection refused")
+
+	reporter.noteReport(metrics.LabelMethodUpdateTask, nil)
+	require.Len(t, hook.AllEntries(), 2)
+	assert.Contains(t, hook.LastEntry().Message, "reconnected")
 }

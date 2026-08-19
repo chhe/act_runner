@@ -68,6 +68,8 @@ type Poller struct {
 type workerState struct {
 	consecutiveEmpty  int64
 	consecutiveErrors int64
+	// fetchTimedOut suppresses repeats of the fetch timeout warning.
+	fetchTimedOut bool
 	// lastBackoff is the last interval reported to the PollBackoffSeconds gauge;
 	// used to suppress redundant no-op Set calls when the backoff plateaus
 	// (e.g. at FetchIntervalMax).
@@ -346,16 +348,20 @@ func (p *Poller) fetchTask(ctx context.Context, s *workerState) (*runnerv1.Task,
 		TasksVersion: v,
 	}))
 
-	// DeadlineExceeded is the designed idle path for a long-poll: the server
-	// found no work within FetchTimeout. Treat it as an empty response and do
-	// not record the duration — the timeout value would swamp the histogram.
+	// Our own deadline proves nothing either way: today Gitea answers immediately,
+	// so it means a slow server, and once it holds the request open it is an idle
+	// poll. Back off without claiming the server is healthy, warn once a streak so
+	// neither case floods, and keep it out of the latency histogram.
 	if errors.Is(err, context.DeadlineExceeded) {
-		p.markHealthyPoll()
+		if !s.fetchTimedOut {
+			s.fetchTimedOut = true
+			log.Warnf("fetching a task timed out after %s, raise runner.fetch_timeout if this persists", p.cfg.Runner.FetchTimeout)
+		}
 		s.consecutiveEmpty++
-		s.consecutiveErrors = 0 // timeout is a healthy idle response
 		metrics.PollFetchTotal.WithLabelValues(metrics.LabelResultEmpty).Inc()
 		return nil, false
 	}
+	s.fetchTimedOut = false
 	metrics.PollFetchDuration.Observe(time.Since(start).Seconds())
 
 	if err != nil {
@@ -368,7 +374,13 @@ func (p *Poller) fetchTask(ctx context.Context, s *workerState) (*runnerv1.Task,
 			p.shutdownPolling()
 			return nil, false
 		}
-		log.WithError(err).Error("failed to fetch task")
+		// Not a long poll, so a deadline can mean the server assigned a task
+		// this runner never received.
+		if errors.Is(err, context.DeadlineExceeded) {
+			log.WithError(err).Errorf("fetching a task timed out after %s", p.cfg.Runner.FetchTimeout)
+		} else {
+			log.WithError(err).Error("failed to fetch task")
+		}
 		p.lastPollFailed.Store(true)
 		s.consecutiveErrors++
 		metrics.PollFetchTotal.WithLabelValues(metrics.LabelResultError).Inc()

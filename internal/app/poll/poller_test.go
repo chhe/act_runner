@@ -16,6 +16,7 @@ import (
 
 	connect_go "connectrpc.com/connect"
 	runnerv1 "gitea.dev/actionslib/runner/v1"
+	"github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -61,11 +62,7 @@ func TestPoller_WorkerStateCounters(t *testing.T) {
 // increments only the per-worker error counter, not the empty counter.
 func TestPoller_FetchErrorIncrementsErrorsOnly(t *testing.T) {
 	client := mocks.NewClient(t)
-	client.On("FetchTask", mock.Anything, mock.Anything).Return(
-		func(_ context.Context, _ *connect_go.Request[runnerv1.FetchTaskRequest]) (*connect_go.Response[runnerv1.FetchTaskResponse], error) {
-			return nil, errors.New("network unreachable")
-		},
-	)
+	client.On("FetchTask", mock.Anything, mock.Anything).Return(nil, errors.New("network unreachable"))
 
 	cfg, err := config.LoadDefault("")
 	require.NoError(t, err)
@@ -76,6 +73,33 @@ func TestPoller_FetchErrorIncrementsErrorsOnly(t *testing.T) {
 	require.False(t, ok)
 	assert.Equal(t, int64(1), s.consecutiveErrors)
 	assert.Equal(t, int64(0), s.consecutiveEmpty)
+}
+
+// A deadline is the idle path once the server holds the request open, and a
+// symptom before then, so it must neither reset the error count nor assert that
+// the server is reachable.
+func TestPoller_FetchTimeoutIsNoSignal(t *testing.T) {
+	client := mocks.NewClient(t)
+	client.On("FetchTask", mock.Anything, mock.Anything).Return(nil, context.DeadlineExceeded)
+
+	cfg, err := config.LoadDefault("")
+	require.NoError(t, err)
+	p := &Poller{client: client, cfg: cfg}
+	p.lastPollFailed.Store(true)
+
+	hook := test.NewGlobal()
+	defer hook.Reset()
+
+	s := &workerState{consecutiveErrors: 2}
+	_, ok := p.fetchTask(context.Background(), s)
+	require.False(t, ok)
+	assert.Equal(t, int64(2), s.consecutiveErrors)
+	assert.Equal(t, int64(1), s.consecutiveEmpty)
+	assert.True(t, p.lastPollFailed.Load(), "a timeout must not clear a known failure")
+
+	// An idle runner against a server holding the request open must not flood.
+	_, _ = p.fetchTask(context.Background(), s)
+	assert.Len(t, hook.AllEntries(), 1)
 }
 
 // TestPoller_FetchUnauthenticatedStopsPolling verifies that an Unauthenticated

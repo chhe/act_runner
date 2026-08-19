@@ -345,6 +345,16 @@ func gitOptions(token string) (fetchOptions git.FetchOptions, pullOptions git.Pu
 	return fetchOptions, pullOptions
 }
 
+// staleRefreshErr reports why a failed refresh must abort: the resolve and
+// checkout that follow are local and succeed on a cancelled context, which
+// would hand back the cached revision as if it were fresh.
+func staleRefreshErr(ctx context.Context, err error) error {
+	if err == nil || errors.Is(err, git.NoErrAlreadyUpToDate) {
+		return nil
+	}
+	return ctx.Err()
+}
+
 // NewGitCloneExecutor creates an executor to clone git repos
 func NewGitCloneExecutor(input NewGitCloneExecutorInput) common.Executor {
 	return func(ctx context.Context) error {
@@ -385,7 +395,7 @@ func NewGitCloneExecutor(input NewGitCloneExecutorInput) common.Executor {
 		}
 
 		if !isOfflineMode {
-			err = r.Fetch(&fetchOptions)
+			err = r.FetchContext(ctx, &fetchOptions)
 			if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 				return err
 			}
@@ -454,8 +464,11 @@ func NewGitCloneExecutor(input NewGitCloneExecutorInput) common.Executor {
 		switch {
 		case !isOfflineMode && !shallow:
 			// In shallow mode the depth-limited fetch above already advanced the ref.
-			if err = w.Pull(&pullOptions); err != nil && err != git.NoErrAlreadyUpToDate {
+			if err = w.PullContext(ctx, &pullOptions); err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 				logger.Debugf("Unable to pull %s: %v", refName, err)
+			}
+			if err := staleRefreshErr(ctx, err); err != nil {
+				return err
 			}
 		case isOfflineMode && reused:
 			reusedMsg = " (reused in offline mode)"

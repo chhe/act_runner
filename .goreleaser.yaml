@@ -113,7 +113,7 @@ publishers:
       - R2_SECRET_ACCESS_KEY={{ index .Env "R2_SECRET_ACCESS_KEY" }}
 
 archives:
-  - format: binary
+  - formats: [binary]
     name_template: "{{ .Binary }}"
     allow_different_binary_count: true
 

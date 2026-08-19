@@ -366,6 +366,7 @@ func doRegister(ctx context.Context, cfg *config.Config, inputs *registerInputs)
 		cfg.Runner.Insecure,
 		"",
 		"",
+		config.RequestTimeout,
 	)
 
 	for {

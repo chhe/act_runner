@@ -20,6 +20,9 @@ import (
 	"go.yaml.in/yaml/v4"
 )
 
+// RequestTimeout bounds every RPC to Gitea, and with it runner.fetch_timeout.
+const RequestTimeout = 60 * time.Second
+
 // DefaultPostTaskScriptTimeout is the fallback cap on how long the post-task
 // script may run when post_task_script is set without an explicit timeout. It is
 // applied both at config load (for a configured script) and at the point of use
@@ -333,6 +336,10 @@ func LoadDefault(file string) (*Config, error) {
 	if cfg.Runner.ToolCacheMode == ToolCacheModeShared && cfg.Runner.Capacity > 1 {
 		log.Warnf("runner.tool_cache_mode %q with capacity %d: two jobs writing the same tool version at once corrupt it",
 			ToolCacheModeShared, cfg.Runner.Capacity)
+	}
+	if cfg.Runner.FetchTimeout > RequestTimeout {
+		log.Warnf("fetch_timeout (%v) exceeds the RPC timeout (%v), capping it", cfg.Runner.FetchTimeout, RequestTimeout)
+		cfg.Runner.FetchTimeout = RequestTimeout
 	}
 	if cfg.Runner.FetchIntervalMax < cfg.Runner.FetchInterval {
 		log.Warnf("fetch_interval_max (%v) is less than fetch_interval (%v), setting fetch_interval_max to fetch_interval",

@@ -88,14 +88,14 @@ func (cr *containerReference) connectToNetwork(name string, aliases []string) co
 	}
 }
 
-// supportsContainerImagePlatform returns true if the underlying Docker server
-// API version is 1.41 and beyond
-func supportsContainerImagePlatform(ctx context.Context, cli client.APIClient) bool {
+// supportsContainerImagePlatform reports whether the Docker server API version
+// is 1.41 and beyond
+func supportsContainerImagePlatform(ctx context.Context, cli client.APIClient) (bool, error) {
 	ver, err := cli.ServerVersion(ctx, client.ServerVersionOptions{})
 	if err != nil {
-		common.Logger(ctx).Panicf("Failed to get Docker API Version: %s", err)
+		return false, fmt.Errorf("get docker API version: %w", err)
 	}
-	return versions.GreaterThanOrEqualTo(ver.APIVersion, "1.41")
+	return versions.GreaterThanOrEqualTo(ver.APIVersion, "1.41"), nil
 }
 
 func (cr *containerReference) Create(capAdd, capDrop []string) common.Executor {
@@ -682,10 +682,16 @@ func (cr *containerReference) create(capAdd, capDrop []string) common.Executor {
 		}
 
 		var platSpecs *specs.Platform
-		if cr.input.Platform != "" && supportsContainerImagePlatform(ctx, cr.cli) {
-			platSpecs, err = parsePlatform(cr.input.Platform)
+		if cr.input.Platform != "" {
+			// Dropping the platform silently would build for the host arch.
+			supported, err := supportsContainerImagePlatform(ctx, cr.cli)
 			if err != nil {
 				return err
+			}
+			if supported {
+				if platSpecs, err = parsePlatform(cr.input.Platform); err != nil {
+					return err
+				}
 			}
 		}
 

@@ -26,6 +26,9 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// errOutputsNotSent travels the same return path as transport failures but is not one.
+var errOutputsNotSent = errors.New("there are still outputs that have not been sent")
+
 // Size limits for the outputs reported to the server.
 const (
 	maxOutputKeyLen   = 255
@@ -56,8 +59,13 @@ type Reporter struct {
 	// so the gauge skips no-op Set calls when the buffer size is unchanged.
 	lastLogBufferRows int
 
-	state             *runnerv1.TaskState
-	stateChanged      bool
+	state        *runnerv1.TaskState
+	stateChanged bool
+	// reportFailing keeps an outage to one log line at each end.
+	reportFailing map[string]bool
+	// serverResult is what the server decided, e.g. the zombie reaper failing
+	// the task. Guarded by stateMu.
+	serverResult      runnerv1.Result
 	stateMu           sync.RWMutex
 	outputsMu         sync.Mutex
 	outputs           map[string]jobOutput
@@ -77,6 +85,8 @@ type Reporter struct {
 	// closeTimeout bounds each RPC attempt in the final flush, on a context
 	// detached from r.ctx so a server cancel can't abort the acknowledgement.
 	closeTimeout time.Duration
+	// daemonWait bounds how long Close waits for the daemon loop to acknowledge.
+	daemonWait time.Duration
 
 	// Event notification channels (non-blocking, buffered 1)
 	logNotify   chan struct{} // signal: new log rows arrived
@@ -119,9 +129,12 @@ func NewReporter(ctx context.Context, cancel context.CancelFunc, client client.C
 		state: &runnerv1.TaskState{
 			Id: task.Id,
 		},
+		reportFailing: map[string]bool{},
 		daemon:        make(chan struct{}),
 		heartbeatStop: make(chan struct{}),
 	}
+
+	rv.daemonWait = 6 * rv.effectiveCloseTimeout()
 
 	if task.Secrets["ACTIONS_STEP_DEBUG"] == "true" {
 		rv.debugOutputEnabled = true
@@ -293,6 +306,21 @@ func (r *Reporter) Fire(entry *log.Entry) error {
 	return nil
 }
 
+// Only the daemon loop calls this, so reportFailing needs no lock.
+func (r *Reporter) noteReport(method string, err error) {
+	if errors.Is(err, errOutputsNotSent) {
+		err = nil // the RPC itself succeeded
+	}
+	switch {
+	case err != nil && !r.reportFailing[method]:
+		r.reportFailing[method] = true
+		log.Warnf("%s error: %v, retrying until reconnected", method, err)
+	case err == nil && r.reportFailing[method]:
+		delete(r.reportFailing, method)
+		log.Infof("%s reconnected", method)
+	}
+}
+
 func (r *Reporter) RunDaemon() {
 	go r.runDaemonLoop()
 }
@@ -319,6 +347,8 @@ func (r *Reporter) stopLatencyTimer(active *bool, timer *time.Timer) {
 }
 
 func (r *Reporter) runDaemonLoop() {
+	defer close(r.daemon)
+
 	logTicker := time.NewTicker(r.logReportInterval)
 	stateTicker := time.NewTicker(r.stateReportInterval)
 
@@ -337,11 +367,11 @@ func (r *Reporter) runDaemonLoop() {
 	for {
 		select {
 		case <-logTicker.C:
-			_ = r.ReportLog(false)
+			r.noteReport(metrics.LabelMethodUpdateLog, r.ReportLog(false))
 			r.stopLatencyTimer(&maxLatencyActive, maxLatencyTimer)
 
 		case <-stateTicker.C:
-			_ = r.ReportState(false)
+			r.noteReport(metrics.LabelMethodUpdateTask, r.ReportState(false))
 
 		case <-r.logNotify:
 			r.stateMu.RLock()
@@ -349,7 +379,7 @@ func (r *Reporter) runDaemonLoop() {
 			r.stateMu.RUnlock()
 
 			if n >= r.logBatchSize {
-				_ = r.ReportLog(false)
+				r.noteReport(metrics.LabelMethodUpdateLog, r.ReportLog(false))
 				r.stopLatencyTimer(&maxLatencyActive, maxLatencyTimer)
 			} else if !maxLatencyActive && n > 0 {
 				maxLatencyTimer.Reset(r.logReportMaxLatency)
@@ -358,25 +388,23 @@ func (r *Reporter) runDaemonLoop() {
 
 		case <-r.stateNotify:
 			// Step transition or job result — flush both immediately for frontend UX.
-			_ = r.ReportLog(false)
-			_ = r.ReportState(false)
+			r.noteReport(metrics.LabelMethodUpdateLog, r.ReportLog(false))
+			r.noteReport(metrics.LabelMethodUpdateTask, r.ReportState(false))
 			r.stopLatencyTimer(&maxLatencyActive, maxLatencyTimer)
 
 		case <-maxLatencyTimer.C:
 			maxLatencyActive = false
-			_ = r.ReportLog(false)
+			r.noteReport(metrics.LabelMethodUpdateLog, r.ReportLog(false))
 
 		case <-r.ctx.Done():
 			// Stop heartbeating on cancel so Gitea sees the runner as offline
 			// during cleanup and won't assign an overlapping task. Close() still
 			// delivers the final flush on a detached context (flushFinal).
-			close(r.daemon)
 			return
 
 		case <-r.heartbeatStop:
 			// Stop heartbeating during post-task script execution. Close() still
 			// delivers the final flush on a detached context (flushFinal).
-			close(r.daemon)
 			return
 		}
 
@@ -384,7 +412,6 @@ func (r *Reporter) runDaemonLoop() {
 		closed := r.closed
 		r.stateMu.RUnlock()
 		if closed {
-			close(r.daemon)
 			return
 		}
 	}
@@ -435,28 +462,23 @@ func (r *Reporter) Close(lastWords string) error {
 	r.stateMu.Lock()
 	r.closed = true
 	if r.state.Result == runnerv1.Result_RESULT_UNSPECIFIED {
-		// When r.ctx has been cancelled (server returned RESULT_CANCELLED via
-		// rpcCtx/ReportState, see line 590) the job is being torn down on the
-		// cancellation path: surface that explicitly instead of attributing it
-		// to a generic failure.
-		cancelled := errors.Is(r.ctx.Err(), context.Canceled)
+		// No result of its own, so say why it stopped.
+		result, words := runnerv1.Result_RESULT_FAILURE, "Early termination"
+		switch {
+		case r.serverResult != runnerv1.Result_RESULT_UNSPECIFIED:
+			result, words = r.serverResult, "Ended by the server"
+		case errors.Is(r.ctx.Err(), context.Canceled):
+			result, words = runnerv1.Result_RESULT_CANCELLED, "Cancelled"
+		}
 		if lastWords == "" {
-			if cancelled {
-				lastWords = "Cancelled"
-			} else {
-				lastWords = "Early termination"
-			}
+			lastWords = words
 		}
 		for _, v := range r.state.Steps {
 			if v.Result == runnerv1.Result_RESULT_UNSPECIFIED {
 				v.Result = runnerv1.Result_RESULT_CANCELLED
 			}
 		}
-		if cancelled {
-			r.state.Result = runnerv1.Result_RESULT_CANCELLED
-		} else {
-			r.state.Result = runnerv1.Result_RESULT_FAILURE
-		}
+		r.state.Result = result
 		r.logRows = append(r.logRows, &runnerv1.LogRow{
 			Time:    timestamppb.Now(),
 			Content: lastWords,
@@ -476,9 +498,8 @@ func (r *Reporter) Close(lastWords string) error {
 	// Wait for Acknowledge
 	select {
 	case <-r.daemon:
-	case <-time.After(60 * time.Second):
-		close(r.daemon)
-		log.Error("No Response from RunDaemon for 60s, continue best effort")
+	case <-time.After(r.daemonWait):
+		log.Errorf("No Response from RunDaemon for %s, continue best effort", r.daemonWait)
 	}
 
 	// Gitea's UpdateLog short-circuits on len(Rows)==0 before honoring NoMore,
@@ -569,8 +590,10 @@ func (r *Reporter) ReportLog(noMore bool) error {
 	}
 
 	r.stateMu.Lock()
-	r.logRows = r.logRows[ack-r.logOffset:]
 	submitted := r.logOffset + len(rows)
+	// A server can ack beyond what it was sent; clamp to stay within the buffer.
+	ack = min(ack, submitted)
+	r.logRows = r.logRows[ack-r.logOffset:]
 	r.logOffset = ack
 	remaining := len(r.logRows)
 	r.stateMu.Unlock()
@@ -655,11 +678,16 @@ func (r *Reporter) ReportState(reportResult bool) error {
 	}
 	r.outputsMu.Unlock()
 
-	if resp.Msg.State != nil && resp.Msg.State.Result == runnerv1.Result_RESULT_CANCELLED {
+	// A terminal result means the server is done with this task; keep running and
+	// the job holds a capacity slot until runner.timeout.
+	if state := resp.Msg.State; state != nil && state.Result != runnerv1.Result_RESULT_UNSPECIFIED {
+		r.stateMu.Lock()
+		r.serverResult = state.Result
+		r.stateMu.Unlock()
 		r.cancel()
 	}
 	if len(noSent) > 0 {
-		return fmt.Errorf("there are still outputs that have not been sent: %v", noSent)
+		return fmt.Errorf("%w: %v", errOutputsNotSent, noSent)
 	}
 
 	return nil

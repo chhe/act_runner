@@ -6,18 +6,24 @@ package git
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 
 	"gitea.com/gitea/runner/act/common"
 
+	gogit "github.com/go-git/go-git/v5"
+	gogitconfig "github.com/go-git/go-git/v5/config"
 	log "github.com/sirupsen/logrus"
 	logrustest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
@@ -609,4 +615,56 @@ func TestAcquireCloneLock(t *testing.T) {
 			t.Fatal("acquire on a different directory must not block")
 		}
 	})
+}
+
+// An unresponsive remote must not pin a job: the refresh has to be interruptible.
+func TestNewGitCloneExecutorFetchHonoursContext(t *testing.T) {
+	block := make(chan struct{})
+	reached := make(chan struct{})
+	var once sync.Once
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		once.Do(func() { close(reached) })
+		<-block
+	}))
+	t.Cleanup(func() {
+		close(block)
+		server.Close()
+	})
+
+	dir := filepath.Join(t.TempDir(), "cached-action")
+	repo, err := gogit.PlainInit(dir, false)
+	require.NoError(t, err)
+	_, err = repo.CreateRemote(&gogitconfig.RemoteConfig{Name: "origin", URLs: []string{server.URL}})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- NewGitCloneExecutor(NewGitCloneExecutorInput{URL: server.URL, Ref: "main", Dir: dir})(ctx)
+	}()
+
+	select {
+	case <-reached:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the executor never reached the remote")
+	}
+	cancel()
+
+	select {
+	case err := <-done:
+		require.Error(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("fetch ignored context cancellation")
+	}
+}
+
+func TestStaleRefreshErr(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	require.NoError(t, staleRefreshErr(ctx, errors.New("remote hung up")))
+
+	cancel()
+	require.ErrorIs(t, staleRefreshErr(ctx, errors.New("remote hung up")), context.Canceled)
+	require.NoError(t, staleRefreshErr(ctx, gogit.NoErrAlreadyUpToDate))
 }

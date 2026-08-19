@@ -11,6 +11,8 @@ Each example persists **two** things, and it is worth knowing which is which:
 - `/data` is the runner's working directory. It holds the `.runner` registration file and, optionally, the config file — so the runner re-attaches to the server instead of registering again.
 - The Docker daemon's data root holds the images pulled for jobs (`/var/lib/docker` for the dind sidecar, `/home/rootless/.local/share/docker` for `dind-rootless`). It is *not* under `/data`. If you drop this volume, the examples still work, but the image cache is discarded whenever the pod is recreated and every job re-pulls its images.
 
+- Kubernetes SIGKILLs a pod 30s after SIGTERM by default, long before a job finishes and reports its result, which leaves tasks the server can only reap as zombies. The manifests raise `terminationGracePeriodSeconds` to three hours, matching the systemd example and the `runner.timeout` job ceiling; set `runner.shutdown_timeout` below that so the runner drains jobs within the window rather than being killed mid-cleanup.
+
 Files in this directory:
 
 - [`dind-docker.yaml`](dind-docker.yaml)
