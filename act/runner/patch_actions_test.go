@@ -5,7 +5,6 @@ package runner
 
 import (
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +13,7 @@ import (
 
 	"gitea.dev/actionslib/pkg/model"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -172,51 +172,42 @@ func TestPatchedBundleSurvivesInsideAStringLiteral(t *testing.T) {
 	require.NoError(t, err, "%s", checked)
 }
 
-func TestPatchBundleKeepsTheOriginal(t *testing.T) {
-	dir, script := bundleFile(t, gateTSC)
-	original := originalFor(dir, script)
+// An action with a pre step is copied, and so patched, twice.
+func TestPatchBundleIsIdempotent(t *testing.T) {
+	script := bundleFile(t, gateTSC)
 
-	require.NoError(t, patchBundle(script, original))
+	done, err := patchBundle(script)
+	require.NoError(t, err)
+	require.True(t, done)
 	patched, err := os.ReadFile(script)
 	require.NoError(t, err)
-	assert.True(t, gateOpened(string(patched)))
+	require.True(t, gateOpened(string(patched)))
 
-	kept, err := os.ReadFile(original)
+	done, err = patchBundle(script)
 	require.NoError(t, err)
-	assert.Equal(t, gateTSC, string(kept), "the untouched bundle is kept outside the action tree")
-	assert.NotContains(t, original, dir+string(filepath.Separator), "originals must not ship into job containers")
-
-	// Patching again must not stack, and must not overwrite the kept original.
-	require.NoError(t, patchBundle(script, original))
+	assert.False(t, done, "a patched bundle is not patched again")
 	again, err := os.ReadFile(script)
 	require.NoError(t, err)
 	assert.Equal(t, string(patched), string(again))
-	kept, err = os.ReadFile(original)
-	require.NoError(t, err)
-	assert.Equal(t, gateTSC, string(kept))
 }
 
-// A bundle with nothing to patch is left exactly as it was, with no original kept beside it.
 func TestPatchBundleLeavesOtherActionsAlone(t *testing.T) {
-	dir, script := bundleFile(t, `console.log("checkout")`)
-	original := originalFor(dir, script)
+	script := bundleFile(t, `console.log("checkout")`)
 
-	require.NoError(t, patchBundle(script, original))
+	done, err := patchBundle(script)
+	require.NoError(t, err)
+	assert.False(t, done)
 	body, err := os.ReadFile(script)
 	require.NoError(t, err)
 	assert.Equal(t, `console.log("checkout")`, string(body))
-	_, err = os.Stat(original)
-	assert.True(t, os.IsNotExist(err), "no original is kept for a bundle that was not patched")
 }
 
-// bundleFile writes one entrypoint into a fresh action directory.
-func bundleFile(t *testing.T, body string) (dir, script string) {
+func bundleFile(t *testing.T, body string) string {
 	t.Helper()
 
-	dir = t.TempDir()
-	script = filepath.Join(dir, "index.js")
+	script := filepath.Join(t.TempDir(), "index.js")
 	require.NoError(t, os.WriteFile(script, []byte(body), 0o600))
-	return dir, script
+	return script
 }
 
 func TestActionScriptPaths(t *testing.T) {
@@ -226,101 +217,50 @@ func TestActionScriptPaths(t *testing.T) {
 	// Only a node action has a bundle to patch.
 	assert.Nil(t, actionScriptPaths("/a", &model.Action{Runs: model.ActionRuns{Using: "docker", Image: "alpine"}}))
 	assert.Nil(t, actionScriptPaths("/a", nil))
+
+	// An action naming a file outside its own directory does not get it rewritten.
+	escaping := &model.Action{Runs: model.ActionRuns{Using: "node20", Main: "../../elsewhere/index.js"}}
+	assert.Nil(t, actionScriptPaths("/a", escaping))
 }
 
-// A step that fails with a patched bundle gets the untouched bundle back, and the action is not
-// patched again, so later jobs run it exactly as its author shipped it.
-func TestRevertToolkit(t *testing.T) {
-	dir, script := bundleFile(t, gateTSC)
-	scripts := []string{script}
-
-	patchToolkit(t.Context(), dir, scripts)
-	body, err := os.ReadFile(script)
-	require.NoError(t, err)
-	require.True(t, gateOpened(string(body)), "precondition: the bundle is patched")
-
-	revertToolkit(t.Context(), dir, scripts)
-	body, err = os.ReadFile(script)
-	require.NoError(t, err)
-	assert.Equal(t, gateTSC, string(body), "the original bundle is back")
-
-	// The skip marker survives, so the action stays unpatched from now on.
-	patchToolkit(t.Context(), dir, scripts)
-	body, err = os.ReadFile(script)
-	require.NoError(t, err)
-	assert.Equal(t, gateTSC, string(body), "a reverted action stays unpatched")
-}
-
-// An action whose ref moves is checked out over the patched bundle. The kept original then
-// belongs to the version before the move, and must not be restored over the new one.
-func TestPatchBundleAfterTheActionMoved(t *testing.T) {
-	dir, script := bundleFile(t, gateTSC)
-	original := originalFor(dir, script)
-	scripts := []string{script}
-
-	patchToolkit(t.Context(), dir, scripts)
-	require.NoError(t, os.WriteFile(script, []byte(gateWebpack), 0o600)) // the new version lands
-
-	// Reverting must not roll the action back to the version the original came from.
-	revertToolkit(t.Context(), dir, scripts)
-	body, err := os.ReadFile(script)
-	require.NoError(t, err)
-	assert.Equal(t, gateWebpack, string(body))
-
-	// Nothing was reverted, so the action is not marked off either: the new version is patched
-	// in its own right, and keeps its own original.
-	require.NoFileExists(t, filepath.Join(sidecarDir(dir), skipMarker))
-	require.NoError(t, patchBundle(script, original))
-	body, err = os.ReadFile(script)
-	require.NoError(t, err)
-	assert.True(t, gateOpened(string(body)))
-	kept, err := os.ReadFile(original)
-	require.NoError(t, err)
-	assert.Equal(t, gateWebpack, string(kept))
-}
-
-// The wiring: a step patches its own bundles only when the runner serves the v2 API, and a step
-// that fails gets them back. The action's path inside its repository is part of where they live.
-func TestStepActionRemoteToolkitPatch(t *testing.T) {
-	newStep := func(t *testing.T, patch bool) (*stepActionRemote, string) {
+// The bundle has to be patched whatever state the shared action directory is in, because a
+// concurrent job's prepare checks the action out again and resets it.
+func TestPatchActionsAtTheContainerCopy(t *testing.T) {
+	copiedBundle := func(t *testing.T, noPatch bool) string {
 		t.Helper()
 
+		cm := &containerMock{}
 		sar := &stepActionRemote{
 			Step:         &model.Step{Uses: "owner/repo/sub@v1"},
 			remoteAction: &remoteAction{Org: "owner", Repo: "repo", Path: "sub", Ref: "v1"},
 			action:       &model.Action{Runs: model.ActionRuns{Using: "node20", Main: "index.js"}},
 			RunContext: &RunContext{
-				Config: &Config{ActionCacheDir: t.TempDir(), PatchToolkit: patch},
+				Config:       &Config{ActionCacheDir: t.TempDir(), NoActionPatch: noPatch},
+				JobContainer: cm,
 			},
 		}
 		script := filepath.Join(sar.actionDir(), "sub", "index.js")
 		require.NoError(t, os.MkdirAll(filepath.Dir(script), 0o755))
 		require.NoError(t, os.WriteFile(script, []byte(gateTSC), 0o600))
-		return sar, script
+
+		var copied string
+		cm.On("CopyDir", mock.Anything, mock.Anything, mock.Anything).Return(func(context.Context) error {
+			body, err := os.ReadFile(script)
+			require.NoError(t, err)
+			copied = string(body)
+			return nil
+		})
+		require.NoError(t, maybeCopyToActionDir(t.Context(), sar, sar.actionDir(), "sub", "/var/run/act/actions/repo/sub"))
+		return copied
 	}
 
-	t.Run("left alone when the runner does not patch", func(t *testing.T) {
-		sar, script := newStep(t, false)
-		require.NoError(t, sar.patchActionToolkit(t.Context()))
-
-		body, err := os.ReadFile(script)
-		require.NoError(t, err)
-		assert.Equal(t, gateTSC, string(body))
+	t.Run("patched on its way in", func(t *testing.T) {
+		assert.True(t, gateOpened(copiedBundle(t, false)))
 	})
 
-	t.Run("patched, and put back when the step fails", func(t *testing.T) {
-		sar, script := newStep(t, true)
-		require.NoError(t, sar.patchActionToolkit(t.Context()))
-
-		body, err := os.ReadFile(script)
-		require.NoError(t, err)
-		require.True(t, gateOpened(string(body)))
-
-		failed := errors.New("the step failed")
-		require.ErrorIs(t, sar.revertToolkitOnFailure(func(context.Context) error { return failed })(t.Context()), failed)
-
-		body, err = os.ReadFile(script)
-		require.NoError(t, err)
-		assert.Equal(t, gateTSC, string(body))
+	// The escape hatch, for an action the edit breaks: the artifact actions refuse again, and the
+	// cache client keeps to v1.
+	t.Run("as shipped when the runner is told not to patch", func(t *testing.T) {
+		assert.Equal(t, gateTSC, copiedBundle(t, true))
 	})
 }

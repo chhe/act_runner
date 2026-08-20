@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"gitea.com/gitea/runner/act/common"
-	"gitea.com/gitea/runner/act/common/git"
 
 	"gitea.dev/actionslib/pkg/model"
 )
@@ -41,21 +40,13 @@ const (
 	cacheURLEnv       = "ACTIONS_CACHE_URL"
 	resultsURLEnv     = "ACTIONS_RESULTS_URL"
 
-	// localhostHost is the suffix isGhes accepts; emptying the test is what opens the gate,
-	// because every hostname ends with the empty string.
+	// localhostHost is the suffix isGhes accepts.
 	localhostHost = ".LOCALHOST"
 
 	// artifactRefusal is the only thing the gate guards in @actions/artifact, which is what makes
 	// such a bundle safe to open. A bundle carrying neither toolkit uses isGhes for something this
 	// runner has not looked at, and is left alone.
 	artifactRefusal = "GHESNotSupportedError"
-
-	// sidecarSuffix names the directory of untouched copies, a sibling of the action directory
-	// because that directory is copied wholesale into job containers.
-	sidecarSuffix = ".toolkit-patch"
-
-	// skipMarker in the sidecar means a patched bundle already failed once here.
-	skipMarker = "skip"
 
 	maxBundleSize = 64 << 20
 )
@@ -101,156 +92,64 @@ func actionScriptPaths(dir string, action *model.Action) []string {
 	}
 	var paths []string
 	for _, script := range []string{action.Runs.Pre, action.Runs.Main, action.Runs.Post} {
-		if script != "" {
-			paths = append(paths, filepath.Join(dir, script))
+		if script == "" {
+			continue
 		}
+		path := filepath.Join(dir, script)
+		// `runs` is the action's own yaml, and a key pointing outside its directory is not ours.
+		if rel, err := filepath.Rel(dir, path); err != nil || strings.HasPrefix(rel, "..") {
+			continue
+		}
+		paths = append(paths, path)
 	}
 	return paths
 }
 
-// patchToolkit edits the toolkit in an action's bundles, keeping each original beside them. Every
-// failure is silent and leaves the bundle as it was, which costs the cache client the v2 API and
-// an artifact action nothing at all.
-func patchToolkit(ctx context.Context, actionDir string, scripts []string) {
-	if len(scripts) == 0 {
-		return
-	}
-	if _, err := os.Stat(filepath.Join(sidecarDir(actionDir), skipMarker)); err == nil {
-		return
-	}
-	defer git.AcquireCloneLock(actionDir)()
-
+// patchActions edits the toolkit in an action's bundles. The caller holds the action directory's
+// clone lock, which is what keeps another job's checkout from resetting them before the copy.
+func patchActions(ctx context.Context, scripts []string) {
 	for _, script := range scripts {
-		if err := patchBundle(script, originalFor(actionDir, script)); err != nil {
-			common.Logger(ctx).Debugf("actions toolkit: %s left unpatched: %v", filepath.Base(script), err)
+		switch patched, err := patchBundle(script); {
+		case err != nil:
+			common.Logger(ctx).Warnf("actions toolkit: %s left unpatched: %v", script, err)
+		case patched:
+			common.Logger(ctx).Debugf("actions toolkit: patched %s", script)
 		}
 	}
 }
 
-// revertToolkit puts the originals back and stops this action being patched again, so the next job
-// runs it exactly as shipped. Called when a step failed with a patched bundle; it does not re-run
-// the step, because a step's outputs and env-file writes are already recorded by then.
-func revertToolkit(ctx context.Context, actionDir string, scripts []string) {
-	if len(scripts) == 0 {
-		return
-	}
-	if _, err := os.Stat(sidecarDir(actionDir)); err != nil {
-		return
-	}
-	defer git.AcquireCloneLock(actionDir)()
-
-	reverted := false
-	for _, script := range scripts {
-		original := originalFor(actionDir, script)
-		if !isPatchOf(original, script) {
-			continue
-		}
-		if err := os.Rename(original, script); err == nil {
-			reverted = true
-		}
-	}
-	if reverted {
-		_ = os.WriteFile(filepath.Join(sidecarDir(actionDir), skipMarker), nil, 0o600)
-		common.Logger(ctx).Warnf("actions toolkit: restored the original %s, it will not be patched again", filepath.Base(actionDir))
-	}
-}
-
-// sidecarDir holds an action's untouched bundles, and the marker that stops it being patched.
-func sidecarDir(actionDir string) string {
-	return actionDir + sidecarSuffix
-}
-
-// originalFor is where a script's untouched copy lives, or "" for a script the action's own
-// `runs` keys placed outside its directory, which is not this runner's to rewrite.
-func originalFor(actionDir, script string) string {
-	rel, err := filepath.Rel(actionDir, script)
-	if err != nil || strings.HasPrefix(rel, "..") {
-		return ""
-	}
-	return filepath.Join(sidecarDir(actionDir), rel)
-}
-
-// patchBundle rewrites one entrypoint in place. The untouched copy kept beside it is what marks
-// the bundle as already patched.
-func patchBundle(script, original string) error {
-	if original == "" {
-		return nil
-	}
-	if _, err := os.Stat(original); err == nil {
-		if isPatchOf(original, script) {
-			return nil
-		}
-		// The action's ref moved and git checked the new bundle out over the patched one, so
-		// the pair no longer belongs together. Patch afresh rather than keep an original that
-		// would restore an older version of the action.
-		if err := os.Remove(original); err != nil {
-			return err
-		}
-	}
+func patchBundle(script string) (bool, error) {
 	info, err := os.Stat(script)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if info.Size() > maxBundleSize {
-		return nil
+		return false, nil
 	}
 	data, err := os.ReadFile(script)
 	if err != nil {
-		return err
+		return false, err
 	}
 	patched, ok := patchedBundle(data)
 	if !ok {
-		return nil
+		return false, nil
 	}
-	if err := os.MkdirAll(filepath.Dir(original), 0o755); err != nil {
-		return err
-	}
-	// The copy is taken before the bundle is replaced, so a write that fails part way can put the
-	// action back as it was. A crash needs no handling: the clone executor checks the action out
-	// and hard resets it on every prepare, so a half-written bundle never outlives the job.
-	if err := os.WriteFile(original, data, info.Mode().Perm()); err != nil {
-		return err
-	}
-	if err := os.WriteFile(script, patched, info.Mode().Perm()); err != nil {
-		_ = os.Rename(original, script)
-		return err
-	}
-	return nil
-}
-
-// isPatchOf reports whether script is exactly what patching original produced. It is what proves
-// the two still belong together: an action whose ref moved is checked out over the patched bundle,
-// leaving an original that would restore the version before the move.
-func isPatchOf(original, script string) bool {
-	data, err := os.ReadFile(original)
-	if err != nil {
-		return false
-	}
-	current, err := os.ReadFile(script)
-	if err != nil {
-		return false
-	}
-	patched, ok := patchedBundle(data)
-	return ok && bytes.Equal(patched, current)
+	// No atomic write needed: every prepare checks the action out and hard resets it.
+	return true, os.WriteFile(script, patched, info.Mode().Perm())
 }
 
 // patchedBundle opens the GHES gate, and where the cache toolkit is present, points the cache
 // service at the cache server. A bundle this runner cannot account for comes back untouched.
 func patchedBundle(data []byte) ([]byte, bool) {
-	if !localhostTest.Match(data) {
+	// Literals before regex: most bundles carry neither toolkit and stop here. The artifact gate
+	// guards a refusal with no URL to move, so it opens alone; the cache gate opens only with its
+	// service URL, since a bundle whose getter this cannot find is better left on v1.
+	artifact := bytes.Contains(data, []byte(artifactRefusal))
+	cache := bytes.Contains(data, []byte(CacheServiceV2Env)) && serviceURLBranches.Match(data)
+	if !artifact && !cache {
 		return data, false
 	}
-	switch {
-	case bytes.Contains(data, []byte(CacheServiceV2Env)):
-		// The cache toolkit: both edits or neither, because choosing v2 without redirecting the
-		// URL would send the client to a results URL that serves no cache service.
-		if !serviceURLBranches.Match(data) {
-			return data, false
-		}
-	case bytes.Contains(data, []byte(artifactRefusal)):
-		// The artifact toolkit, where the gate is a plain refusal and there is no URL to move:
-		// artifacts already go to Gitea, which implements that service.
-	default:
+	if !localhostTest.Match(data) {
 		return data, false
 	}
 
@@ -259,5 +158,8 @@ func patchedBundle(data []byte) ([]byte, bool) {
 		// quoting survives and the result stays valid even inside a string literal.
 		return bytes.Replace(test, []byte(localhostHost), nil, 1)
 	})
-	return serviceURLBranches.ReplaceAll(opened, cacheURLFirst), true
+	if cache {
+		opened = serviceURLBranches.ReplaceAll(opened, cacheURLFirst)
+	}
+	return opened, true
 }

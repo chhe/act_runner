@@ -180,9 +180,6 @@ func (sar *stepActionRemote) prepareActionExecutor() common.Executor {
 				sar.action = actionModel
 				return err
 			},
-			// A stage of its own: it takes the same clone lock, and it has to land before
-			// runAction copies the action into the job container.
-			sar.patchActionToolkit,
 		)(ctx)
 	}
 }
@@ -201,7 +198,7 @@ func (sar *stepActionRemote) pre() common.Executor {
 
 	return common.NewPipelineExecutor(
 		sar.prepareActionExecutor(),
-		runStepExecutor(sar, stepStagePre, sar.revertToolkitOnFailure(runPreStep(sar))).If(hasPreStep(sar)).If(shouldRunPreStep(sar)))
+		runStepExecutor(sar, stepStagePre, runPreStep(sar)).If(hasPreStep(sar)).If(shouldRunPreStep(sar)))
 }
 
 func (sar *stepActionRemote) main() common.Executor {
@@ -223,47 +220,13 @@ func (sar *stepActionRemote) main() common.Executor {
 				return sar.RunContext.JobContainer.CopyDir(copyToPath, sar.RunContext.Config.Workdir+string(filepath.Separator)+".", sar.RunContext.Config.UseGitIgnore)(ctx)
 			}
 
-			actionDir := sar.actionDir()
-
-			return sar.revertToolkitOnFailure(sar.runAction(sar, actionDir, sar.remoteAction))(ctx)
+			return sar.runAction(sar, sar.actionDir(), sar.remoteAction)(ctx)
 		}),
 	)
 }
 
 func (sar *stepActionRemote) post() common.Executor {
-	return runStepExecutor(sar, stepStagePost, sar.revertToolkitOnFailure(runPostStep(sar))).If(hasPostStep(sar)).If(shouldRunPostStep(sar))
-}
-
-// toolkitBundles is the action directory and the entrypoints the toolkit may live in.
-func (sar *stepActionRemote) toolkitBundles() (string, []string) {
-	if sar.remoteAction == nil {
-		return "", nil
-	}
-	dir := sar.actionDir()
-	return dir, actionScriptPaths(filepath.Join(dir, sar.remoteAction.Path), sar.action)
-}
-
-// patchActionToolkit edits the bundled toolkit so it works against Gitea: the artifact actions
-// stop refusing, and the cache client keeps to the cache server whichever API version it picks.
-func (sar *stepActionRemote) patchActionToolkit(ctx context.Context) error {
-	if sar.RunContext.Config.PatchToolkit {
-		dir, scripts := sar.toolkitBundles()
-		patchToolkit(ctx, dir, scripts)
-	}
-	return nil
-}
-
-// revertToolkitOnFailure restores the untouched bundles when the action fails, so a later job
-// runs it as shipped rather than repeating a failure the patch may have caused.
-func (sar *stepActionRemote) revertToolkitOnFailure(exec common.Executor) common.Executor {
-	return func(ctx context.Context) error {
-		err := exec(ctx)
-		if err != nil {
-			dir, scripts := sar.toolkitBundles()
-			revertToolkit(ctx, dir, scripts)
-		}
-		return err
-	}
+	return runStepExecutor(sar, stepStagePost, runPostStep(sar)).If(hasPostStep(sar)).If(shouldRunPostStep(sar))
 }
 
 func (sar *stepActionRemote) actionDir() string {

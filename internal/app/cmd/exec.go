@@ -446,7 +446,6 @@ func runExec(ctx context.Context, execArgs *executeArgs) func(cmd *cobra.Command
 		config := &runner.Config{
 			Workdir:               execArgs.Workdir(),
 			BindWorkdir:           false,
-			PatchToolkit:          true, // the cache server started above is what the patch points at
 			ReuseContainers:       false,
 			ForcePull:             execArgs.forcePull,
 			ForceRebuild:          execArgs.forceRebuild,

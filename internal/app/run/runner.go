@@ -461,10 +461,13 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 	// is that server's responsibility to authenticate requests.
 	revokeCache, resultsURL := r.registerCacheForTask(giteaRuntimeToken, preset.Repository, reporter)
 	defer revokeCache()
-	// A cache server that agreed to forward the artifact half is the whole results service, so
-	// the job is pointed at it and the v2 variable is finally true.
+	// A cache server that agreed to forward the artifact half is the whole results service, so the
+	// job is pointed at it.
 	if resultsURL != "" {
-		envs["ACTIONS_RESULTS_URL"], envs[runner.CacheServiceV2Env] = resultsURL, "true"
+		envs["ACTIONS_RESULTS_URL"] = resultsURL
+		if r.cacheServiceV2() {
+			envs[runner.CacheServiceV2Env] = "true"
+		}
 	}
 
 	eventJSON, err := json.Marshal(preset.Event)
@@ -515,7 +518,7 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 		AllocatePTY:       r.cfg.Runner.AllocatePTY,
 		ActionOfflineMode: r.cfg.Cache.OfflineMode,
 		ActionCloneDepth:  actionCloneDepth,
-		PatchToolkit:      r.patchToolkit(),
+		NoActionPatch:     r.cfg.Runner.PatchActions != nil && !*r.cfg.Runner.PatchActions,
 
 		ReuseContainers:      false,
 		ForcePull:            r.cfg.Container.ForcePull,
@@ -590,10 +593,10 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 	return execErr
 }
 
-// patchToolkit reports whether act should edit the toolkit bundled into an action. It follows the
-// cache URL, because that is what the edits point the client at; see act/runner/toolkit_patch.go.
-func (r *Runner) patchToolkit() bool {
-	return r.envs["ACTIONS_CACHE_URL"] != "" && (r.cfg.Cache.V2 == nil || *r.cfg.Cache.V2)
+// cacheServiceV2 reports whether jobs are told the cache service speaks v2. It is all cache.v2
+// turns off: the bundle edit that reaches it is what the artifact actions need too.
+func (r *Runner) cacheServiceV2() bool {
+	return r.cfg.Cache.V2 == nil || *r.cfg.Cache.V2
 }
 
 // registerCacheForTask tells the cache server to accept requests authenticated

@@ -74,7 +74,7 @@ type Config struct {
 	ContainerNetworkCreateOptions      container.NewDockerNetworkCreateExecutorInput // the default network create options
 	ActionCache                        ActionCache                                   // Use a custom ActionCache Implementation
 	ProxyEnv                           map[string]string                             // the proxy variables the job runs with, also given to service containers and image builds
-	PatchToolkit                       bool                                          // edit the @actions toolkit bundled into an action so it works against Gitea, see toolkit_patch.go
+	NoActionPatch                      bool                                          // run actions exactly as published, applying no compatibility patches, see patch_actions.go
 
 	PresetGitHubContext   *model.GithubContext // the preset github context, overrides some fields like DefaultBranch, Env, Secrets etc.
 	EventJSON             string               // the content of JSON file to use for event.json in containers, overrides EventPath

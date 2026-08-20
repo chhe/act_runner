@@ -167,6 +167,11 @@ func maybeCopyToActionDir(ctx context.Context, step actionStep, actionDir, actio
 
 	defer git.AcquireCloneLock(actionDir)()
 
+	if !rc.Config.NoActionPatch {
+		// A concurrent job's prepare resets this directory, so patch under the copy's lock.
+		patchActions(ctx, actionScriptPaths(filepath.Join(actionDir, actionPath), step.getActionModel()))
+	}
+
 	if err := removeGitIgnore(ctx, actionDir); err != nil {
 		return err
 	}
