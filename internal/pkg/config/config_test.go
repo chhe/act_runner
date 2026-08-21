@@ -186,14 +186,14 @@ runner:
 	assert.Equal(t, 5*time.Minute, cfg.Runner.PostTaskScriptTimeout)
 }
 
-func TestLoadDefault_LoadsCacheEviction(t *testing.T) {
-	write := func(t *testing.T, body string) string {
-		t.Helper()
-		path := filepath.Join(t.TempDir(), "config.yaml")
-		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
-		return path
-	}
+func write(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+	return path
+}
 
+func TestLoadDefault_LoadsCacheEviction(t *testing.T) {
 	t.Run("sizes accept any spelling of the unit", func(t *testing.T) {
 		cfg, err := LoadDefault(write(t, "cache:\n  retention: 336h\n  repo_size_limit: 50gb\n  size_limit: 1TiB\n  sweep_interval: 15m\n"))
 		require.NoError(t, err)
@@ -215,6 +215,14 @@ func TestLoadDefault_LoadsCacheEviction(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "banana")
 	})
+}
+
+func TestLoadDefault_LoadsJobLogs(t *testing.T) {
+	cfg, err := LoadDefault(write(t, "log:\n  job:\n    dir: /var/log/jobs\n    retention: 0s\n    max_size: 100MB\n"))
+	require.NoError(t, err)
+	assert.Equal(t, "/var/log/jobs", cfg.Log.Job.Dir)
+	assert.Zero(t, cfg.Log.Job.Retention, "zero keeps every task directory")
+	assert.Equal(t, Size(100*1024*1024), cfg.Log.Job.MaxSize)
 }
 
 func TestLoadDefault_LoadsJobHooks(t *testing.T) {

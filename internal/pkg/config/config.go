@@ -38,9 +38,17 @@ const Minimal = `# Minimal config file. Every option it does not set keeps its d
 # "gitea-runner config generate" prints all options, "config set <key> <value>" sets one here.
 `
 
-// Log represents the configuration for logging.
+// Log represents the runner process's own logging, plus the copy of each task's log it keeps.
 type Log struct {
 	Level string `yaml:"level"` // Level indicates the logging level.
+	Job   LogJob `yaml:"job"`   // Job configures the copy of each task's log kept on the runner host.
+}
+
+// LogJob represents the configuration for the copy of each task's log kept on the runner host.
+type LogJob struct {
+	Dir       string        `yaml:"dir"`       // Dir is the directory the runner writes each task's log to. Empty, the default, writes none.
+	Retention time.Duration `yaml:"retention"` // Retention deletes a task's log directory once it is older than this. Default 168h, 0s keeps them regardless of age.
+	MaxSize   Size          `yaml:"max_size"`  // MaxSize caps one task's log file. Default 1GB, 0 is no limit.
 }
 
 // Runner represents the configuration for the runner.
@@ -202,7 +210,8 @@ type Config struct {
 // LoadDefault returns the default configuration.
 // If file is not empty, it will be used to load the configuration.
 func LoadDefault(file string) (*Config, error) {
-	cfg := &Config{Cache: DefaultCache()}
+	// Seeded before the file is read, so a written 0 can mean off.
+	cfg := &Config{Cache: DefaultCache(), Log: Log{Job: LogJob{Retention: 7 * 24 * time.Hour, MaxSize: 1024 * 1024 * 1024}}}
 	definedRunnerKeys := map[string]bool{}
 	if file != "" {
 		content, err := os.ReadFile(file)

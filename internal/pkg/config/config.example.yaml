@@ -1,13 +1,20 @@
 # Every option with its default value, all commented out. Read this file, do not copy it.
 # `./gitea-runner config init` writes a config file to copy the lines you change into.
 
-# Logging for the runner process itself (messages printed to stderr).
-# This does not control how workflow step output is streamed to the Gitea UI;
-# tune that with runner.log_report_* below.
+# Logging for the runner process itself (messages printed to stderr), plus the copy of
+# each task's log kept under log.job. Neither controls how workflow step output is streamed
+# to the Gitea UI; tune that with runner.log_report_* below.
 log:
   # logrus severity: trace, debug, info, warn, error, fatal, panic.
   # trace and debug turn on caller/file:line in log lines. Default if omitted: info.
   #level: info
+  # Write a copy of each task's log to dir as <start time>-task-<id>.log, so a job's output
+  # survives a failure to send it to Gitea. A path turns them on, empty turns them off.
+  # retention is how long a log is kept (0s keeps all), max_size caps one log (0 is no limit).
+  #job:
+  #  dir: ""
+  #  retention: 168h
+  #  max_size: 1GB
 
 runner:
   # Where to store the registration result.

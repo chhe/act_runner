@@ -1041,18 +1041,13 @@ func TestReporter_StopHeartbeats(t *testing.T) {
 		"Close() must still send a final UpdateTask after StopHeartbeats")
 }
 
-func TestAppendIfNotNil(t *testing.T) {
-	var s []*int
-	s = appendIfNotNil(s, nil)
-	assert.Empty(t, s)
-
-	v := 7
-	s = appendIfNotNil(s, &v)
-	require.Len(t, s, 1)
-	assert.Equal(t, &v, s[0])
-
-	s = appendIfNotNil(s, nil)
-	require.Len(t, s, 1)
+func TestAppendLogRow(t *testing.T) {
+	r := &Reporter{}
+	row := &runnerv1.LogRow{Time: timestamppb.Now(), Content: "hello"}
+	r.appendLogRow(nil)
+	r.appendLogRow(row)
+	r.appendLogRow(nil)
+	assert.Equal(t, []*runnerv1.LogRow{row}, r.logRows)
 }
 
 func TestReporter_Levels(t *testing.T) {

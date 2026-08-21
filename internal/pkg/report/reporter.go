@@ -94,6 +94,8 @@ type Reporter struct {
 
 	debugOutputEnabled  bool
 	stopCommandEndToken string
+
+	jobLog *jobLog // this task's rows on the runner's own disk, nil when log.job.dir is unset
 }
 
 // extraMasks are values known before the job starts that are not among its secrets, such as
@@ -132,6 +134,7 @@ func NewReporter(ctx context.Context, cancel context.CancelFunc, client client.C
 		reportFailing: map[string]bool{},
 		daemon:        make(chan struct{}),
 		heartbeatStop: make(chan struct{}),
+		jobLog:        openJobLog(cfg.Log.Job, task.Id, time.Now()),
 	}
 
 	rv.daemonWait = 6 * rv.effectiveCloseTimeout()
@@ -164,11 +167,14 @@ func (r *Reporter) Levels() []log.Level {
 	return log.AllLevels
 }
 
-func appendIfNotNil[T any](s []*T, v *T) []*T {
-	if v != nil {
-		return append(s, v)
+// appendLogRow buffers a row for the uploader and mirrors it into job.log. A nil row is one
+// the command handler dropped, such as ::add-mask::. Caller holds stateMu.
+func (r *Reporter) appendLogRow(row *runnerv1.LogRow) {
+	if row == nil {
+		return
 	}
-	return s
+	r.logRows = append(r.logRows, row)
+	r.jobLog.write(row.Time.AsTime(), row.Content)
 }
 
 // isJobStepEntry is used to not report composite step results incorrectly as step result
@@ -245,7 +251,7 @@ func (r *Reporter) Fire(entry *log.Entry) error {
 			}
 		}
 		if r.shouldAppendLogRow(entry) {
-			r.logRows = appendIfNotNil(r.logRows, r.parseLogRow(entry))
+			r.appendLogRow(r.parseLogRow(entry))
 		}
 		r.unlockAndNotify(urgentState)
 		return nil
@@ -259,7 +265,7 @@ func (r *Reporter) Fire(entry *log.Entry) error {
 	}
 	if step == nil {
 		if r.shouldAppendLogRow(entry) {
-			r.logRows = appendIfNotNil(r.logRows, r.parseLogRow(entry))
+			r.appendLogRow(r.parseLogRow(entry))
 		}
 		r.unlockAndNotify(false)
 		return nil
@@ -285,11 +291,11 @@ func (r *Reporter) Fire(entry *log.Entry) error {
 					step.LogIndex = int64(r.logOffset + len(r.logRows))
 				}
 				step.LogLength++
-				r.logRows = append(r.logRows, row)
+				r.appendLogRow(row)
 			}
 		}
 	} else if r.shouldAppendLogRow(entry) {
-		r.logRows = appendIfNotNil(r.logRows, r.parseLogRow(entry))
+		r.appendLogRow(r.parseLogRow(entry))
 	}
 	if v, ok := entry.Data["stepResult"]; ok && isJobStepEntry(entry) {
 		if stepResult, ok := r.parseResult(v); ok {
@@ -428,7 +434,7 @@ func (r *Reporter) logf(format string, a ...any) {
 	if !r.duringSteps() {
 		// Masked like any other row: these bypass parseLogRow, but a caller can still
 		// interpolate a secret, such as a configured URL carrying credentials.
-		r.logRows = append(r.logRows, r.newLogRow(timestamppb.Now(), fmt.Sprintf(format, a...)))
+		r.appendLogRow(r.newLogRow(timestamppb.Now(), fmt.Sprintf(format, a...)))
 	}
 }
 
@@ -479,13 +485,13 @@ func (r *Reporter) Close(lastWords string) error {
 			}
 		}
 		r.state.Result = result
-		r.logRows = append(r.logRows, &runnerv1.LogRow{
+		r.appendLogRow(&runnerv1.LogRow{
 			Time:    timestamppb.Now(),
 			Content: lastWords,
 		})
 		r.state.StoppedAt = timestamppb.Now()
 	} else if lastWords != "" {
-		r.logRows = append(r.logRows, &runnerv1.LogRow{
+		r.appendLogRow(&runnerv1.LogRow{
 			Time:    timestamppb.Now(),
 			Content: lastWords,
 		})
@@ -510,6 +516,7 @@ func (r *Reporter) Close(lastWords string) error {
 	// supported branches, e.g. v1.28+.
 	r.stateMu.Lock()
 	if len(r.logRows) == 0 {
+		// Not appendLogRow: the sentinel is not job output and has no place in job.log.
 		r.logRows = append(r.logRows, &runnerv1.LogRow{
 			Time:    timestamppb.Now(),
 			Content: "",
@@ -519,10 +526,21 @@ func (r *Reporter) Close(lastWords string) error {
 
 	// Separate budgets so a slow ReportLog can't starve the ReportState that
 	// carries the cancel acknowledgement.
-	return errors.Join(
+	err := errors.Join(
 		r.flushFinal(func() error { return r.ReportLog(true) }),
 		r.flushFinal(func() error { return r.ReportState(true) }),
 	)
+
+	// After the flush so a failed handover is in the file too, under stateMu so a late entry cannot race.
+	r.stateMu.Lock()
+	trailer := fmt.Sprintf("task %d finished: %s", r.state.Id, metrics.ResultToStatusLabel(r.state.Result))
+	if err != nil {
+		trailer += fmt.Sprintf(", the final flush to Gitea failed: %v", err)
+	}
+	r.jobLog.close(r.mask(trailer))
+	r.stateMu.Unlock()
+
+	return err
 }
 
 // flushFinal retries fn on a detached, bounded context so a cancelled r.ctx
@@ -851,8 +869,12 @@ func (r *Reporter) parseLogRow(entry *log.Entry) *runnerv1.LogRow {
 func (r *Reporter) newLogRow(t *timestamppb.Timestamp, content string) *runnerv1.LogRow {
 	return &runnerv1.LogRow{
 		Time:    t,
-		Content: strings.ToValidUTF8(r.logReplacer.Replace(content), "?"),
+		Content: r.mask(content),
 	}
+}
+
+func (r *Reporter) mask(content string) string {
+	return strings.ToValidUTF8(r.logReplacer.Replace(content), "?")
 }
 
 func (r *Reporter) addMask(msg string) {
