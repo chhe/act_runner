@@ -26,6 +26,7 @@ import (
 	"gitea.com/gitea/runner/act/lookpath"
 	"gitea.com/gitea/runner/internal/pkg/process"
 
+	"github.com/creack/pty"
 	"github.com/go-git/go-billy/v5/helper/polyfill"
 	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
@@ -71,12 +72,6 @@ func (e *HostEnvironment) Create(_, _ []string) common.Executor {
 	}
 }
 
-func (e *HostEnvironment) ConnectToNetwork(name string) common.Executor {
-	return func(ctx context.Context) error {
-		return nil
-	}
-}
-
 func (e *HostEnvironment) Close() common.Executor {
 	return func(ctx context.Context) error {
 		return nil
@@ -94,33 +89,6 @@ func (e *HostEnvironment) Copy(destPath string, files ...*FileEntry) common.Exec
 			}
 		}
 		return nil
-	}
-}
-
-func (e *HostEnvironment) CopyTarStream(ctx context.Context, destPath string, tarStream io.Reader) error {
-	if err := os.RemoveAll(destPath); err != nil {
-		return err
-	}
-	tr := tar.NewReader(tarStream)
-	cp := &filecollector.CopyCollector{
-		DstDir: destPath,
-	}
-	for {
-		ti, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			return nil
-		} else if err != nil {
-			return err
-		}
-		if ti.FileInfo().IsDir() {
-			continue
-		}
-		if ctx.Err() != nil {
-			return errors.New("CopyTarStream has been cancelled")
-		}
-		if err := cp.WriteFile(ti.Name, ti.FileInfo(), ti.Linkname, tr); err != nil {
-			return err
-		}
 	}
 }
 
@@ -142,7 +110,6 @@ func (e *HostEnvironment) CopyDir(destPath, srcPath string, useGitIgnore bool) c
 			ignorer = gitignore.NewMatcher(ps)
 		}
 		fc := &filecollector.FileCollector{
-			Fs:        &filecollector.DefaultFs{},
 			Ignorer:   ignorer,
 			SrcPath:   srcPath,
 			SrcPrefix: srcPrefix,
@@ -180,7 +147,6 @@ func (e *HostEnvironment) GetContainerArchive(ctx context.Context, srcPath strin
 			srcPrefix += string(filepath.Separator)
 		}
 		fc := &filecollector.FileCollector{
-			Fs:        &filecollector.DefaultFs{},
 			SrcPath:   srcPath,
 			SrcPrefix: srcPrefix,
 			Handler:   tc,
@@ -246,24 +212,8 @@ func (w *ptyWriter) Write(buf []byte) (int, error) {
 	return w.Out.Write(buf)
 }
 
-type localEnv struct {
-	env map[string]string
-}
-
-func (l *localEnv) Getenv(name string) string {
-	if runtime.GOOS == "windows" {
-		for k, v := range l.env {
-			if strings.EqualFold(name, k) {
-				return v
-			}
-		}
-		return ""
-	}
-	return l.env[name]
-}
-
 func lookupPathHost(cmd string, env map[string]string, writer io.Writer) (string, error) {
-	f, err := lookpath.LookPath2(cmd, &localEnv{env: env})
+	f, err := lookpath.LookPath2(cmd, env)
 	if err != nil {
 		err := "Cannot find: " + cmd + " in PATH"
 		if _, _err := writer.Write([]byte(err + "\n")); _err != nil {
@@ -275,7 +225,7 @@ func lookupPathHost(cmd string, env map[string]string, writer io.Writer) (string
 }
 
 func setupPty(cmd *exec.Cmd, cmdline string) (*os.File, *os.File, error) {
-	ppty, tty, err := openPty()
+	ppty, tty, err := pty.Open()
 	if err != nil {
 		return nil, nil, err
 	}

@@ -25,32 +25,9 @@ var (
 	findGithubRepo  = git.FindGithubRepo
 )
 
-func withDefaultBranch(ctx context.Context, b string, event map[string]any) map[string]any {
-	repoI, ok := event["repository"]
-	if !ok {
-		repoI = make(map[string]any)
-	}
-
-	repo, ok := repoI.(map[string]any)
-	if !ok {
-		common.Logger(ctx).Warnf("unable to set default branch to %v", b)
-		return event
-	}
-
-	// if the branch is already there return with no changes
-	if _, ok = repo["default_branch"]; ok {
-		return event
-	}
-
-	repo["default_branch"] = b
-	event["repository"] = repo
-
-	return event
-}
-
 // SetRef resolves the ref of the context from its event payload, falling back
 // to the ref checked out in repoPath.
-func SetRef(ctx context.Context, ghc *model.GithubContext, defaultBranch, repoPath string) {
+func SetRef(ctx context.Context, ghc *model.GithubContext, repoPath string) {
 	logger := common.Logger(ctx)
 
 	// https://docs.github.com/en/actions/learn-github-actions/events-that-trigger-workflows
@@ -82,11 +59,15 @@ func SetRef(ctx context.Context, ghc *model.GithubContext, defaultBranch, repoPa
 			ghc.Ref = ref
 		}
 
-		// set the branch in the event data
-		if defaultBranch != "" {
-			ghc.Event = withDefaultBranch(ctx, defaultBranch, ghc.Event)
-		} else {
-			ghc.Event = withDefaultBranch(ctx, "master", ghc.Event)
+		repository, exists := ghc.Event["repository"]
+		if !exists {
+			repository = map[string]any{}
+		}
+		if repository, ok := repository.(map[string]any); !ok {
+			logger.Warn("unable to set default branch to master")
+		} else if _, exists := repository["default_branch"]; !exists {
+			repository["default_branch"] = "master"
+			ghc.Event["repository"] = repository
 		}
 
 		if ghc.Ref == "" {
@@ -125,11 +106,11 @@ func SetSha(ctx context.Context, ghc *model.GithubContext, repoPath string) {
 
 // SetRepositoryAndOwner resolves the repository of the context from the git
 // remote in repoPath when it is not set yet, and derives its owner.
-func SetRepositoryAndOwner(ctx context.Context, ghc *model.GithubContext, githubInstance, remoteName, repoPath string) {
+func SetRepositoryAndOwner(ctx context.Context, ghc *model.GithubContext, githubInstance, repoPath string) {
 	if ghc.Repository == "" {
-		repo, err := findGithubRepo(ctx, repoPath, githubInstance, remoteName)
+		repo, err := findGithubRepo(ctx, repoPath, githubInstance)
 		if err != nil {
-			common.Logger(ctx).Warningf("unable to get git repo (githubInstance: %v; remoteName: %v, repoPath: %v): %v", githubInstance, remoteName, repoPath, err)
+			common.Logger(ctx).Warningf("unable to get git repo (githubInstance: %v, repoPath: %v): %v", githubInstance, repoPath, err)
 			return
 		}
 		ghc.Repository = repo

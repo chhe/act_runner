@@ -83,7 +83,7 @@ func TestNewRunnerInitializesLabelsAndEnvironment(t *testing.T) {
 		Labels: []string{"ubuntu:host", "", "pool:e57e18d4"},
 	}
 	cli := clientmocks.NewClient(t)
-	cli.On("Address").Return("https://gitea.example/").Maybe()
+	cli.AddressValue = "https://gitea.example/"
 
 	r := NewRunner(cfg, reg, cli)
 
@@ -137,7 +137,7 @@ func TestNewRunnerLeavesProxyToTheTask(t *testing.T) {
 	cfg.Cache.ExternalServer = "http://cache.local:8088/"
 	reg := &config.Registration{Name: "runner"}
 	cli := clientmocks.NewClient(t)
-	cli.On("Address").Return("https://gitea.example/").Maybe()
+	cli.AddressValue = "https://gitea.example/"
 
 	r := NewRunner(cfg, reg, cli)
 
@@ -161,7 +161,7 @@ func TestNewRunnerCacheServiceV2(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Cache.Dir, cfg.Cache.Host = t.TempDir(), "127.0.0.1"
 	cli := clientmocks.NewClient(t)
-	cli.On("Address").Return("https://gitea.example/").Maybe()
+	cli.AddressValue = "https://gitea.example/"
 
 	r := NewRunner(cfg, &config.Registration{Name: "runner"}, cli)
 	t.Cleanup(func() { _ = r.Close() })
@@ -202,7 +202,7 @@ func TestNewRunnerNormalizesTheExternalCacheServer(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Cache.ExternalServer = "http://cache.local:8088//"
 	cli := clientmocks.NewClient(t)
-	cli.On("Address").Return("https://gitea.example/").Maybe()
+	cli.AddressValue = "https://gitea.example/"
 
 	r := NewRunner(cfg, &config.Registration{Name: "runner"}, cli)
 

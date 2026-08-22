@@ -33,7 +33,7 @@ func findExecutable(file string) error {
 // directories named by the PATH environment variable.
 // If file contains a slash, it is tried directly and the PATH is not consulted.
 // The result may be an absolute path or a path relative to the current directory.
-func LookPath2(file string, lenv Env) (string, error) {
+func LookPath2(file string, env map[string]string) (string, error) {
 	// NOTE(rsc): I wish we could use the Plan 9 behavior here
 	// (only bypass the path if file begins with / or ./ or ../)
 	// but that would not match all the Unix shells.
@@ -45,7 +45,7 @@ func LookPath2(file string, lenv Env) (string, error) {
 		}
 		return "", &Error{file, err}
 	}
-	path := lenv.Getenv("PATH")
+	path := getenv(env, "PATH")
 	for _, dir := range filepath.SplitList(path) {
 		if dir == "" {
 			// Unix shell semantics: path element "" means "."

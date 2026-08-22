@@ -157,8 +157,7 @@ func TestSetupEnv(t *testing.T) {
 	sm.On("getStepModel").Return(step)
 	sm.On("getEnv").Return(&env)
 
-	err := setupEnv(context.Background(), sm)
-	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
+	setupEnv(context.Background(), sm)
 
 	// These are commit or system specific
 	delete((env), "GITHUB_REF")
@@ -213,12 +212,7 @@ func TestIsStepEnabled(t *testing.T) {
 
 		return &stepRun{
 			RunContext: &RunContext{
-				Config: &Config{
-					Workdir: ".",
-					Platforms: map[string]string{
-						"ubuntu-latest": "ubuntu-latest",
-					},
-				},
+				Config:      &Config{Workdir: ".", PlatformPicker: func([]string) string { return "ubuntu-latest" }},
 				StepResults: map[string]*model.StepResult{},
 				Env:         map[string]string{},
 				Run: &model.Run{
@@ -295,12 +289,7 @@ func TestIsContinueOnError(t *testing.T) {
 
 		return &stepRun{
 			RunContext: &RunContext{
-				Config: &Config{
-					Workdir: ".",
-					Platforms: map[string]string{
-						"ubuntu-latest": "ubuntu-latest",
-					},
-				},
+				Config:      &Config{Workdir: ".", PlatformPicker: func([]string) string { return "ubuntu-latest" }},
 				StepResults: map[string]*model.StepResult{},
 				Env:         map[string]string{},
 				Run: &model.Run{

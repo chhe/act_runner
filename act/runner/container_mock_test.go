@@ -14,6 +14,8 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
+var noopExecutor = func(context.Context) error { return nil }
+
 type containerMock struct {
 	mock.Mock
 	container.Container
@@ -47,11 +49,6 @@ func (cm *containerMock) Close() common.Executor {
 
 func (cm *containerMock) UpdateFromEnv(srcPath string, env *map[string]string) common.Executor {
 	args := cm.Called(srcPath, env)
-	return args.Get(0).(func(context.Context) error)
-}
-
-func (cm *containerMock) UpdateFromImageEnv(env *map[string]string) common.Executor {
-	args := cm.Called(env)
 	return args.Get(0).(func(context.Context) error)
 }
 

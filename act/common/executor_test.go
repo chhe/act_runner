@@ -45,43 +45,6 @@ func TestNewWorkflow(t *testing.T) {
 	assert.Equal(2, runcount)
 }
 
-func TestNewConditionalExecutor(t *testing.T) {
-	assert := assert.New(t)
-
-	ctx := context.Background()
-
-	trueCount := 0
-	falseCount := 0
-
-	err := NewConditionalExecutor(func(ctx context.Context) bool {
-		return false
-	}, func(ctx context.Context) error {
-		trueCount++
-		return nil
-	}, func(ctx context.Context) error {
-		falseCount++
-		return nil
-	})(ctx)
-
-	assert.NoError(err) //nolint:testifylint // pre-existing issue from nektos/act
-	assert.Equal(0, trueCount)
-	assert.Equal(1, falseCount)
-
-	err = NewConditionalExecutor(func(ctx context.Context) bool {
-		return true
-	}, func(ctx context.Context) error {
-		trueCount++
-		return nil
-	}, func(ctx context.Context) error {
-		falseCount++
-		return nil
-	})(ctx)
-
-	assert.NoError(err) //nolint:testifylint // pre-existing issue from nektos/act
-	assert.Equal(1, trueCount)
-	assert.Equal(1, falseCount)
-}
-
 // concurrencyProbe returns an executor recording the peak number of concurrent copies. Copies
 // block until wantActive are in flight so the peak is exact without sleeping, and later copies
 // find the gate already open so the last one still finishes with no partner left.
@@ -221,12 +184,5 @@ func TestExecutorFinallyReturnsFinallyErrorWithOriginal(t *testing.T) {
 	require.Error(t, err)
 	if !strings.Contains(err.Error(), "cleanup failed") || !strings.Contains(err.Error(), "main failed") {
 		t.Fatalf("finally error = %q, want both cleanup and original error", err)
-	}
-}
-
-func TestConditionalNot(t *testing.T) {
-	cond := Conditional(func(context.Context) bool { return false })
-	if !cond.Not()(context.Background()) {
-		t.Fatal("inverted conditional should be true")
 	}
 }

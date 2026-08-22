@@ -33,11 +33,7 @@ type stepRun struct {
 	shellCommand       string
 }
 
-func (sr *stepRun) pre() common.Executor {
-	return func(ctx context.Context) error {
-		return nil
-	}
-}
+func (sr *stepRun) pre() common.Executor { return common.NewPipelineExecutor() }
 
 func (sr *stepRun) main() common.Executor {
 	sr.env = map[string]string{}
@@ -202,11 +198,7 @@ func stepDeclaredEnvKeysInOrder(step *model.Step) []string {
 	return keys
 }
 
-func (sr *stepRun) post() common.Executor {
-	return func(ctx context.Context) error {
-		return nil
-	}
-}
+func (sr *stepRun) post() common.Executor { return common.NewPipelineExecutor() }
 
 func (sr *stepRun) getRunContext() *RunContext {
 	return sr.RunContext
@@ -306,22 +298,6 @@ func (sr *stepRun) setupShellCommand(ctx context.Context) (name, script string, 
 	return name, script, err
 }
 
-type localEnv struct {
-	env map[string]string
-}
-
-func (l *localEnv) Getenv(name string) string {
-	if runtime.GOOS == "windows" {
-		for k, v := range l.env {
-			if strings.EqualFold(name, k) {
-				return v
-			}
-		}
-		return ""
-	}
-	return l.env[name]
-}
-
 func (sr *stepRun) setupShell(ctx context.Context) {
 	rc := sr.RunContext
 	step := sr.Step
@@ -344,10 +320,9 @@ func (sr *stepRun) setupShell(ctx context.Context) {
 				shellWithFallback = []string{"pwsh", "powershell"}
 			}
 			step.Shell = shellWithFallback[0]
-			lenv := &localEnv{env: map[string]string{}}
-			maps.Copy(lenv.env, sr.env)
-			sr.getRunContext().ApplyExtraPath(ctx, &lenv.env)
-			_, err := lookpath.LookPath2(shellWithFallback[0], lenv)
+			env := maps.Clone(sr.env)
+			sr.getRunContext().ApplyExtraPath(ctx, &env)
+			_, err := lookpath.LookPath2(shellWithFallback[0], env)
 			if err != nil {
 				step.Shell = shellWithFallback[1]
 			}

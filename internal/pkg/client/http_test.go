@@ -12,6 +12,7 @@ import (
 
 	"connectrpc.com/connect"
 	pingv1 "gitea.dev/actionslib/ping/v1"
+	"gitea.dev/actionslib/pkg/protocol"
 	"github.com/stretchr/testify/require"
 )
 
@@ -71,14 +72,13 @@ func TestNewSetsBaseURLAndHeaders(t *testing.T) {
 	c := New(server.URL+"/", false, "the-uuid", "the-token", time.Minute)
 	// Address returns the endpoint as supplied (untrimmed)
 	require.Equal(t, server.URL+"/", c.Address())
-	require.False(t, c.Insecure())
 
 	// the call is expected to fail (server returns 500), we only assert what was sent
 	_, _ = c.Ping(t.Context(), connect.NewRequest(&pingv1.PingRequest{Data: "hi"}))
 
 	require.True(t, strings.HasPrefix(gotPath, "/api/actions/"), "unexpected path %q", gotPath)
-	require.Equal(t, "the-uuid", gotHeaders.Get(UUIDHeader))
-	require.Equal(t, "the-token", gotHeaders.Get(TokenHeader))
+	require.Equal(t, "the-uuid", gotHeaders.Get(protocol.UUIDHeader))
+	require.Equal(t, "the-token", gotHeaders.Get(protocol.TokenHeader))
 }
 
 func TestNewOmitsEmptyHeaders(t *testing.T) {
@@ -92,6 +92,6 @@ func TestNewOmitsEmptyHeaders(t *testing.T) {
 	c := New(server.URL, false, "", "", time.Minute)
 	_, _ = c.Ping(t.Context(), connect.NewRequest(&pingv1.PingRequest{Data: "hi"}))
 
-	require.Empty(t, gotHeaders.Get(UUIDHeader))
-	require.Empty(t, gotHeaders.Get(TokenHeader))
+	require.Empty(t, gotHeaders.Get(protocol.UUIDHeader))
+	require.Empty(t, gotHeaders.Get(protocol.TokenHeader))
 }

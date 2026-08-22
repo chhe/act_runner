@@ -33,10 +33,7 @@ type stepActionLocal struct {
 
 func (sal *stepActionLocal) pre() common.Executor {
 	sal.env = map[string]string{}
-
-	return func(ctx context.Context) error {
-		return nil
-	}
+	return common.NewPipelineExecutor()
 }
 
 func (sal *stepActionLocal) main() common.Executor {
@@ -50,39 +47,37 @@ func (sal *stepActionLocal) main() common.Executor {
 		defer rawLogger.Infof("::endgroup::")
 
 		actionDir := filepath.Join(sal.getRunContext().Config.Workdir, sal.Step.Uses)
+		_, containerActionPath := getContainerActionPaths(sal.Step, path.Join(actionDir, ""), sal.RunContext)
 
-		localReader := func(ctx context.Context) actionYamlReader {
-			_, cpath := getContainerActionPaths(sal.Step, path.Join(actionDir, ""), sal.RunContext)
-			return func(filename string) (io.Reader, io.Closer, error) {
-				spath := path.Join(cpath, filename)
-				for range maxSymlinkDepth {
-					tars, err := sal.RunContext.JobContainer.GetContainerArchive(ctx, spath)
-					if errors.Is(err, fs.ErrNotExist) {
-						return nil, nil, err
-					} else if err != nil {
-						return nil, nil, fs.ErrNotExist
-					}
-					treader := tar.NewReader(tars)
-					header, err := treader.Next()
-					if errors.Is(err, io.EOF) {
-						return nil, nil, os.ErrNotExist
-					} else if err != nil {
-						return nil, nil, err
-					}
-					if header.FileInfo().Mode()&os.ModeSymlink == os.ModeSymlink {
-						spath, err = symlinkJoin(spath, header.Linkname, cpath)
-						if err != nil {
-							return nil, nil, err
-						}
-					} else {
-						return treader, tars, nil
-					}
+		localReader := func(filename string) (io.Reader, io.Closer, error) {
+			spath := path.Join(containerActionPath, filename)
+			for range maxSymlinkDepth {
+				tars, err := sal.RunContext.JobContainer.GetContainerArchive(ctx, spath)
+				if errors.Is(err, fs.ErrNotExist) {
+					return nil, nil, err
+				} else if err != nil {
+					return nil, nil, fs.ErrNotExist
 				}
-				return nil, nil, fmt.Errorf("max depth %d of symlinks exceeded while reading %s", maxSymlinkDepth, spath)
+				treader := tar.NewReader(tars)
+				header, err := treader.Next()
+				if errors.Is(err, io.EOF) {
+					return nil, nil, os.ErrNotExist
+				} else if err != nil {
+					return nil, nil, err
+				}
+				if header.FileInfo().Mode()&os.ModeSymlink == os.ModeSymlink {
+					spath, err = symlinkJoin(spath, header.Linkname, containerActionPath)
+					if err != nil {
+						return nil, nil, err
+					}
+				} else {
+					return treader, tars, nil
+				}
 			}
+			return nil, nil, fmt.Errorf("max depth %d of symlinks exceeded while reading %s", maxSymlinkDepth, spath)
 		}
 
-		actionModel, err := sal.readAction(ctx, sal.Step, actionDir, "", localReader(ctx), os.WriteFile)
+		actionModel, err := sal.readAction(ctx, sal.Step, actionDir, "", localReader, os.WriteFile)
 		if err != nil {
 			return err
 		}

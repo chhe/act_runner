@@ -16,7 +16,6 @@ import (
 	"gitea.dev/actionslib/pkg/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/require"
 )
 
 func TestStepDockerMain(t *testing.T) {
@@ -69,41 +68,23 @@ func TestStepDockerMain(t *testing.T) {
 	}
 	sd.RunContext.ExprEval = sd.RunContext.NewExpressionEvaluator(ctx)
 
-	cm.On("Pull", false).Return(func(ctx context.Context) error {
-		return nil
-	})
+	cm.On("Pull", false).Return(noopExecutor)
 
-	cm.On("Remove").Return(func(ctx context.Context) error {
-		return nil
-	})
+	cm.On("Remove").Return(noopExecutor)
 
-	cm.On("Create", []string(nil), []string(nil)).Return(func(ctx context.Context) error {
-		return nil
-	})
+	cm.On("Create", []string(nil), []string(nil)).Return(noopExecutor)
 
-	cm.On("Start", true).Return(func(ctx context.Context) error {
-		return nil
-	})
+	cm.On("Start", true).Return(noopExecutor)
 
-	cm.On("Close").Return(func(ctx context.Context) error {
-		return nil
-	})
+	cm.On("Close").Return(noopExecutor)
 
-	cm.On("Copy", "/var/run/act", mock.AnythingOfType("[]*container.FileEntry")).Return(func(ctx context.Context) error {
-		return nil
-	})
+	cm.On("Copy", "/var/run/act", mock.AnythingOfType("[]*container.FileEntry")).Return(noopExecutor)
 
-	cm.On("UpdateFromEnv", "/var/run/act/workflow/envs.txt", mock.AnythingOfType("*map[string]string")).Return(func(ctx context.Context) error {
-		return nil
-	})
+	cm.On("UpdateFromEnv", "/var/run/act/workflow/envs.txt", mock.AnythingOfType("*map[string]string")).Return(noopExecutor)
 
-	cm.On("UpdateFromEnv", "/var/run/act/workflow/statecmd.txt", mock.AnythingOfType("*map[string]string")).Return(func(ctx context.Context) error {
-		return nil
-	})
+	cm.On("UpdateFromEnv", "/var/run/act/workflow/statecmd.txt", mock.AnythingOfType("*map[string]string")).Return(noopExecutor)
 
-	cm.On("UpdateFromEnv", "/var/run/act/workflow/outputcmd.txt", mock.AnythingOfType("*map[string]string")).Return(func(ctx context.Context) error {
-		return nil
-	})
+	cm.On("UpdateFromEnv", "/var/run/act/workflow/outputcmd.txt", mock.AnythingOfType("*map[string]string")).Return(noopExecutor)
 
 	cm.On("GetContainerArchive", ctx, "/var/run/act/workflow/pathcmd.txt").Return(io.NopCloser(&bytes.Buffer{}), nil)
 
@@ -115,45 +96,9 @@ func TestStepDockerMain(t *testing.T) {
 	// DOCKER_USERNAME/DOCKER_PASSWORD secrets should not be used as implicit pull credentials for docker:// action containers.
 	assert.Empty(t, input.Username)
 	assert.Empty(t, input.Password)
+	assert.True(t, input.AutoRemove)
 
 	cm.AssertExpectations(t)
-}
-
-// With AutoRemove the daemon reaps the container on exit, so act must not remove it afterwards.
-func TestStepDockerAutoRemove(t *testing.T) {
-	orig := ContainerNewContainer
-	defer func() { ContainerNewContainer = orig }()
-
-	for _, tc := range []struct {
-		autoRemove bool
-		removes    int
-	}{
-		{false, 2}, // stale + post-run
-		{true, 1},  // post-run skipped
-	} {
-		cm := &containerMock{}
-		ContainerNewContainer = func(*container.NewContainerInput) container.ExecutionsEnvironment { return cm }
-
-		sd := &stepDocker{
-			RunContext: &RunContext{
-				Config:       &Config{AutoRemove: tc.autoRemove},
-				Run:          &model.Run{JobID: "1", Workflow: &model.Workflow{Jobs: map[string]*model.Job{"1": {}}}},
-				JobContainer: cm,
-			},
-			Step: &model.Step{ID: "1", Uses: "docker://node:14"},
-		}
-
-		removes := 0
-		cm.On("Pull", false).Return(func(context.Context) error { return nil })
-		cm.On("Remove").Return(func(context.Context) error { removes++; return nil })
-		cm.On("Create", []string(nil), []string(nil)).Return(func(context.Context) error { return nil })
-		cm.On("Start", true).Return(func(context.Context) error { return nil })
-		cm.On("Close").Return(func(context.Context) error { return nil })
-
-		require.NoError(t, sd.runUsesContainer()(context.Background()))
-		cm.AssertExpectations(t)
-		assert.Equal(t, tc.removes, removes)
-	}
 }
 
 func TestStepDockerNewStepContainerAllocatePTY(t *testing.T) {
@@ -199,21 +144,10 @@ func TestStepDockerNewStepContainerAllocatePTY(t *testing.T) {
 			}
 			sd.RunContext.ExprEval = sd.RunContext.NewExpressionEvaluator(ctx)
 
-			_ = sd.newStepContainer(ctx, "node:14", []string{"echo", "hi"}, nil)
+			_ = newStepContainer(ctx, sd, "node:14", []string{"echo", "hi"}, nil, "")
 			assert.Equal(t, tc.allocPTY, captured.AllocatePTY)
 		})
 	}
-}
-
-func TestStepDockerPrePost(t *testing.T) {
-	ctx := context.Background()
-	sd := &stepDocker{}
-
-	err := sd.pre()(ctx)
-	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
-
-	err = sd.post()(ctx)
-	assert.NoError(t, err)
 }
 
 func TestStepDockerNewStepContainerNetworkMode(t *testing.T) {
@@ -279,7 +213,7 @@ func TestStepDockerNewStepContainerNetworkMode(t *testing.T) {
 			assert.Equal(t, tc.expectDefault, sd.RunContext.IsHostEnv(ctx),
 				"IsHostEnv mismatch for platform %q", tc.platform)
 
-			_ = sd.newStepContainer(ctx, "alpine:3.20", []string{"echo", "hello"}, nil)
+			_ = newStepContainer(ctx, sd, "alpine:3.20", []string{"echo", "hello"}, nil, "")
 
 			if tc.expectDefault {
 				assert.Equal(t, "default", captured.NetworkMode,

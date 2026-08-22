@@ -6,7 +6,6 @@ package runner
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
@@ -22,61 +21,44 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// Runner provides capabilities to run GitHub actions
-type Runner interface {
-	NewPlanExecutor(plan *model.Plan) common.Executor
-}
-
 // Config contains the config for a new runner
 type Config struct {
-	Actor                              string                                        // the user that triggered the event
-	Workdir                            string                                        // path to working directory
-	ActionCacheDir                     string                                        // path used for caching action contents
-	ActionOfflineMode                  bool                                          // when offline, use cached action contents
-	ActionCloneDepth                   int                                           // limit history when cloning an action repo; 0 clones every branch in full
-	BindWorkdir                        bool                                          // bind the workdir to the job container
-	EventName                          string                                        // name of event to run
-	EventPath                          string                                        // path to JSON file to use for event.json in containers
-	DefaultBranch                      string                                        // name of the main branch for this repository
-	ReuseContainers                    bool                                          // reuse containers to maintain state
-	ForcePull                          bool                                          // force pulling of the image, even if already present
-	ForceRebuild                       bool                                          // force rebuilding local docker image action
-	LogOutput                          bool                                          // log the output from docker run
-	JSONLogger                         bool                                          // use json or text logger
-	LogPrefixJobID                     bool                                          // switches from the full job name to the job id
-	Env                                map[string]string                             // env for containers
-	Inputs                             map[string]string                             // manually passed action inputs
-	Secrets                            map[string]string                             // list of secrets
-	Vars                               map[string]string                             // list of vars
-	Token                              string                                        // GitHub token
-	InsecureSecrets                    bool                                          // switch hiding output when printing to terminal
-	Platforms                          map[string]string                             // list of platforms
-	Privileged                         bool                                          // use privileged mode
-	UsernsMode                         string                                        // user namespace to use
-	ContainerArchitecture              string                                        // Desired OS/architecture platform for running containers
-	ContainerDaemonSocket              string                                        // Path to Docker daemon socket
-	ContainerOptions                   string                                        // Options for the job container
-	UseGitIgnore                       bool                                          // controls if paths in .gitignore should not be copied into container, default true
-	GitHubInstance                     string                                        // GitHub instance to use, default "github.com"
-	ContainerCapAdd                    []string                                      // list of kernel capabilities to add to the containers
-	ContainerCapDrop                   []string                                      // list of kernel capabilities to remove from the containers
-	AutoRemove                         bool                                          // controls if the container is automatically removed upon workflow completion
-	ArtifactServerPath                 string                                        // the path where the artifact server stores uploads
-	ArtifactServerAddr                 string                                        // the address the artifact server binds to
-	ArtifactServerPort                 string                                        // the port the artifact server binds to
-	NoSkipCheckout                     bool                                          // do not skip actions/checkout
-	DisableActEnv                      bool                                          // do not inject the ACT=true environment variable into jobs
-	RemoteName                         string                                        // remote name in local git repo config
-	ReplaceGheActionWithGithubCom      []string                                      // Use actions from GitHub Enterprise instance to GitHub
-	ReplaceGheActionTokenWithGithubCom string                                        // Token of private action repo on GitHub.
-	Matrix                             map[string]map[string]bool                    // Matrix config to run
-	ContainerNetworkMode               docker_container.NetworkMode                  // the network mode of job containers (the value of --network)
-	ContainerNetworkCreateOptions      container.NewDockerNetworkCreateExecutorInput // the default network create options
-	ActionCache                        ActionCache                                   // Use a custom ActionCache Implementation
-	ProxyEnv                           map[string]string                             // the proxy variables the job runs with, also given to service containers and image builds
-	NoActionPatch                      bool                                          // run actions exactly as published, applying no compatibility patches, see patch_actions.go
+	Actor                         string                                        // the user that triggered the event
+	Workdir                       string                                        // path to working directory
+	ActionCacheDir                string                                        // path used for caching action contents
+	ActionOfflineMode             bool                                          // when offline, use cached action contents
+	ActionCloneDepth              int                                           // limit history when cloning an action repo, 0 clones every branch in full
+	BindWorkdir                   bool                                          // bind the workdir to the job container
+	EventName                     string                                        // name of event to run
+	EventPath                     string                                        // path to JSON file to use for event.json in containers
+	ForcePull                     bool                                          // force pulling of the image, even if already present
+	ForceRebuild                  bool                                          // force rebuilding local docker image action
+	JSONLogger                    bool                                          // use json or text logger
+	Env                           map[string]string                             // env for containers
+	Secrets                       map[string]string                             // list of secrets
+	Vars                          map[string]string                             // list of vars
+	Token                         string                                        // GitHub token
+	InsecureSecrets               bool                                          // switch hiding output when printing to terminal
+	Privileged                    bool                                          // use privileged mode
+	UsernsMode                    string                                        // user namespace to use
+	ContainerArchitecture         string                                        // Desired OS/architecture platform for running containers
+	ContainerDaemonSocket         string                                        // Path to Docker daemon socket
+	ContainerOptions              string                                        // Options for the job container
+	UseGitIgnore                  bool                                          // controls if paths in .gitignore should not be copied into container, default true
+	GitHubInstance                string                                        // GitHub instance to use, default "github.com"
+	ContainerCapAdd               []string                                      // list of kernel capabilities to add to the containers
+	ContainerCapDrop              []string                                      // list of kernel capabilities to remove from the containers
+	ArtifactServerPath            string                                        // the path where the artifact server stores uploads
+	ArtifactServerAddr            string                                        // the address the artifact server binds to
+	ArtifactServerPort            string                                        // the port the artifact server binds to
+	NoSkipCheckout                bool                                          // do not skip actions/checkout
+	DisableActEnv                 bool                                          // do not inject the ACT=true environment variable into jobs
+	ContainerNetworkMode          docker_container.NetworkMode                  // the network mode of job containers (the value of --network)
+	ContainerNetworkCreateOptions container.NewDockerNetworkCreateExecutorInput // the default network create options
+	ProxyEnv                      map[string]string                             // the proxy variables the job runs with, also given to service containers and image builds
+	NoActionPatch                 bool                                          // run actions exactly as published, applying no compatibility patches, see patch_actions.go
 
-	PresetGitHubContext   *model.GithubContext // the preset github context, overrides some fields like DefaultBranch, Env, Secrets etc.
+	PresetGitHubContext   *model.GithubContext // overrides actor, ref, repository, token and related context fields
 	EventJSON             string               // the content of JSON file to use for event.json in containers, overrides EventPath
 	ContainerNamePrefix   string               // the prefix of container name
 	ContainerMaxLifetime  time.Duration        // the max lifetime of job containers
@@ -88,17 +70,17 @@ type Config struct {
 	// differ from GitHubInstance when the runner registered with a different hostname than
 	// AppURL. It is never set for github.com or a GithubMirror, so the token stays on-instance.
 	DefaultActionInstanceIsSelfHosted bool
-	PlatformPicker                    func(labels []string) string // platform picker, it will take precedence over Platforms if isn't nil
-	JobLoggerLevel                    *log.Level                   // the level of job logger
-	ValidVolumes                      []string                     // only volumes (and bind mounts) in this slice can be mounted on the job container or service containers
-	SharedToolCache                   bool                         // one tool cache for all jobs instead of one per job
-	InsecureSkipTLS                   bool                         // whether to skip verifying TLS certificate of the Gitea instance
-	MaxParallel                       int                          // max parallel jobs to run across all workflows (0 = no limit, uses CPU count)
-	AllocatePTY                       bool                         // allocate a pseudo-TTY for each step's process
-	ServiceReadyTimeout               time.Duration                // how long a job waits for its service containers to report healthy (0 uses the default)
-	RunnerName                        string                       // name this runner registered with, reported as `runner.name`, defaults to the hostname
-	JobStartedHook                    string                       // script run inside the job environment before the job's first step; ACTIONS_RUNNER_HOOK_JOB_STARTED is read from Env when empty
-	JobCompletedHook                  string                       // script run inside the job environment after the job's last step; ACTIONS_RUNNER_HOOK_JOB_COMPLETED is read from Env when empty
+	PlatformPicker                    func(labels []string) string
+	JobLoggerLevel                    *log.Level    // the level of job logger
+	ValidVolumes                      []string      // only volumes (and bind mounts) in this slice can be mounted on the job container or service containers
+	SharedToolCache                   bool          // one tool cache for all jobs instead of one per job
+	InsecureSkipTLS                   bool          // whether to skip verifying TLS certificate of the Gitea instance
+	MaxParallel                       int           // max parallel jobs to run across all workflows (0 = no limit, uses CPU count)
+	AllocatePTY                       bool          // allocate a pseudo-TTY for each step's process
+	ServiceReadyTimeout               time.Duration // how long a job waits for its service containers to report healthy (0 uses the default)
+	RunnerName                        string        // name this runner registered with, reported as `runner.name`, defaults to the hostname
+	JobStartedHook                    string        // script run inside the job environment before the job's first step; ACTIONS_RUNNER_HOOK_JOB_STARTED is read from Env when empty
+	JobCompletedHook                  string        // script run inside the job environment after the job's last step; ACTIONS_RUNNER_HOOK_JOB_COMPLETED is read from Env when empty
 }
 
 // RunnerDebug reports whether debug logging is on, exposed as `runner.debug` and
@@ -141,8 +123,10 @@ type runnerImpl struct {
 	caller    *caller // the job calling this runner (caller of a reusable workflow)
 }
 
+type Runner = runnerImpl
+
 // New Creates a new Runner
-func New(runnerConfig *Config) (Runner, error) {
+func New(runnerConfig *Config) (*Runner, error) {
 	runner := &runnerImpl{
 		config: runnerConfig,
 	}
@@ -150,7 +134,7 @@ func New(runnerConfig *Config) (Runner, error) {
 	return runner.configure()
 }
 
-func (runner *runnerImpl) configure() (Runner, error) {
+func (runner *runnerImpl) configure() (*runnerImpl, error) {
 	if runner.config.RunnerName == "" {
 		// Callers that do not register, such as `exec`, still get a `runner.name`.
 		runner.config.RunnerName, _ = os.Hostname()
@@ -166,15 +150,6 @@ func (runner *runnerImpl) configure() (Runner, error) {
 			return nil, err
 		}
 		runner.eventJSON = string(eventJSONBytes)
-	} else if len(runner.config.Inputs) != 0 {
-		eventMap := map[string]map[string]string{
-			"inputs": runner.config.Inputs,
-		}
-		eventJSON, err := json.Marshal(eventMap)
-		if err != nil {
-			return nil, err
-		}
-		runner.eventJSON = string(eventJSON)
 	}
 	return runner, nil
 }
@@ -213,7 +188,6 @@ func (runner *runnerImpl) NewPlanExecutor(plan *model.Plan) common.Executor {
 				log.Debugf("Job.Outputs: %v", job.Outputs)
 				log.Debugf("Job.Uses: %v", job.Uses)
 				log.Debugf("Job.With: %v", job.With)
-				// log.Debugf("Job.RawSecrets: %v", job.RawSecrets)
 				log.Debugf("Job.Result: %v", job.Result)
 
 				if job.Strategy != nil {
@@ -231,15 +205,11 @@ func (runner *runnerImpl) NewPlanExecutor(plan *model.Plan) common.Executor {
 					}
 				}
 
-				var matrixes []map[string]any
-				if m, err := job.GetMatrixes(); err != nil {
+				matrixes, err := job.GetMatrixes()
+				if err != nil {
 					log.Errorf("Error while get job's matrix: %v", err)
-				} else {
-					log.Debugf("Job Matrices: %v", m)
-					log.Debugf("Runner Matrices: %v", runner.config.Matrix)
-					matrixes = selectMatrixes(m, runner.config.Matrix)
 				}
-				log.Debugf("Final matrix after applying user inclusions '%v'", matrixes)
+				log.Debugf("Job Matrices: %v", matrixes)
 
 				maxParallel := 4
 				if job.Strategy != nil {
@@ -342,25 +312,6 @@ func handleFailure(plan *model.Plan) common.Executor {
 		}
 		return nil
 	}
-}
-
-func selectMatrixes(originalMatrixes []map[string]any, targetMatrixValues map[string]map[string]bool) []map[string]any {
-	matrixes := make([]map[string]any, 0)
-	for _, original := range originalMatrixes {
-		flag := true
-		for key, val := range original {
-			if allowedVals, ok := targetMatrixValues[key]; ok {
-				valToString := fmt.Sprintf("%v", val)
-				if _, ok := allowedVals[valToString]; !ok {
-					flag = false
-				}
-			}
-		}
-		if flag {
-			matrixes = append(matrixes, original)
-		}
-	}
-	return matrixes
 }
 
 func (runner *runnerImpl) newRunContext(ctx context.Context, run *model.Run, matrix map[string]any) *RunContext {

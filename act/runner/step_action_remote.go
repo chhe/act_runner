@@ -5,7 +5,6 @@
 package runner
 
 import (
-	"archive/tar"
 	"context"
 	"errors"
 	"fmt"
@@ -33,7 +32,6 @@ type stepActionRemote struct {
 	action              *model.Action
 	env                 map[string]string
 	remoteAction        *remoteAction
-	cacheDir            string
 	resolvedSha         string
 }
 
@@ -69,58 +67,6 @@ func (sar *stepActionRemote) prepareActionExecutor() common.Executor {
 			common.Logger(ctx).Debugf("Skipping local actions/checkout because workdir was already copied")
 			return nil
 		}
-
-		for _, action := range sar.RunContext.Config.ReplaceGheActionWithGithubCom {
-			if strings.EqualFold(fmt.Sprintf("%s/%s", sar.remoteAction.Org, sar.remoteAction.Repo), action) {
-				sar.remoteAction.URL = "https://github.com"
-				github.Token = sar.RunContext.Config.ReplaceGheActionTokenWithGithubCom
-			}
-		}
-		// Actions served from the action cache are read out of a git object store rather than a
-		// directory, so they never reach the bundle patch below and keep to the v1 cache API.
-		if sar.RunContext.Config.ActionCache != nil {
-			cache := sar.RunContext.Config.ActionCache
-
-			var err error
-			sar.cacheDir = fmt.Sprintf("%s/%s", sar.remoteAction.Org, sar.remoteAction.Repo)
-			repoURL := sar.remoteAction.URL + "/" + sar.cacheDir
-			repoRef := sar.remoteAction.Ref
-			sar.resolvedSha, err = cache.Fetch(ctx, sar.cacheDir, repoURL, repoRef, github.Token)
-			if err != nil {
-				return fmt.Errorf("failed to fetch \"%s\" version \"%s\": %w", repoURL, repoRef, err)
-			}
-
-			remoteReader := func(ctx context.Context) actionYamlReader {
-				return func(filename string) (io.Reader, io.Closer, error) {
-					spath := path.Join(sar.remoteAction.Path, filename)
-					for range maxSymlinkDepth {
-						tars, err := cache.GetTarArchive(ctx, sar.cacheDir, sar.resolvedSha, spath)
-						if err != nil {
-							return nil, nil, os.ErrNotExist
-						}
-						treader := tar.NewReader(tars)
-						header, err := treader.Next()
-						if err != nil {
-							return nil, nil, os.ErrNotExist
-						}
-						if header.FileInfo().Mode()&os.ModeSymlink == os.ModeSymlink {
-							spath, err = symlinkJoin(spath, header.Linkname, ".")
-							if err != nil {
-								return nil, nil, err
-							}
-						} else {
-							return treader, tars, nil
-						}
-					}
-					return nil, nil, fmt.Errorf("max depth %d of symlinks exceeded while reading %s", maxSymlinkDepth, spath)
-				}
-			}
-
-			actionModel, err := sar.readAction(ctx, sar.Step, sar.resolvedSha, sar.remoteAction.Path, remoteReader(ctx), os.WriteFile)
-			sar.action = actionModel
-			return err
-		}
-
 		actionDir := sar.actionDir()
 		defaultActionURL := sar.RunContext.Config.DefaultActionURL()
 		// For Gitea
@@ -165,18 +111,16 @@ func (sar *stepActionRemote) prepareActionExecutor() common.Executor {
 			sar.resolvedSha = sha
 		}
 
-		remoteReader := func(ctx context.Context) actionYamlReader { //nolint:unparam // pre-existing issue from nektos/act
-			return func(filename string) (io.Reader, io.Closer, error) {
-				f, err := os.Open(filepath.Join(actionDir, sar.remoteAction.Path, filename))
-				return f, f, err
-			}
+		remoteReader := func(filename string) (io.Reader, io.Closer, error) {
+			f, err := os.Open(filepath.Join(actionDir, sar.remoteAction.Path, filename))
+			return f, f, err
 		}
 
 		return common.NewPipelineExecutor(
 			ntErr,
 			func(ctx context.Context) error {
 				defer git.AcquireCloneLock(actionDir)()
-				actionModel, err := sar.readAction(ctx, sar.Step, actionDir, sar.remoteAction.Path, remoteReader(ctx), os.WriteFile)
+				actionModel, err := sar.readAction(ctx, sar.Step, actionDir, sar.remoteAction.Path, remoteReader, os.WriteFile)
 				sar.action = actionModel
 				return err
 			},

@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -24,7 +23,6 @@ import (
 	"github.com/joho/godotenv"
 	log "github.com/sirupsen/logrus"
 	assert "github.com/stretchr/testify/assert"
-	"go.yaml.in/yaml/v4"
 )
 
 var (
@@ -34,6 +32,17 @@ var (
 	workdir   = "testdata"
 	secrets   map[string]string
 )
+
+func mapPlatformPicker(platforms map[string]string) func([]string) string {
+	return func(labels []string) string {
+		for _, label := range labels {
+			if image := platforms[strings.ToLower(label)]; image != "" {
+				return image
+			}
+		}
+		return ""
+	}
+}
 
 func init() {
 	if p := os.Getenv("ACT_TEST_IMAGE"); p != "" {
@@ -189,29 +198,22 @@ func (j *TestJobFileInfo) runTest(ctx context.Context, t *testing.T, cfg *Config
 
 	fullWorkflowPath := filepath.Join(workdir, j.workflowPath)
 	runnerConfig := &Config{
-		Workdir:     workdir,
-		BindWorkdir: false,
-		EventName:   j.eventName,
-		EventPath:   cfg.EventPath,
-		Platforms:   j.platforms,
+		Workdir:        workdir,
+		BindWorkdir:    false,
+		EventName:      j.eventName,
+		EventPath:      cfg.EventPath,
+		PlatformPicker: mapPlatformPicker(j.platforms),
 		// fixtures reuse workflow and job names, so parallel tests would collide without this
 		ContainerNamePrefix: strings.ReplaceAll(t.Name(), "/", "-"),
-		ReuseContainers:     false,
-		// as the shipped runner does, else a fixture asserting a job failure keeps its
-		// container, and its network, on the daemon forever
-		AutoRemove: true,
 		// 0 would run jobs runtime.NumCPU()-wide, making the network peak machine-dependent
 		MaxParallel:           2,
 		ForceRebuild:          true,
 		Env:                   cfg.Env,
 		Secrets:               cfg.Secrets,
-		Inputs:                cfg.Inputs,
 		GitHubInstance:        "github.com",
 		DefaultActionInstance: cfg.DefaultActionInstance,
 		ContainerArchitecture: cfg.ContainerArchitecture,
 		ContainerMaxLifetime:  time.Hour,
-		Matrix:                cfg.Matrix,
-		ActionCache:           cfg.ActionCache,
 		ValidVolumes:          []string{"**"}, // allow workflow-declared volumes (e.g. container-volumes)
 	}
 
@@ -237,10 +239,6 @@ func (j *TestJobFileInfo) runTest(ctx context.Context, t *testing.T, cfg *Config
 	}
 
 	fmt.Println("::endgroup::") //nolint:forbidigo // pre-existing issue from nektos/act
-}
-
-type TestConfig struct {
-	LocalRepositories map[string]string `yaml:"local-repositories"`
 }
 
 func TestRunEvent(t *testing.T) {
@@ -323,9 +321,6 @@ func TestRunEvent(t *testing.T) {
 		{workdir, "services", "push", "", platforms, secrets},
 		{workdir, "services-with-container", "push", "", platforms, secrets},
 		{workdir, "services-empty-image", "push", "", platforms, secrets},
-
-		// local remote action overrides
-		{workdir, "local-remote-action-overrides", "push", "", platforms, secrets},
 	}
 
 	for _, table := range tables {
@@ -345,22 +340,6 @@ func TestRunEvent(t *testing.T) {
 			eventFile := filepath.Join(workdir, table.workflowPath, "event.json")
 			if _, err := os.Stat(eventFile); err == nil {
 				config.EventPath = eventFile
-			}
-
-			testConfigFile := filepath.Join(workdir, table.workflowPath, "config.yml")
-			if file, err := os.ReadFile(testConfigFile); err == nil {
-				testConfig := &TestConfig{}
-				if yaml.Unmarshal(file, testConfig) == nil {
-					if testConfig.LocalRepositories != nil {
-						config.ActionCache = &LocalRepositoryCache{
-							Parent: GoGitActionCache{
-								path.Clean(path.Join(workdir, "cache")),
-							},
-							LocalRepositories: testConfig.LocalRepositories,
-							CacheDirCache:     map[string]string{},
-						}
-					}
-				}
 			}
 
 			table.runTest(ctx, t, config)
@@ -584,8 +563,7 @@ func TestRunWithService(t *testing.T) {
 	runnerConfig := &Config{
 		Workdir:              workdir,
 		EventName:            eventName,
-		Platforms:            platforms,
-		ReuseContainers:      false,
+		PlatformPicker:       mapPlatformPicker(platforms),
 		ContainerMaxLifetime: time.Hour, // otherwise the job container is `sleep 0` and exits at once
 	}
 	runner, err := New(runnerConfig)
@@ -599,26 +577,6 @@ func TestRunWithService(t *testing.T) {
 
 	err = runner.NewPlanExecutor(plan)(ctx)
 	assert.NoError(t, err, workflowPath)
-}
-
-func TestRunActionInputs(t *testing.T) {
-	t.Parallel()
-	requireDocker(t)
-	workflowPath := "input-from-cli"
-
-	tjfi := TestJobFileInfo{
-		workdir:      workdir,
-		workflowPath: workflowPath,
-		eventName:    "workflow_dispatch",
-		errorMessage: "",
-		platforms:    platforms,
-	}
-
-	inputs := map[string]string{
-		"SOME_INPUT": "input",
-	}
-
-	tjfi.runTest(context.Background(), t, &Config{Inputs: inputs})
 }
 
 func TestRunEventPullRequest(t *testing.T) {
@@ -636,30 +594,4 @@ func TestRunEventPullRequest(t *testing.T) {
 	}
 
 	tjfi.runTest(context.Background(), t, &Config{EventPath: filepath.Join(workdir, workflowPath, "event.json")})
-}
-
-func TestRunMatrixWithUserDefinedInclusions(t *testing.T) {
-	t.Parallel()
-	requireDocker(t)
-	workflowPath := "matrix-with-user-inclusions"
-
-	tjfi := TestJobFileInfo{
-		workdir:      workdir,
-		workflowPath: workflowPath,
-		eventName:    "push",
-		errorMessage: "",
-		platforms:    platforms,
-	}
-
-	matrix := map[string]map[string]bool{
-		"node": {
-			"8":   true,
-			"8.x": true,
-		},
-		"os": {
-			"ubuntu-18.04": true,
-		},
-	}
-
-	tjfi.runTest(context.Background(), t, &Config{Matrix: matrix})
 }

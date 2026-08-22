@@ -32,7 +32,7 @@ func findExecutable(file string) error {
 // If file begins with "/", "#", "./", or "../", it is tried
 // directly and the path is not consulted.
 // The result may be an absolute path or a path relative to the current directory.
-func LookPath2(file string, lenv Env) (string, error) {
+func LookPath2(file string, env map[string]string) (string, error) {
 	// skip the path lookup for these prefixes
 	skip := []string{"/", "#", "./", "../"}
 
@@ -46,7 +46,7 @@ func LookPath2(file string, lenv Env) (string, error) {
 		}
 	}
 
-	path := lenv.Getenv("path")
+	path := getenv(env, "path")
 	for _, dir := range filepath.SplitList(path) {
 		path := filepath.Join(dir, file)
 		if err := findExecutable(path); err == nil {

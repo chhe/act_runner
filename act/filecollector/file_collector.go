@@ -97,55 +97,25 @@ type FileCollector struct {
 	Ignorer   gitignore.Matcher
 	SrcPath   string
 	SrcPrefix string
-	Fs        Fs
 	Handler   Handler
 }
 
-type Fs interface {
-	Walk(root string, fn filepath.WalkFunc) error
-	OpenGitIndex(path string) (*index.Index, error)
-	Open(path string) (io.ReadCloser, error)
-	Readlink(path string) (string, error)
-}
-
-type DefaultFs struct{}
-
-func (*DefaultFs) Walk(root string, fn filepath.WalkFunc) error {
-	return filepath.Walk(root, fn)
-}
-
-func (*DefaultFs) OpenGitIndex(path string) (*index.Index, error) {
-	r, err := git.PlainOpen(path)
+func openGitIndex(path string) (*index.Index, error) {
+	repo, err := git.PlainOpen(path)
 	if err != nil {
 		return nil, err
 	}
-	i, err := r.Storer.Index()
-	if err != nil {
-		return nil, err
-	}
-	return i, nil
-}
-
-func (*DefaultFs) Open(path string) (io.ReadCloser, error) {
-	return os.Open(path)
-}
-
-func (*DefaultFs) Readlink(path string) (string, error) {
-	return os.Readlink(path)
+	return repo.Storer.Index()
 }
 
 func (fc *FileCollector) CollectFiles(ctx context.Context, submodulePath []string) filepath.WalkFunc {
-	i, _ := fc.Fs.OpenGitIndex(path.Join(fc.SrcPath, path.Join(submodulePath...)))
+	i, _ := openGitIndex(path.Join(fc.SrcPath, path.Join(submodulePath...)))
 	return func(file string, fi os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		if ctx != nil {
-			select {
-			case <-ctx.Done():
-				return errors.New("copy cancelled")
-			default:
-			}
+		if ctx != nil && ctx.Err() != nil {
+			return errors.New("copy cancelled")
 		}
 
 		sansPrefix := strings.TrimPrefix(file, fc.SrcPrefix)
@@ -175,7 +145,7 @@ func (fc *FileCollector) CollectFiles(ctx context.Context, submodulePath []strin
 			}
 		}
 		if err == nil && entry.Mode == filemode.Submodule {
-			err = fc.Fs.Walk(file, fc.CollectFiles(ctx, split))
+			err = filepath.Walk(file, fc.CollectFiles(ctx, split))
 			if err != nil {
 				return err
 			}
@@ -185,7 +155,7 @@ func (fc *FileCollector) CollectFiles(ctx context.Context, submodulePath []strin
 
 		// return on non-regular files (thanks to [kumo](https://medium.com/@komuw/just-like-you-did-fbdd7df829d3) for this suggested update)
 		if fi.Mode()&os.ModeSymlink == os.ModeSymlink {
-			linkName, err := fc.Fs.Readlink(file)
+			linkName, err := os.Readlink(file)
 			if err != nil {
 				return fmt.Errorf("unable to readlink '%s': %w", file, err)
 			}
@@ -195,23 +165,15 @@ func (fc *FileCollector) CollectFiles(ctx context.Context, submodulePath []strin
 		}
 
 		// open file
-		f, err := fc.Fs.Open(file)
+		f, err := os.Open(file)
 		if err != nil {
 			return err
 		}
 		defer f.Close()
 
 		if ctx != nil {
-			// make io.Copy cancellable by closing the file
-			cpctx, cpfinish := context.WithCancel(ctx)
-			defer cpfinish()
-			go func() {
-				select {
-				case <-cpctx.Done():
-				case <-ctx.Done():
-					f.Close()
-				}
-			}()
+			stop := context.AfterFunc(ctx, func() { _ = f.Close() })
+			defer stop()
 		}
 
 		return fc.Handler.WriteFile(path, fi, "", f)

@@ -163,10 +163,6 @@ func (rc *RunContext) setOutput(ctx context.Context, kvPairs map[string]string, 
 	logger := common.Logger(ctx)
 	stepID := rc.CurrentStep
 	outputName := kvPairs["name"]
-	if outputMapping, ok := rc.OutputMappings[MappableOutput{StepID: stepID, OutputName: outputName}]; ok {
-		stepID = outputMapping.StepID
-		outputName = outputMapping.OutputName
-	}
 
 	result, ok := rc.StepResults[stepID]
 	if !ok {

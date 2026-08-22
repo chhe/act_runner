@@ -23,12 +23,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type closerMock struct {
-	mock.Mock
-}
+type closerFunc func()
 
-func (m *closerMock) Close() error {
-	m.Called()
+func (close closerFunc) Close() error {
+	close()
 	return nil
 }
 
@@ -39,6 +37,15 @@ runs:
 	using: 'node16'
 	main: 'main.js'
 `, "\t", "  ")
+	yamlAction := &model.Action{
+		Name: "name",
+		Runs: model.ActionRuns{
+			Using:  "node16",
+			Main:   "main.js",
+			PreIf:  "always()",
+			PostIf: "always()",
+		},
+	}
 
 	table := []struct {
 		name        string
@@ -52,30 +59,14 @@ runs:
 			step:        &model.Step{},
 			filename:    "action.yml",
 			fileContent: yaml,
-			expected: &model.Action{
-				Name: "name",
-				Runs: model.ActionRuns{
-					Using:  "node16",
-					Main:   "main.js",
-					PreIf:  "always()",
-					PostIf: "always()",
-				},
-			},
+			expected:    yamlAction,
 		},
 		{
 			name:        "readActionYaml",
 			step:        &model.Step{},
 			filename:    "action.yaml",
 			fileContent: yaml,
-			expected: &model.Action{
-				Name: "name",
-				Runs: model.ActionRuns{
-					Using:  "node16",
-					Main:   "main.js",
-					PreIf:  "always()",
-					PostIf: "always()",
-				},
-			},
+			expected:    yamlAction,
 		},
 		{
 			name:        "readDockerfile",
@@ -121,14 +112,14 @@ runs:
 
 	for _, tt := range table {
 		t.Run(tt.name, func(t *testing.T) {
-			closerMock := &closerMock{}
+			closed := false
 
 			readFile := func(filename string) (io.Reader, io.Closer, error) {
 				if tt.filename != filename {
 					return nil, nil, fs.ErrNotExist
 				}
 
-				return strings.NewReader(tt.fileContent), closerMock, nil
+				return strings.NewReader(tt.fileContent), closerFunc(func() { closed = true }), nil
 			}
 
 			writeFile := func(filename string, data []byte, perm fs.FileMode) error {
@@ -137,55 +128,13 @@ runs:
 				return nil
 			}
 
-			if tt.filename != "" {
-				closerMock.On("Close")
-			}
-
 			action, err := readActionImpl(context.Background(), tt.step, "actionDir", "actionPath", readFile, writeFile)
 
 			assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
 			assert.Equal(t, tt.expected, action)
 
-			closerMock.AssertExpectations(t)
+			assert.Equal(t, tt.filename != "", closed)
 		})
-	}
-}
-
-// With AutoRemove the daemon reaps the container on exit, so act must not remove it afterwards.
-func TestExecAsDockerAutoRemove(t *testing.T) {
-	orig := ContainerNewContainer
-	defer func() { ContainerNewContainer = orig }()
-
-	for _, tc := range []struct {
-		autoRemove bool
-		removes    int
-	}{
-		{false, 2}, // stale + post-run
-		{true, 1},  // post-run skipped
-	} {
-		cm := &containerMock{}
-		ContainerNewContainer = func(*container.NewContainerInput) container.ExecutionsEnvironment { return cm }
-
-		step := &stepActionRemote{
-			Step: &model.Step{ID: "1", Uses: "org/action@v1"},
-			RunContext: &RunContext{
-				Config:       &Config{AutoRemove: tc.autoRemove},
-				Run:          &model.Run{JobID: "1", Workflow: &model.Workflow{Jobs: map[string]*model.Job{"1": {}}}},
-				JobContainer: cm,
-			},
-			action: &model.Action{Runs: model.ActionRuns{Using: "docker", Image: "docker://node:14"}},
-		}
-
-		removes := 0
-		cm.On("Pull", false).Return(func(context.Context) error { return nil })
-		cm.On("Remove").Return(func(context.Context) error { removes++; return nil })
-		cm.On("Create", []string(nil), []string(nil)).Return(func(context.Context) error { return nil })
-		cm.On("Start", true).Return(func(context.Context) error { return nil })
-		cm.On("Close").Return(func(context.Context) error { return nil })
-
-		require.NoError(t, execAsDocker(context.Background(), step, "action", t.TempDir(), t.TempDir(), false, stepStageMain))
-		cm.AssertExpectations(t)
-		assert.Equal(t, tc.removes, removes)
 	}
 }
 
@@ -337,11 +286,12 @@ func TestNewStepContainerDoesNotUseDockerSecrets(t *testing.T) {
 	step.On("getStepModel").Return(&model.Step{ID: "action"})
 	step.On("getEnv").Return(&env)
 
-	_ = newStepContainer(ctx, step, "registry.example.com/action:tag", nil, nil)
+	_ = newStepContainer(ctx, step, "registry.example.com/action:tag", nil, nil, "")
 
 	// DOCKER_USERNAME/DOCKER_PASSWORD should not be injected as pull credentials for docker action containers.
 	assert.Empty(t, captured.Username)
 	assert.Empty(t, captured.Password)
+	assert.True(t, captured.AutoRemove)
 	step.AssertExpectations(t)
 }
 

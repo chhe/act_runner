@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
-	"fmt"
 	"io"
 	"maps"
 	"net/http"
@@ -18,238 +17,18 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	"github.com/julienschmidt/httprouter"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-type writableMapFile struct {
-	fstest.MapFile
-}
-
-func (f *writableMapFile) Write(data []byte) (int, error) {
-	f.Data = data
-	return len(data), nil
-}
-
-func (f *writableMapFile) Close() error {
-	return nil
-}
-
-type writeMapFS struct {
-	fstest.MapFS
-}
-
-func (fsys writeMapFS) OpenWritable(name string) (WritableFile, error) {
-	file := &writableMapFile{
-		MapFile: fstest.MapFile{
-			Data: []byte("content2"),
-		},
-	}
-	fsys.MapFS[name] = &file.MapFile
-
-	return file, nil
-}
-
-func (fsys writeMapFS) OpenAppendable(name string) (WritableFile, error) {
-	file := &writableMapFile{
-		MapFile: fstest.MapFile{
-			Data: []byte("content2"),
-		},
-	}
-	fsys.MapFS[name] = &file.MapFile
-
-	return file, nil
-}
-
-func TestNewArtifactUploadPrepare(t *testing.T) {
-	assert := assert.New(t)
-
-	memfs := fstest.MapFS(map[string]*fstest.MapFile{})
-
-	router := httprouter.New()
-	uploads(router, "artifact/server/path", writeMapFS{memfs})
-
-	req, _ := http.NewRequest(http.MethodPost, "http://localhost/_apis/pipelines/workflows/1/artifacts", nil)
-	rr := httptest.NewRecorder()
-
-	router.ServeHTTP(rr, req)
-
-	if status := rr.Code; status != http.StatusOK {
-		assert.Fail("Wrong status")
-	}
-
-	response := FileContainerResourceURL{}
-	err := json.Unmarshal(rr.Body.Bytes(), &response)
-	if err != nil {
-		panic(err)
-	}
-
-	assert.Equal("http://localhost/upload/1", response.FileContainerResourceURL)
-}
-
-func TestArtifactUploadBlob(t *testing.T) {
-	assert := assert.New(t)
-
-	memfs := fstest.MapFS(map[string]*fstest.MapFile{})
-
-	router := httprouter.New()
-	uploads(router, "artifact/server/path", writeMapFS{memfs})
-
-	req, _ := http.NewRequest(http.MethodPut, "http://localhost/upload/1?itemPath=some/file", strings.NewReader("content"))
-	rr := httptest.NewRecorder()
-
-	router.ServeHTTP(rr, req)
-
-	if status := rr.Code; status != http.StatusOK {
-		assert.Fail("Wrong status")
-	}
-
-	response := ResponseMessage{}
-	err := json.Unmarshal(rr.Body.Bytes(), &response)
-	if err != nil {
-		panic(err)
-	}
-
-	assert.Equal("success", response.Message)
-	assert.Equal("content", string(memfs["artifact/server/path/1/some/file"].Data))
-}
-
-func TestFinalizeArtifactUpload(t *testing.T) {
-	assert := assert.New(t)
-
-	memfs := fstest.MapFS(map[string]*fstest.MapFile{})
-
-	router := httprouter.New()
-	uploads(router, "artifact/server/path", writeMapFS{memfs})
-
-	req, _ := http.NewRequest(http.MethodPatch, "http://localhost/_apis/pipelines/workflows/1/artifacts", nil)
-	rr := httptest.NewRecorder()
-
-	router.ServeHTTP(rr, req)
-
-	if status := rr.Code; status != http.StatusOK {
-		assert.Fail("Wrong status")
-	}
-
-	response := ResponseMessage{}
-	err := json.Unmarshal(rr.Body.Bytes(), &response)
-	if err != nil {
-		panic(err)
-	}
-
-	assert.Equal("success", response.Message)
-}
-
-func TestListArtifacts(t *testing.T) {
-	assert := assert.New(t)
-
-	memfs := fstest.MapFS(map[string]*fstest.MapFile{
-		"artifact/server/path/1/file.txt": {
-			Data: []byte(""),
-		},
-	})
-
-	router := httprouter.New()
-	downloads(router, "artifact/server/path", memfs)
-
-	req, _ := http.NewRequest(http.MethodGet, "http://localhost/_apis/pipelines/workflows/1/artifacts", nil)
-	rr := httptest.NewRecorder()
-
-	router.ServeHTTP(rr, req)
-
-	if status := rr.Code; status != http.StatusOK {
-		assert.FailNow(fmt.Sprintf("Wrong status: %d", status))
-	}
-
-	response := NamedFileContainerResourceURLResponse{}
-	err := json.Unmarshal(rr.Body.Bytes(), &response)
-	if err != nil {
-		panic(err)
-	}
-
-	assert.Equal(1, response.Count)
-	assert.Equal("file.txt", response.Value[0].Name)
-	assert.Equal("http://localhost/download/1", response.Value[0].FileContainerResourceURL)
-}
-
-func TestListArtifactContainer(t *testing.T) {
-	assert := assert.New(t)
-
-	memfs := fstest.MapFS(map[string]*fstest.MapFile{
-		"artifact/server/path/1/some/file": {
-			Data: []byte(""),
-		},
-	})
-
-	router := httprouter.New()
-	downloads(router, "artifact/server/path", memfs)
-
-	req, _ := http.NewRequest(http.MethodGet, "http://localhost/download/1?itemPath=some/file", nil)
-	rr := httptest.NewRecorder()
-
-	router.ServeHTTP(rr, req)
-
-	if status := rr.Code; status != http.StatusOK {
-		assert.FailNow(fmt.Sprintf("Wrong status: %d", status))
-	}
-
-	response := ContainerItemResponse{}
-	err := json.Unmarshal(rr.Body.Bytes(), &response)
-	if err != nil {
-		panic(err)
-	}
-
-	assert.Len(response.Value, 1)
-	assert.Equal("some/file", response.Value[0].Path)
-	assert.Equal("file", response.Value[0].ItemType)
-	assert.Equal("http://localhost/artifact/1/some/file/.", response.Value[0].ContentLocation)
-}
-
-func TestDownloadArtifactFile(t *testing.T) {
-	assert := assert.New(t)
-
-	memfs := fstest.MapFS(map[string]*fstest.MapFile{
-		"artifact/server/path/1/some/file": {
-			Data: []byte("content"),
-		},
-	})
-
-	router := httprouter.New()
-	downloads(router, "artifact/server/path", memfs)
-
-	req, _ := http.NewRequest(http.MethodGet, "http://localhost/artifact/1/some/file", nil)
-	rr := httptest.NewRecorder()
-
-	router.ServeHTTP(rr, req)
-
-	if status := rr.Code; status != http.StatusOK {
-		assert.FailNow(fmt.Sprintf("Wrong status: %d", status))
-	}
-
-	data := rr.Body.Bytes()
-
-	assert.Equal("content", string(data))
-}
-
-// TestArtifactFlow drives the real Serve() artifact server over a loopback socket, exercising
-// the same upload -> finalize -> list -> download protocol the upload-artifact/download-artifact
-// actions speak. Running it in-process (rather than from a job container) keeps it network-free
-// and reachable everywhere, including when the CI job is itself a container.
 func TestArtifactFlow(t *testing.T) {
 	artifactPath := t.TempDir()
 
-	// Serve the exact routes Serve() wires up, on a real loopback socket via httptest. httptest
-	// picks a free port and Close() tears the server down synchronously — avoiding both the
-	// port-rebind race and Serve()'s detached ListenAndServe goroutine, which logger.Fatal()s
-	// (process exit) on a bind error and can outlive the test's temp-dir cleanup.
 	router := httprouter.New()
-	fsys := readWriteFSImpl{}
-	uploads(router, artifactPath, fsys)
-	downloads(router, artifactPath, fsys)
+	uploads(router, artifactPath)
+	downloads(router, artifactPath)
 	server := httptest.NewServer(router)
 	defer server.Close()
 
@@ -257,8 +36,6 @@ func TestArtifactFlow(t *testing.T) {
 	client := server.Client()
 	client.Timeout = 5 * time.Second
 
-	// request performs one HTTP call and returns the status and body. The default transport adds
-	// Accept-Encoding: gzip and transparently decompresses, so gzipped downloads come back plain.
 	request := func(t *testing.T, method, rawURL string, body io.Reader, header http.Header) (int, []byte) {
 		t.Helper()
 		req, err := http.NewRequest(method, rawURL, body)
@@ -289,6 +66,8 @@ func TestArtifactFlow(t *testing.T) {
 
 		status, data = request(t, http.MethodPatch, baseURL+"/_apis/pipelines/workflows/"+runID+"/artifacts", nil, nil)
 		require.Equal(t, http.StatusOK, status, string(data))
+		require.NoError(t, json.Unmarshal(data, &msg))
+		require.Equal(t, "success", msg.Message)
 
 		status, data = request(t, http.MethodGet, baseURL+"/_apis/pipelines/workflows/"+runID+"/artifacts", nil, nil)
 		require.Equal(t, http.StatusOK, status, string(data))
@@ -312,6 +91,21 @@ func TestArtifactFlow(t *testing.T) {
 		stored, err := os.ReadFile(filepath.Join(artifactPath, runID, "my-artifact", "data.txt"))
 		require.NoError(t, err)
 		require.Equal(t, content, string(stored))
+	})
+
+	t.Run("content-range", func(t *testing.T) {
+		const rawURL = "/upload/4?itemPath=chunks.txt"
+		status, data := request(t, http.MethodPut, baseURL+rawURL, strings.NewReader("first"),
+			http.Header{"Content-Range": []string{"bytes 0-4/11"}})
+		require.Equal(t, http.StatusOK, status, string(data))
+
+		status, data = request(t, http.MethodPut, baseURL+rawURL, strings.NewReader("-second"),
+			http.Header{"Content-Range": []string{"bytes 5-11/11"}})
+		require.Equal(t, http.StatusOK, status, string(data))
+
+		stored, err := os.ReadFile(filepath.Join(artifactPath, "4", "chunks.txt"))
+		require.NoError(t, err)
+		require.Equal(t, "first-second", string(stored))
 	})
 
 	t.Run("gzip-roundtrip", func(t *testing.T) {
@@ -365,9 +159,7 @@ func TestArtifactFlow(t *testing.T) {
 	})
 }
 
-func TestMkdirFsImplSafeResolve(t *testing.T) {
-	assert := assert.New(t)
-
+func TestSafeResolve(t *testing.T) {
 	baseDir := "/foo/bar"
 
 	tests := map[string]struct {
@@ -385,97 +177,13 @@ func TestMkdirFsImplSafeResolve(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			assert.Equal(tc.want, safeResolve(baseDir, tc.input))
+			require.Equal(t, tc.want, safeResolve(baseDir, tc.input))
 		})
 	}
-}
-
-func TestReadWriteFSWritableAndAppendable(t *testing.T) {
-	fsys := readWriteFSImpl{}
-	name := filepath.Join(t.TempDir(), "nested", "artifact.txt")
-
-	w, err := fsys.OpenWritable(name)
-	require.NoError(t, err)
-	_, err = w.Write([]byte("first"))
-	require.NoError(t, err)
-	require.NoError(t, w.Close())
-
-	w, err = fsys.OpenAppendable(name)
-	require.NoError(t, err)
-	_, err = w.Write([]byte("-second"))
-	require.NoError(t, err)
-	require.NoError(t, w.Close())
-
-	got, err := os.ReadFile(name)
-	require.NoError(t, err)
-	require.Equal(t, "first-second", string(got))
-
-	w, err = fsys.OpenWritable(name)
-	require.NoError(t, err)
-	_, err = w.Write([]byte("replaced"))
-	require.NoError(t, err)
-	require.NoError(t, w.Close())
-
-	got, err = os.ReadFile(name)
-	require.NoError(t, err)
-	require.Equal(t, "replaced", string(got))
 }
 
 func TestServeEmptyArtifactPathReturnsCancelableNoop(t *testing.T) {
 	cancel := Serve(t.Context(), "", "127.0.0.1", "0")
 	require.NotNil(t, cancel)
 	cancel()
-}
-
-func TestDownloadArtifactFileUnsafePath(t *testing.T) {
-	assert := assert.New(t)
-
-	memfs := fstest.MapFS(map[string]*fstest.MapFile{
-		"artifact/server/path/some/file": {
-			Data: []byte("content"),
-		},
-	})
-
-	router := httprouter.New()
-	downloads(router, "artifact/server/path", memfs)
-
-	req, _ := http.NewRequest(http.MethodGet, "http://localhost/artifact/2/../../some/file", nil)
-	rr := httptest.NewRecorder()
-
-	router.ServeHTTP(rr, req)
-
-	if status := rr.Code; status != http.StatusOK {
-		assert.FailNow(fmt.Sprintf("Wrong status: %d", status))
-	}
-
-	data := rr.Body.Bytes()
-
-	assert.Equal("content", string(data))
-}
-
-func TestArtifactUploadBlobUnsafePath(t *testing.T) {
-	assert := assert.New(t)
-
-	memfs := fstest.MapFS(map[string]*fstest.MapFile{})
-
-	router := httprouter.New()
-	uploads(router, "artifact/server/path", writeMapFS{memfs})
-
-	req, _ := http.NewRequest(http.MethodPut, "http://localhost/upload/1?itemPath=../../some/file", strings.NewReader("content"))
-	rr := httptest.NewRecorder()
-
-	router.ServeHTTP(rr, req)
-
-	if status := rr.Code; status != http.StatusOK {
-		assert.Fail("Wrong status")
-	}
-
-	response := ResponseMessage{}
-	err := json.Unmarshal(rr.Body.Bytes(), &response)
-	if err != nil {
-		panic(err)
-	}
-
-	assert.Equal("success", response.Message)
-	assert.Equal("content", string(memfs["artifact/server/path/1/some/file"].Data))
 }

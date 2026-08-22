@@ -270,11 +270,8 @@ jobs:
 	rc := &RunContext{
 		Name: "test",
 		Config: &Config{
-			Workdir: "/tmp",
-			// no daemon: an explicit network mode creates no network, and
-			// reusing containers short-circuits the volume cleanup executors
+			Workdir:              "/tmp",
 			ContainerNetworkMode: "host",
-			ReuseContainers:      true,
 			Env:                  map[string]string{},
 			Secrets:              map[string]string{},
 		},
@@ -286,7 +283,8 @@ jobs:
 	}
 	rc.ExprEval = rc.NewExpressionEvaluator(t.Context())
 
-	require.NoError(t, rc.startJobContainer()(t.Context()))
+	t.Setenv("DOCKER_HOST", "unix:///nonexistent.sock")
+	require.Error(t, rc.startJobContainer()(t.Context()))
 
 	credentials := map[string][2]string{}
 	for _, in := range inputs {
@@ -335,7 +333,6 @@ jobs:
 		Config: &Config{
 			Workdir:              "/tmp",
 			ContainerNetworkMode: "host",
-			ReuseContainers:      true,
 			Env:                  map[string]string{},
 			ProxyEnv:             map[string]string{"http_proxy": "http://proxy:3128", "no_proxy": "internal.example"},
 			Secrets:              map[string]string{},
@@ -348,7 +345,8 @@ jobs:
 	}
 	rc.ExprEval = rc.NewExpressionEvaluator(t.Context())
 
-	require.NoError(t, rc.startJobContainer()(t.Context()))
+	t.Setenv("DOCKER_HOST", "unix:///nonexistent.sock")
+	require.Error(t, rc.startJobContainer()(t.Context()))
 
 	env := map[string][]string{}
 	for _, in := range inputs {
@@ -662,13 +660,12 @@ func TestGetGitHubContext(t *testing.T) {
 				Name: "GitHubContextTest",
 			},
 		},
-		Name:           "GitHubContextTest",
-		CurrentStep:    "step",
-		Matrix:         map[string]any{},
-		Env:            map[string]string{},
-		ExtraPath:      []string{},
-		StepResults:    map[string]*model.StepResult{},
-		OutputMappings: map[MappableOutput]MappableOutput{},
+		Name:        "GitHubContextTest",
+		CurrentStep: "step",
+		Matrix:      map[string]any{},
+		Env:         map[string]string{},
+		ExtraPath:   []string{},
+		StepResults: map[string]*model.StepResult{},
 	}
 	rc.Run.JobID = "job1"
 
@@ -745,13 +742,8 @@ func TestGetGithubContextRef(t *testing.T) {
 
 func createIfTestRunContext(jobs map[string]*model.Job) *RunContext {
 	rc := &RunContext{
-		Config: &Config{
-			Workdir: ".",
-			Platforms: map[string]string{
-				"ubuntu-latest": "ubuntu-latest",
-			},
-		},
-		Env: map[string]string{},
+		Config: &Config{Workdir: ".", PlatformPicker: func([]string) string { return "ubuntu-latest" }},
+		Env:    map[string]string{},
 		Run: &model.Run{
 			JobID: "job1",
 			Workflow: &model.Workflow{
@@ -1304,15 +1296,13 @@ func TestRunContextImageOS(t *testing.T) {
 
 	t.Run("prefers the release in the resolved image tag", func(t *testing.T) {
 		rc := createRunsOnRunContext(t, "ubuntu-latest")
-		rc.Config.Platforms = map[string]string{
-			"ubuntu-latest": "docker.gitea.com/runner-images:ubuntu-24.04",
-		}
+		rc.Config.PlatformPicker = func([]string) string { return "docker.gitea.com/runner-images:ubuntu-24.04" }
 		assert.Equal(t, "ubuntu24", rc.imageOS(ctx))
 	})
 
 	t.Run("falls back to the runs-on label", func(t *testing.T) {
 		rc := createRunsOnRunContext(t, "ubuntu-22.04")
-		rc.Config.Platforms = map[string]string{"ubuntu-22.04": "some-image"}
+		rc.Config.PlatformPicker = func([]string) string { return "some-image" }
 		assert.Equal(t, "ubuntu22", rc.imageOS(ctx))
 	})
 

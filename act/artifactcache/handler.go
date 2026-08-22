@@ -427,8 +427,10 @@ func (h *Handler) reserve(w http.ResponseWriter, r *http.Request, _ httprouter.P
 		return
 	}
 
-	cache := api.ToCache()
-	cache.Repo = cred.Repo
+	cache := &Cache{Repo: cred.Repo, Key: api.Key, Version: api.Version, Size: api.Size}
+	if cache.Size == 0 {
+		cache.Size = -1
+	}
 	db, err := h.openDB()
 	if err != nil {
 		h.responseJSON(w, r, 500, err)

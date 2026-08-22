@@ -4,6 +4,18 @@
 
 package lookpath
 
-type Env interface {
-	Getenv(name string) string
+import (
+	"runtime"
+	"strings"
+)
+
+func getenv(env map[string]string, name string) string {
+	if runtime.GOOS == "windows" {
+		for key, value := range env {
+			if strings.EqualFold(name, key) {
+				return value
+			}
+		}
+	}
+	return env[name]
 }

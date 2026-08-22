@@ -13,12 +13,6 @@ import (
 	"testing"
 )
 
-type testEnv map[string]string
-
-func (e testEnv) Getenv(name string) string {
-	return e[name]
-}
-
 func TestLookPath2SearchesPathAndEmptyElement(t *testing.T) {
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "tool")
@@ -26,7 +20,7 @@ func TestLookPath2SearchesPathAndEmptyElement(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := LookPath2("tool", testEnv{"PATH": string(filepath.ListSeparator) + dir})
+	got, err := LookPath2("tool", map[string]string{"PATH": string(filepath.ListSeparator) + dir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +36,7 @@ func TestLookPath2DirectPathDoesNotSearchPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := LookPath2(exe, testEnv{"PATH": ""})
+	got, err := LookPath2(exe, map[string]string{"PATH": ""})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +52,7 @@ func TestLookPath2ReportsPermissionAndNotFound(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := LookPath2(file, testEnv{"PATH": dir})
+	_, err := LookPath2(file, map[string]string{"PATH": dir})
 	var pathErr *Error
 	if !errors.As(err, &pathErr) || !errors.Is(pathErr.Err, fs.ErrPermission) {
 		t.Fatalf("LookPath2(non-executable) error = %v, want fs.ErrPermission wrapped in *Error", err)
@@ -67,7 +61,7 @@ func TestLookPath2ReportsPermissionAndNotFound(t *testing.T) {
 		t.Fatalf("Error() = %q, want %q", pathErr.Error(), fs.ErrPermission.Error())
 	}
 
-	_, err = LookPath2("missing", testEnv{"PATH": dir})
+	_, err = LookPath2("missing", map[string]string{"PATH": dir})
 	if !errors.As(err, &pathErr) || !errors.Is(pathErr.Err, ErrNotFound) {
 		t.Fatalf("LookPath2(missing) error = %v, want ErrNotFound wrapped in *Error", err)
 	}

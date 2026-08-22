@@ -5,7 +5,6 @@
 package runner
 
 import (
-	"archive/tar"
 	"context"
 	"fmt"
 	"net/url"
@@ -78,51 +77,12 @@ func newRemoteReusableWorkflowExecutor(rc *RunContext) common.Executor {
 	filename := fmt.Sprintf("%s/%s@%s", remoteReusableWorkflow.Org, remoteReusableWorkflow.Repo, remoteReusableWorkflow.Ref)
 	workflowDir := fmt.Sprintf("%s/%s", rc.ActionCacheDir(), safeFilename(filename))
 
-	if rc.Config.ActionCache != nil {
-		return newActionCacheReusableWorkflowExecutor(rc, filename, remoteReusableWorkflow)
-	}
-
 	token := getGitCloneToken(rc.Config, remoteReusableWorkflow.CloneURL())
 
 	return common.NewPipelineExecutor(
 		cloneRemoteReusableWorkflow(rc, remoteReusableWorkflow.CloneURL(), remoteReusableWorkflow.Ref, workflowDir, token),
 		newReusableWorkflowExecutor(rc, workflowDir, remoteReusableWorkflow.FilePath()),
 	)
-}
-
-func newActionCacheReusableWorkflowExecutor(rc *RunContext, filename string, remoteReusableWorkflow *remoteReusableWorkflow) common.Executor {
-	return func(ctx context.Context) error {
-		ghctx := rc.getGithubContext(ctx)
-		remoteReusableWorkflow.URL = ghctx.ServerURL
-		sha, err := rc.Config.ActionCache.Fetch(ctx, filename, remoteReusableWorkflow.CloneURL(), remoteReusableWorkflow.Ref, ghctx.Token)
-		if err != nil {
-			return err
-		}
-		archive, err := rc.Config.ActionCache.GetTarArchive(ctx, filename, sha, ".github/workflows/"+remoteReusableWorkflow.Filename)
-		if err != nil {
-			return err
-		}
-		defer archive.Close()
-		treader := tar.NewReader(archive)
-		if _, err = treader.Next(); err != nil {
-			return err
-		}
-		planner, err := model.NewSingleWorkflowPlanner(remoteReusableWorkflow.Filename, treader)
-		if err != nil {
-			return err
-		}
-		plan, err := planner.PlanEvent("workflow_call")
-		if err != nil {
-			return err
-		}
-
-		runner, err := NewReusableWorkflowRunner(rc)
-		if err != nil {
-			return err
-		}
-
-		return runner.NewPlanExecutor(plan)(ctx)
-	}
 }
 
 // cloneRemoteReusableWorkflow always invokes the clone executor — moving refs
@@ -147,15 +107,12 @@ func cloneRemoteReusableWorkflow(rc *RunContext, cloneURL, ref, targetDirectory,
 	}
 }
 
-var modelNewWorkflowPlanner = model.NewWorkflowPlanner
-
 func newReusableWorkflowExecutor(rc *RunContext, directory, workflow string) common.Executor {
 	return func(ctx context.Context) error {
-		// Scoped to the yaml read so concurrent invocations don't serialize
-		// on the whole job run.
+		// Serialize workflow reads with cache updates.
 		planner, err := func() (model.WorkflowPlanner, error) {
 			defer git.AcquireCloneLock(directory)()
-			return modelNewWorkflowPlanner(path.Join(directory, workflow), true)
+			return model.NewWorkflowPlanner(path.Join(directory, workflow), true)
 		}()
 		if err != nil {
 			return err
@@ -166,12 +123,11 @@ func newReusableWorkflowExecutor(rc *RunContext, directory, workflow string) com
 			return err
 		}
 
-		runner, err := NewReusableWorkflowRunner(rc)
+		runner, err := newReusableWorkflowRunner(rc)
 		if err != nil {
 			return err
 		}
 
-		// return runner.NewPlanExecutor(plan)(ctx)
 		return common.NewPipelineExecutor( // For Gitea
 			runner.NewPlanExecutor(plan),
 			setReusedWorkflowCallerResult(rc, runner),
@@ -179,7 +135,7 @@ func newReusableWorkflowExecutor(rc *RunContext, directory, workflow string) com
 	}
 }
 
-func NewReusableWorkflowRunner(rc *RunContext) (Runner, error) {
+func newReusableWorkflowRunner(rc *RunContext) (*runnerImpl, error) {
 	runner := &runnerImpl{
 		config:    rc.Config,
 		eventJSON: rc.EventJSON,
@@ -255,16 +211,9 @@ func newRemoteReusableWorkflowFromAbsoluteURL(uses string) *remoteReusableWorkfl
 }
 
 // For Gitea
-func setReusedWorkflowCallerResult(rc *RunContext, runner Runner) common.Executor {
+func setReusedWorkflowCallerResult(rc *RunContext, runner *runnerImpl) common.Executor {
 	return func(ctx context.Context) error {
-		logger := common.Logger(ctx)
-
-		runnerImpl, ok := runner.(*runnerImpl)
-		if !ok {
-			logger.Warn("Failed to get caller from runner")
-			return nil
-		}
-		caller := runnerImpl.caller
+		caller := runner.caller
 
 		allJobDone := true
 		hasFailure := false
@@ -294,7 +243,7 @@ func setReusedWorkflowCallerResult(rc *RunContext, runner Runner) common.Executo
 				unlock := lockJob(rc.Run.Job())
 				rc.result(reusedWorkflowJobResult)
 				unlock()
-				logger.WithField("jobResult", reusedWorkflowJobResult).Infof("Job %s", reusedWorkflowJobResultMessage)
+				common.Logger(ctx).WithField("jobResult", reusedWorkflowJobResult).Infof("Job %s", reusedWorkflowJobResultMessage)
 			}
 		}
 

@@ -36,7 +36,6 @@ var (
 	cloneLocks lock.Keyed[string] // key: clone target directory
 
 	ErrShortRef = errors.New("short SHA references are not supported")
-	ErrNoRepo   = errors.New("unable to find git repo")
 )
 
 // AcquireCloneLock returns an unlock function after locking the per-directory mutex for dir.
@@ -187,19 +186,16 @@ func FindGitRef(ctx context.Context, file string) (string, error) {
 }
 
 // FindGithubRepo get the repo
-func FindGithubRepo(ctx context.Context, file, githubInstance, remoteName string) (string, error) {
+func FindGithubRepo(ctx context.Context, file, githubInstance string) (string, error) {
 	goGitMu.Lock()
 	defer goGitMu.Unlock()
-	if remoteName == "" {
-		remoteName = "origin"
-	}
 
-	url, err := findGitRemoteURL(ctx, file, remoteName)
+	url, err := findGitRemoteURL(ctx, file, "origin")
 	if err != nil {
 		return "", err
 	}
-	_, slug, err := findGitSlug(url, githubInstance)
-	return slug, err
+	_, slug := findGitSlug(url, githubInstance)
+	return slug, nil
 }
 
 func findGitRemoteURL(_ context.Context, file, remoteName string) (string, error) {
@@ -226,25 +222,25 @@ func findGitRemoteURL(_ context.Context, file, remoteName string) (string, error
 	return remote.Config().URLs[0], nil
 }
 
-func findGitSlug(url, githubInstance string) (string, string, error) { //nolint:unparam // pre-existing issue from nektos/act
+func findGitSlug(url, githubInstance string) (string, string) {
 	if matches := codeCommitHTTPRegex.FindStringSubmatch(url); matches != nil {
-		return "CodeCommit", matches[2], nil
+		return "CodeCommit", matches[2]
 	} else if matches := codeCommitSSHRegex.FindStringSubmatch(url); matches != nil {
-		return "CodeCommit", matches[2], nil
+		return "CodeCommit", matches[2]
 	} else if matches := githubHTTPRegex.FindStringSubmatch(url); matches != nil {
-		return "GitHub", fmt.Sprintf("%s/%s", matches[1], matches[2]), nil
+		return "GitHub", fmt.Sprintf("%s/%s", matches[1], matches[2])
 	} else if matches := githubSSHRegex.FindStringSubmatch(url); matches != nil {
-		return "GitHub", fmt.Sprintf("%s/%s", matches[1], matches[2]), nil
+		return "GitHub", fmt.Sprintf("%s/%s", matches[1], matches[2])
 	} else if githubInstance != "github.com" {
 		gheHTTPRegex := regexp.MustCompile(fmt.Sprintf(`^https?://%s/(.+)/(.+?)(?:.git)?$`, githubInstance))
 		gheSSHRegex := regexp.MustCompile(githubInstance + "[:/](.+)/(.+?)(?:.git)?$")
 		if matches := gheHTTPRegex.FindStringSubmatch(url); matches != nil {
-			return "GitHubEnterprise", fmt.Sprintf("%s/%s", matches[1], matches[2]), nil
+			return "GitHubEnterprise", fmt.Sprintf("%s/%s", matches[1], matches[2])
 		} else if matches := gheSSHRegex.FindStringSubmatch(url); matches != nil {
-			return "GitHubEnterprise", fmt.Sprintf("%s/%s", matches[1], matches[2]), nil
+			return "GitHubEnterprise", fmt.Sprintf("%s/%s", matches[1], matches[2])
 		}
 	}
-	return "", url, nil
+	return "", url
 }
 
 // NewGitCloneExecutorInput the input for the NewGitCloneExecutor

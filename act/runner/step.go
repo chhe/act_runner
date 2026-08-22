@@ -85,10 +85,7 @@ func runStepExecutor(step step, stage stepStage, executor common.Executor) commo
 			rc.StepResults[rc.CurrentStep] = stepResult
 		}
 
-		err := setupEnv(ctx, step)
-		if err != nil {
-			return err
-		}
+		setupEnv(ctx, step)
 
 		runStep, err := isStepEnabled(ctx, ifExpression, step, stage)
 		if err != nil {
@@ -232,7 +229,7 @@ func runStepExecutor(step step, stage stepStage, executor common.Executor) commo
 	}
 }
 
-func evaluateStepTimeout(ctx context.Context, exprEval ExpressionEvaluator, stepModel *model.Step) (context.Context, context.CancelFunc) {
+func evaluateStepTimeout(ctx context.Context, exprEval *expressionEvaluator, stepModel *model.Step) (context.Context, context.CancelFunc) {
 	timeout := exprEval.Interpolate(ctx, stepModel.TimeoutMinutes)
 	if timeout != "" {
 		if timeOutMinutes, err := strconv.ParseInt(timeout, 10, 64); err == nil {
@@ -242,7 +239,7 @@ func evaluateStepTimeout(ctx context.Context, exprEval ExpressionEvaluator, step
 	return ctx, func() {}
 }
 
-func setupEnv(ctx context.Context, step step) error { //nolint:unparam // pre-existing issue from nektos/act
+func setupEnv(ctx context.Context, step step) {
 	rc := step.getRunContext()
 
 	mergeEnv(ctx, step)
@@ -263,11 +260,6 @@ func setupEnv(ctx context.Context, step step) error { //nolint:unparam // pre-ex
 			(*step.getEnv())[k] = exprEval.Interpolate(ctx, v)
 		}
 	}
-
-	// For Gitea, reduce log noise
-	// common.Logger(ctx).Debugf("setupEnv => %v", *step.getEnv())
-
-	return nil
 }
 
 func mergeEnv(ctx context.Context, step step) {

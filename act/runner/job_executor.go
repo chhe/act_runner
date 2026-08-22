@@ -240,43 +240,15 @@ func newJobExecutor(info jobInfo, sf stepFactory, rc *RunContext) common.Executo
 	postExecutor = postExecutor.Finally(func(ctx context.Context) error {
 		jobError := common.JobError(ctx)
 		var err error
-		// jobError == nil keeps a failed job's container alive for post-mortem debugging when
-		// AutoRemove is off (the act-CLI --rm behavior; the shipped runner always sets
-		// AutoRemove). A cancelled run is not a failure to inspect, and the cancel-path post
-		// context now carries its own error container so a failing post step makes jobError
-		// non-nil — OR in rc.jobCancelled so cancellation still always tears the container down.
-		if rc.Config.AutoRemove || jobError == nil || rc.jobCancelled {
-			// always allow 1 min for stopping and removing the runner, even if we were cancelled
-			ctx, cancel := context.WithTimeout(common.WithLogger(context.Background(), common.Logger(ctx)), time.Minute)
-			defer cancel()
+		// always allow 1 min for stopping and removing the runner, even if we were cancelled
+		ctx, cancel := context.WithTimeout(common.WithLogger(context.Background(), common.Logger(ctx)), time.Minute)
+		defer cancel()
 
-			logger := common.Logger(ctx)
-			tryUploadJobSummary(ctx, rc)
-			// For Gitea
-			// We don't need to call `stopServiceContainers` here since it will be called by following `info.stopContainer`
-			// logger.Infof("Cleaning up services for job %s", rc.JobName)
-			// if err := rc.stopServiceContainers()(ctx); err != nil {
-			// 	logger.Errorf("Error while cleaning services: %v", err)
-			// }
-
-			logger.Infof("Cleaning up container for job %s", rc.JobName)
-			if err = info.stopContainer()(ctx); err != nil {
-				logger.Errorf("##[error]%s", EscapeCommandData("Error while stop job container: "+err.Error()))
-			}
-
-			// For Gitea
-			// We don't need to call `NewDockerNetworkRemoveExecutor` here since it is called by above `info.stopContainer`
-			// if !rc.IsHostEnv(ctx) && rc.Config.ContainerNetworkMode == "" {
-			// 	// clean network in docker mode only
-			// 	// if the value of `ContainerNetworkMode` is empty string,
-			// 	// it means that the network to which containers are connecting is created by `runner`,
-			// 	// so, we should remove the network at last.
-			// 	networkName, _ := rc.networkName()
-			// 	logger.Infof("Cleaning up network for job %s, and network name is: %s", rc.JobName, networkName)
-			// 	if err := container.NewDockerNetworkRemoveExecutor(networkName)(ctx); err != nil {
-			// 		logger.Errorf("Error while cleaning network: %v", err)
-			// 	}
-			// }
+		logger := common.Logger(ctx)
+		tryUploadJobSummary(ctx, rc)
+		logger.Infof("Cleaning up container for job %s", rc.JobName)
+		if err = info.stopContainer()(ctx); err != nil {
+			logger.Errorf("##[error]%s", EscapeCommandData("Error while stop job container: "+err.Error()))
 		}
 		setJobResult(ctx, info, rc, jobError == nil)
 		setJobOutputs(ctx, rc)
@@ -651,15 +623,7 @@ func useStepLogger(rc *RunContext, stepModel *model.Step, stage stepStage, execu
 	return func(ctx context.Context) error {
 		ctx = withStepLogger(ctx, stepModel.Number, stepModel.ID, rc.ExprEval.Interpolate(ctx, stepModel.String()), stage.String())
 
-		rawLogger := common.Logger(ctx).WithField("raw_output", true)
-		logWriter := common.NewLineWriter(rc.commandHandler(ctx), func(s string) bool {
-			if rc.Config.LogOutput {
-				rawLogger.Infof("%s", s)
-			} else {
-				rawLogger.Debugf("%s", s)
-			}
-			return true
-		})
+		logWriter := rc.commandLogWriter(ctx)
 
 		oldout, olderr := rc.JobContainer.ReplaceLogWriter(logWriter, logWriter)
 		defer rc.JobContainer.ReplaceLogWriter(oldout, olderr)

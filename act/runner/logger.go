@@ -99,10 +99,7 @@ func WithJobLogger(ctx context.Context, jobID, jobName string, config *Config, m
 			mux.Lock()
 			defer mux.Unlock()
 			nextColor++
-			formatter = &jobLogFormatter{
-				color:          colors[nextColor%len(colors)],
-				logPrefixJobID: config.LogPrefixJobID,
-			}
+			formatter = &jobLogFormatter{color: colors[nextColor%len(colors)]}
 		}
 
 		logger = logrus.New()
@@ -338,8 +335,7 @@ func (f *maskedFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 }
 
 type jobLogFormatter struct {
-	color          int
-	logPrefixJobID bool
+	color int
 }
 
 func (f *jobLogFormatter) Format(entry *logrus.Entry) ([]byte, error) {
@@ -363,12 +359,7 @@ func (f *jobLogFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 func (f *jobLogFormatter) printColored(b *bytes.Buffer, entry *logrus.Entry) {
 	entry.Message = strings.TrimSuffix(entry.Message, "\n")
 
-	var job any
-	if f.logPrefixJobID {
-		job = entry.Data["jobID"]
-	} else {
-		job = entry.Data["job"]
-	}
+	job := entry.Data["job"]
 
 	debugFlag := ""
 	if entry.Level == logrus.DebugLevel {
@@ -391,12 +382,7 @@ func (f *jobLogFormatter) printColored(b *bytes.Buffer, entry *logrus.Entry) {
 func (f *jobLogFormatter) print(b *bytes.Buffer, entry *logrus.Entry) {
 	entry.Message = strings.TrimSuffix(entry.Message, "\n")
 
-	var job any
-	if f.logPrefixJobID {
-		job = entry.Data["jobID"]
-	} else {
-		job = entry.Data["job"]
-	}
+	job := entry.Data["job"]
 
 	debugFlag := ""
 	if entry.Level == logrus.DebugLevel {

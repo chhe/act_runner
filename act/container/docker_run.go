@@ -65,29 +65,6 @@ func NewContainer(input *NewContainerInput) ExecutionsEnvironment {
 	return cr
 }
 
-func (cr *containerReference) ConnectToNetwork(name string) common.Executor {
-	return common.
-		NewDebugExecutor("docker network connect %s %s", name, cr.input.Name).
-		Then(
-			common.NewPipelineExecutor(
-				cr.connect(),
-				cr.connectToNetwork(name, cr.input.NetworkAliases),
-			).IfNot(common.Dryrun),
-		)
-}
-
-func (cr *containerReference) connectToNetwork(name string, aliases []string) common.Executor {
-	return func(ctx context.Context) error {
-		_, err := cr.cli.NetworkConnect(ctx, name, client.NetworkConnectOptions{
-			Container: cr.input.Name,
-			EndpointConfig: &network.EndpointSettings{
-				Aliases: aliases,
-			},
-		})
-		return err
-	}
-}
-
 // supportsContainerImagePlatform reports whether the Docker server API version
 // is 1.41 and beyond
 func supportsContainerImagePlatform(ctx context.Context, cli client.APIClient) (bool, error) {
@@ -944,42 +921,6 @@ func (cr *containerReference) waitForCommand(ctx context.Context, resp client.Hi
 	}
 }
 
-func (cr *containerReference) CopyTarStream(ctx context.Context, destPath string, tarStream io.Reader) error {
-	if cr.id == "" {
-		return cr.missingContainerError("copy to %s", destPath)
-	}
-	// Mkdir, with a path relative to the DestinationPath ("/") below. Docker 29.5+
-	// rejects absolute tar entry names with "path escapes from parent".
-	buf := &bytes.Buffer{}
-	tw := tar.NewWriter(buf)
-	_ = tw.WriteHeader(&tar.Header{
-		Name:     strings.TrimPrefix(destPath, "/"),
-		Mode:     0o777,
-		Typeflag: tar.TypeDir,
-	})
-	tw.Close()
-	_, err := cr.cli.CopyToContainer(ctx, cr.id, client.CopyToContainerOptions{
-		DestinationPath: "/",
-		Content:         buf,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to mkdir to copy content to container: %w", err)
-	}
-	// Copy Content
-	_, err = cr.cli.CopyToContainer(ctx, cr.id, client.CopyToContainerOptions{
-		DestinationPath: destPath,
-		Content:         tarStream,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to copy content to container: %w", err)
-	}
-	// If this fails, then folders have wrong permissions on non root container
-	if cr.UID != 0 || cr.GID != 0 {
-		_ = cr.Exec([]string{"chown", "-R", fmt.Sprintf("%d:%d", cr.UID, cr.GID), destPath}, nil, "0", "")(ctx)
-	}
-	return nil
-}
-
 func (cr *containerReference) copyDir(dstPath, srcPath string, useGitIgnore bool) common.Executor {
 	return func(ctx context.Context) error {
 		if cr.id == "" {
@@ -1021,7 +962,6 @@ func (cr *containerReference) copyDir(dstPath, srcPath string, useGitIgnore bool
 		}
 
 		fc := &filecollector.FileCollector{
-			Fs:        &filecollector.DefaultFs{},
 			Ignorer:   ignorer,
 			SrcPath:   srcPath,
 			SrcPrefix: srcPrefix,

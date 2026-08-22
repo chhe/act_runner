@@ -51,9 +51,7 @@ func TestFindGitSlug(t *testing.T) {
 	}
 
 	for _, tt := range slugTests {
-		provider, slug, err := findGitSlug(tt.url, "github.com")
-
-		assert.NoError(err) //nolint:testifylint // pre-existing issue from nektos/act
+		provider, slug := findGitSlug(tt.url, "github.com")
 		assert.Equal(tt.provider, provider)
 		assert.Equal(tt.slug, slug)
 	}
@@ -87,45 +85,20 @@ func cleanGitHooks(dir string) error {
 	return nil
 }
 
-func TestFindGitRemoteURL(t *testing.T) {
-	assert := assert.New(t)
-
+func TestFindGithubRepoUsesOrigin(t *testing.T) {
 	basedir := t.TempDir()
-	err := gitCmd("init", basedir)
-	assert.NoError(err) //nolint:testifylint // pre-existing issue from nektos/act
-	err = cleanGitHooks(basedir)
-	assert.NoError(err) //nolint:testifylint // pre-existing issue from nektos/act
-
-	remoteURL := "https://git-codecommit.us-east-1.amazonaws.com/v1/repos/my-repo-name"
-	err = gitCmd("-C", basedir, "remote", "add", "origin", remoteURL)
-	assert.NoError(err) //nolint:testifylint // pre-existing issue from nektos/act
-
-	u, err := findGitRemoteURL(context.Background(), basedir, "origin")
-	assert.NoError(err) //nolint:testifylint // pre-existing issue from nektos/act
-	assert.Equal(remoteURL, u)
-
-	remoteURL = "git@github.com/AwesomeOwner/MyAwesomeRepo.git"
-	err = gitCmd("-C", basedir, "remote", "add", "upstream", remoteURL)
-	assert.NoError(err) //nolint:testifylint // pre-existing issue from nektos/act
-	u, err = findGitRemoteURL(context.Background(), basedir, "upstream")
-	assert.NoError(err) //nolint:testifylint // pre-existing issue from nektos/act
-	assert.Equal(remoteURL, u)
-}
-
-func TestFindGithubRepoUsesOriginAndCustomRemote(t *testing.T) {
-	basedir := t.TempDir()
+	const remoteURL = "https://github.com/owner/repo.git"
 	require.NoError(t, gitCmd("init", basedir))
 	require.NoError(t, cleanGitHooks(basedir))
-	require.NoError(t, gitCmd("-C", basedir, "remote", "add", "origin", "https://github.com/owner/repo.git"))
-	require.NoError(t, gitCmd("-C", basedir, "remote", "add", "ghe", "git@git.example.com:team/project.git"))
+	require.NoError(t, gitCmd("-C", basedir, "remote", "add", "origin", remoteURL))
 
-	slug, err := FindGithubRepo(context.Background(), basedir, "github.com", "")
+	url, err := findGitRemoteURL(context.Background(), basedir, "origin")
+	require.NoError(t, err)
+	require.Equal(t, remoteURL, url)
+
+	slug, err := FindGithubRepo(context.Background(), basedir, "github.com")
 	require.NoError(t, err)
 	require.Equal(t, "owner/repo", slug)
-
-	slug, err = FindGithubRepo(context.Background(), basedir, "git.example.com", "ghe")
-	require.NoError(t, err)
-	require.Equal(t, "team/project", slug)
 }
 
 func TestGitFindRef(t *testing.T) {

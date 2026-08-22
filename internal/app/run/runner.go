@@ -202,13 +202,6 @@ func (r *Runner) shouldRunIdleCleanup() bool {
 	}
 }
 
-// cleanupStaleTaskDirs reclaims stale bind-workdir per-task directories under
-// workdirRoot. Retained as a thin wrapper so existing callers and tests keep a
-// stable entry point.
-func (r *Runner) cleanupStaleTaskDirs(ctx context.Context, workdirRoot string) {
-	r.cleanupStaleDirs(ctx, workdirRoot, isTaskIDDir)
-}
-
 // isTaskIDDir reports whether name is a per-task workspace dir (numeric task
 // ID). Any other directory is skipped to avoid deleting operator-managed data
 // under workdir_root.
@@ -520,16 +513,13 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 		ActionCloneDepth:  actionCloneDepth,
 		NoActionPatch:     r.cfg.Runner.PatchActions != nil && !*r.cfg.Runner.PatchActions,
 
-		ReuseContainers:      false,
 		ForcePull:            r.cfg.Container.ForcePull,
 		ForceRebuild:         r.cfg.Container.ForceRebuild,
-		LogOutput:            true,
 		JSONLogger:           false,
 		Env:                  envs,
 		ProxyEnv:             proxyEnv,
 		Secrets:              task.Secrets,
 		GitHubInstance:       strings.TrimSuffix(r.client.Address(), "/"),
-		AutoRemove:           true,
 		NoSkipCheckout:       true,
 		DisableActEnv:        r.cfg.Runner.SetActEnv != nil && !*r.cfg.Runner.SetActEnv,
 		PresetGitHubContext:  preset,

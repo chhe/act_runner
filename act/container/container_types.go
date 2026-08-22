@@ -88,9 +88,7 @@ type Info struct {
 // Container for managing docker run containers
 type Container interface {
 	Create(capAdd, capDrop []string) common.Executor
-	ConnectToNetwork(name string) common.Executor
 	Copy(destPath string, files ...*FileEntry) common.Executor
-	CopyTarStream(ctx context.Context, destPath string, tarStream io.Reader) error
 	CopyDir(destPath, srcPath string, useGitIgnore bool) common.Executor
 	GetContainerArchive(ctx context.Context, srcPath string) (io.ReadCloser, error)
 	Inspect(ctx context.Context) (*Info, error)

@@ -44,7 +44,7 @@ func TestRunnerCleanupStaleTaskDirs(t *testing.T) {
 		now: func() time.Time { return now },
 	}
 
-	r.cleanupStaleTaskDirs(context.Background(), workdirRoot)
+	r.cleanupStaleDirs(context.Background(), workdirRoot, isTaskIDDir)
 
 	assert.NoDirExists(t, oldTask)
 	assert.DirExists(t, freshTask)
@@ -111,7 +111,7 @@ func TestRunnerCleanupStaleTaskDirsMissingRoot(t *testing.T) {
 
 	// Must be a silent no-op rather than a warning or panic when the root
 	// has not yet been created (e.g. the runner has never executed a task).
-	r.cleanupStaleTaskDirs(context.Background(), filepath.Join(t.TempDir(), "missing"))
+	r.cleanupStaleDirs(context.Background(), filepath.Join(t.TempDir(), "missing"), isTaskIDDir)
 }
 
 func TestRunnerCleanupStaleTaskDirsHonorsContext(t *testing.T) {
@@ -135,7 +135,7 @@ func TestRunnerCleanupStaleTaskDirsHonorsContext(t *testing.T) {
 		now: func() time.Time { return now },
 	}
 
-	r.cleanupStaleTaskDirs(ctx, workdirRoot)
+	r.cleanupStaleDirs(ctx, workdirRoot, isTaskIDDir)
 
 	for i := 1001; i <= 1003; i++ {
 		assert.DirExists(t, filepath.Join(workdirRoot, strconv.Itoa(i)))

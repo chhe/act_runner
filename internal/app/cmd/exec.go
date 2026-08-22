@@ -446,10 +446,8 @@ func runExec(ctx context.Context, execArgs *executeArgs) func(cmd *cobra.Command
 		config := &runner.Config{
 			Workdir:               execArgs.Workdir(),
 			BindWorkdir:           false,
-			ReuseContainers:       false,
 			ForcePull:             execArgs.forcePull,
 			ForceRebuild:          execArgs.forceRebuild,
-			LogOutput:             true,
 			JSONLogger:            execArgs.jsonLogger,
 			Env:                   env,
 			ProxyEnv:              proxyEnv,
@@ -465,7 +463,6 @@ func runExec(ctx context.Context, execArgs *executeArgs) func(cmd *cobra.Command
 			ContainerCapAdd:       execArgs.containerCapAdd,
 			ContainerCapDrop:      execArgs.containerCapDrop,
 			ContainerOptions:      execArgs.containerOptions,
-			AutoRemove:            true,
 			ArtifactServerPath:    execArgs.artifactServerPath,
 			ArtifactServerPort:    execArgs.artifactServerPort,
 			ArtifactServerAddr:    execArgs.artifactServerAddr,

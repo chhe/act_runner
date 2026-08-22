@@ -104,7 +104,7 @@ func TestSetRef(t *testing.T) {
 				Event:     table.event,
 			}
 
-			SetRef(context.Background(), ghc, "main", "/some/dir")
+			SetRef(context.Background(), ghc, "/some/dir")
 			ghc.SetRefTypeAndName()
 
 			assert.Equal(t, table.ref, ghc.Ref)
@@ -122,7 +122,7 @@ func TestSetRef(t *testing.T) {
 			Event:     map[string]any{},
 		}
 
-		SetRef(context.Background(), ghc, "", "/some/dir")
+		SetRef(context.Background(), ghc, "/some/dir")
 
 		assert.Equal(t, "refs/heads/master", ghc.Ref)
 	})

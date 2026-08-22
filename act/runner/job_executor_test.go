@@ -336,6 +336,7 @@ func TestNewJobExecutor(t *testing.T) {
 			executedSteps: []string{
 				"startContainer",
 				"step1",
+				"stopContainer",
 				"interpolateOutputs",
 				"closeContainer",
 			},
@@ -562,9 +563,8 @@ func TestNewJobExecutorRunsPostStepsAfterTimeout(t *testing.T) {
 	jim.On("startContainer").Return(func(ctx context.Context) error { return nil })
 	jim.On("interpolateOutputs").Return(func(ctx context.Context) error { return nil })
 	jim.On("closeContainer").Return(func(ctx context.Context) error { return nil })
-	// The job timed out, so it must be reported as failed. stopContainer is left
-	// unexpected on purpose: a timed-out (failed) job preserves its error state, so
-	// the graceful stop is skipped exactly like any other failure without AutoRemove.
+	// The job timed out, so it must be reported as failed and still cleaned up.
+	jim.On("stopContainer").Return(func(context.Context) error { return nil })
 	jim.On("result", "failure")
 
 	sm := &stepMock{}
@@ -984,12 +984,7 @@ func tarArchive(t *testing.T, entries ...tarEntry) []byte {
 
 func newTestRC(wf *model.Workflow, matrix map[string]any) *RunContext {
 	return &RunContext{
-		Config: &Config{
-			Workdir: ".",
-			Platforms: map[string]string{
-				"ubuntu-latest": "ubuntu-latest",
-			},
-		},
+		Config:      &Config{Workdir: ".", PlatformPicker: func([]string) string { return "ubuntu-latest" }},
 		StepResults: map[string]*model.StepResult{},
 		Env:         map[string]string{},
 		Matrix:      matrix,

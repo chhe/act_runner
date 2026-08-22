@@ -6,6 +6,7 @@ package filecollector
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"io"
 	"os"
@@ -13,110 +14,41 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-billy/v5/memfs"
 	git "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/cache"
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
-	"github.com/go-git/go-git/v5/plumbing/format/index"
-	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-type memoryFs struct {
-	billy.Filesystem
-}
-
-func (mfs *memoryFs) walk(root string, fn filepath.WalkFunc) error {
-	dir, err := mfs.ReadDir(root)
-	if err != nil {
-		return err
-	}
-	for i := range dir {
-		filename := filepath.Join(root, dir[i].Name())
-		err = fn(filename, dir[i], nil)
-		if dir[i].IsDir() {
-			if err == filepath.SkipDir {
-				err = nil
-			} else if err := mfs.walk(filename, fn); err != nil {
-				return err
-			}
-		}
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (mfs *memoryFs) Walk(root string, fn filepath.WalkFunc) error {
-	stat, err := mfs.Lstat(root)
-	if err != nil {
-		return err
-	}
-	err = fn(strings.Join([]string{root, "."}, string(filepath.Separator)), stat, nil)
-	if err != nil {
-		return err
-	}
-	return mfs.walk(root, fn)
-}
-
-func (mfs *memoryFs) OpenGitIndex(path string) (*index.Index, error) {
-	f, _ := mfs.Filesystem.Chroot(filepath.Join(path, ".git")) //nolint:staticcheck // pre-existing issue from nektos/act
-	storage := filesystem.NewStorage(f, cache.NewObjectLRUDefault())
-	i, err := storage.Index()
-	if err != nil {
-		return nil, err
-	}
-	return i, nil
-}
-
-func (mfs *memoryFs) Open(path string) (io.ReadCloser, error) {
-	return mfs.Filesystem.Open(path)
-}
-
-func (mfs *memoryFs) Readlink(path string) (string, error) {
-	return mfs.Filesystem.Readlink(path)
-}
-
 func TestIgnoredTrackedfile(t *testing.T) {
-	fs := memfs.New()
-	_ = fs.MkdirAll("mygitrepo/.git", 0o777)
-	dotgit, _ := fs.Chroot("mygitrepo/.git")
-	worktree, _ := fs.Chroot("mygitrepo")
-	repo, _ := git.Init(filesystem.NewStorage(dotgit, cache.NewObjectLRUDefault()), worktree)
-	f, _ := worktree.Create(".gitignore")
-	_, _ = f.Write([]byte(".*\n"))
-	f.Close()
-	// This file shouldn't be in the tar
-	f, _ = worktree.Create(".env")
-	_, _ = f.Write([]byte("test=val1\n"))
-	f.Close()
-	w, _ := repo.Worktree()
-	// .gitignore is in the tar after adding it to the index
-	_, _ = w.Add(".gitignore")
+	repoDir := filepath.Join(t.TempDir(), "mygitrepo")
+	repo, err := git.PlainInit(repoDir, false)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, ".gitignore"), []byte(".*\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, ".env"), []byte("test=val1\n"), 0o644))
+	worktree, err := repo.Worktree()
+	require.NoError(t, err)
+	_, err = worktree.Add(".gitignore")
+	require.NoError(t, err)
 
-	tmpTar, _ := fs.Create("temp.tar")
-	tw := tar.NewWriter(tmpTar)
-	ps, _ := gitignore.ReadPatterns(worktree, []string{})
-	ignorer := gitignore.NewMatcher(ps)
+	var archive bytes.Buffer
+	tw := tar.NewWriter(&archive)
+	patterns, err := gitignore.ReadPatterns(worktree.Filesystem, nil)
+	require.NoError(t, err)
+	ignorer := gitignore.NewMatcher(patterns)
 	fc := &FileCollector{
-		Fs:        &memoryFs{Filesystem: fs},
 		Ignorer:   ignorer,
-		SrcPath:   "mygitrepo",
-		SrcPrefix: "mygitrepo" + string(filepath.Separator),
+		SrcPath:   repoDir,
+		SrcPrefix: repoDir + string(filepath.Separator),
 		Handler: &TarCollector{
 			TarWriter: tw,
 		},
 	}
-	err := fc.Fs.Walk("mygitrepo", fc.CollectFiles(context.Background(), []string{}))
-	assert.NoError(t, err, "successfully collect files") //nolint:testifylint // pre-existing issue from nektos/act
-	tw.Close()
-	_, _ = tmpTar.Seek(0, io.SeekStart)
-	tr := tar.NewReader(tmpTar)
+	err = filepath.Walk(repoDir, fc.CollectFiles(context.Background(), nil))
+	assert.NoError(t, err, "successfully collect files")
+	require.NoError(t, tw.Close())
+	tr := tar.NewReader(&archive)
 	h, err := tr.Next()
 	assert.NoError(t, err, "tar must not be empty") //nolint:testifylint // pre-existing issue from nektos/act
 	assert.Equal(t, ".gitignore", h.Name)
@@ -125,47 +57,32 @@ func TestIgnoredTrackedfile(t *testing.T) {
 }
 
 func TestSymlinks(t *testing.T) {
-	fs := memfs.New()
-	_ = fs.MkdirAll("mygitrepo/.git", 0o777)
-	dotgit, _ := fs.Chroot("mygitrepo/.git")
-	worktree, _ := fs.Chroot("mygitrepo")
-	repo, _ := git.Init(filesystem.NewStorage(dotgit, cache.NewObjectLRUDefault()), worktree)
-	// This file shouldn't be in the tar
-	f, err := worktree.Create(".env")
-	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
-	_, err = f.Write([]byte("test=val1\n"))
-	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
-	f.Close()
-	err = worktree.Symlink(".env", "test.env")
-	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks requires elevated privileges on Windows")
+	}
+	repoDir := filepath.Join(t.TempDir(), "mygitrepo")
+	repo, err := git.PlainInit(repoDir, false)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, ".env"), []byte("test=val1\n"), 0o644))
+	require.NoError(t, os.Symlink(".env", filepath.Join(repoDir, "test.env")))
+	worktree, err := repo.Worktree()
+	require.NoError(t, err)
+	_, err = worktree.Add("test.env")
+	require.NoError(t, err)
 
-	w, err := repo.Worktree()
-	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
-
-	// .gitignore is in the tar after adding it to the index
-	_, err = w.Add(".env")
-	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
-	_, err = w.Add("test.env")
-	assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
-
-	tmpTar, _ := fs.Create("temp.tar")
-	tw := tar.NewWriter(tmpTar)
-	ps, _ := gitignore.ReadPatterns(worktree, []string{})
-	ignorer := gitignore.NewMatcher(ps)
+	var archive bytes.Buffer
+	tw := tar.NewWriter(&archive)
 	fc := &FileCollector{
-		Fs:        &memoryFs{Filesystem: fs},
-		Ignorer:   ignorer,
-		SrcPath:   "mygitrepo",
-		SrcPrefix: "mygitrepo" + string(filepath.Separator),
+		SrcPath:   repoDir,
+		SrcPrefix: repoDir + string(filepath.Separator),
 		Handler: &TarCollector{
 			TarWriter: tw,
 		},
 	}
-	err = fc.Fs.Walk("mygitrepo", fc.CollectFiles(context.Background(), []string{}))
-	assert.NoError(t, err, "successfully collect files") //nolint:testifylint // pre-existing issue from nektos/act
-	tw.Close()
-	_, _ = tmpTar.Seek(0, io.SeekStart)
-	tr := tar.NewReader(tmpTar)
+	err = filepath.Walk(repoDir, fc.CollectFiles(context.Background(), nil))
+	assert.NoError(t, err, "successfully collect files")
+	require.NoError(t, tw.Close())
+	tr := tar.NewReader(&archive)
 	h, err := tr.Next()
 	files := map[string]tar.Header{}
 	for err == nil {
@@ -223,62 +140,14 @@ func TestCopyCollectorWriteFileOverwritesFileWithSymlink(t *testing.T) {
 	assert.Equal(t, "target", resolved)
 }
 
-func TestDefaultFsOpenReadlinkAndWalk(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("creating symlinks requires elevated privileges on Windows")
-	}
-
-	root := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "file.txt"), []byte("content"), 0o644))
-	require.NoError(t, os.Symlink("file.txt", filepath.Join(root, "link.txt")))
-
-	fsys := &DefaultFs{}
-	var walked []string
-	require.NoError(t, fsys.Walk(root, func(path string, info os.FileInfo, err error) error {
-		require.NoError(t, err)
-		walked = append(walked, info.Name())
-		return nil
-	}))
-	require.Contains(t, walked, "file.txt")
-	require.Contains(t, walked, "link.txt")
-
-	file, err := fsys.Open(filepath.Join(root, "file.txt"))
-	require.NoError(t, err)
-	data, err := io.ReadAll(file)
-	require.NoError(t, err)
-	require.NoError(t, file.Close())
-	require.Equal(t, "content", string(data))
-
-	link, err := fsys.Readlink(filepath.Join(root, "link.txt"))
-	require.NoError(t, err)
-	require.Equal(t, "file.txt", link)
-}
-
 func TestFileCollectorCancellationAndWalkError(t *testing.T) {
-	fc := &FileCollector{Fs: &memoryFs{Filesystem: memfs.New()}}
-	walk := fc.CollectFiles(cancelledContext(t), nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	walk := (&FileCollector{}).CollectFiles(ctx, nil)
 
-	err := walk("file", fakeFileInfo{name: "file"}, nil)
+	err := walk("file", nil, nil)
 	require.EqualError(t, err, "copy cancelled")
 
-	err = walk("file", fakeFileInfo{name: "file"}, os.ErrPermission)
+	err = walk("file", nil, os.ErrPermission)
 	require.ErrorIs(t, err, os.ErrPermission)
 }
-
-func cancelledContext(t *testing.T) context.Context {
-	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	return ctx
-}
-
-type fakeFileInfo struct {
-	name string
-}
-
-func (f fakeFileInfo) Name() string       { return f.name }
-func (f fakeFileInfo) Size() int64        { return 0 }
-func (f fakeFileInfo) Mode() os.FileMode  { return 0o644 }
-func (f fakeFileInfo) ModTime() time.Time { return time.Time{} }
-func (f fakeFileInfo) IsDir() bool        { return false }
-func (f fakeFileInfo) Sys() any           { return nil }

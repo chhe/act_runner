@@ -181,20 +181,7 @@ func (rc *RunContext) compositeExecutor(action *model.Action) *compositeSteps {
 		stepPre := rc.newCompositeCommandExecutor(step.pre())
 		preSteps = append(preSteps, newCompositeStepLogExecutor(stepPre, stepID))
 
-		steps = append(steps, func(ctx context.Context) error {
-			ctx = WithCompositeStepLogger(ctx, stepID)
-			logger := common.Logger(ctx)
-			err := rc.newCompositeCommandExecutor(step.main())(ctx)
-
-			if err != nil {
-				logger.Errorf("##[error]%s", EscapeCommandData(err.Error()))
-				common.SetJobError(ctx, err)
-			} else if ctx.Err() != nil {
-				logger.Errorf("##[error]%s", EscapeCommandData(ctx.Err().Error()))
-				common.SetJobError(ctx, ctx.Err())
-			}
-			return nil
-		})
+		steps = append(steps, newCompositeStepLogExecutor(rc.newCompositeCommandExecutor(step.main()), stepID))
 
 		// run the post executor in reverse order
 		if postExecutor != nil {
@@ -222,19 +209,7 @@ func (rc *RunContext) newCompositeCommandExecutor(executor common.Executor) comm
 	return func(ctx context.Context) error {
 		ctx = WithCompositeLogger(ctx, &rc.Masks)
 
-		// We need to inject a composite RunContext related command
-		// handler into the current running job container
-		// We need this, to support scoping commands to the composite action
-		// executing.
-		rawLogger := common.Logger(ctx).WithField("raw_output", true)
-		logWriter := common.NewLineWriter(rc.commandHandler(ctx), func(s string) bool {
-			if rc.Config.LogOutput {
-				rawLogger.Infof("%s", s)
-			} else {
-				rawLogger.Debugf("%s", s)
-			}
-			return true
-		})
+		logWriter := rc.commandLogWriter(ctx)
 
 		oldout, olderr := rc.JobContainer.ReplaceLogWriter(logWriter, logWriter)
 		defer rc.JobContainer.ReplaceLogWriter(oldout, olderr)

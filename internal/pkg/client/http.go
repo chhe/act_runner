@@ -14,6 +14,7 @@ import (
 
 	"connectrpc.com/connect"
 	"gitea.dev/actionslib/ping/v1/pingv1connect"
+	"gitea.dev/actionslib/pkg/protocol"
 	"gitea.dev/actionslib/runner/v1/runnerv1connect"
 )
 
@@ -42,10 +43,10 @@ func New(endpoint string, insecure bool, uuid, token string, timeout time.Durati
 		return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
 			req.Header().Set("User-Agent", "gitea-runner/"+ver.Version())
 			if uuid != "" {
-				req.Header().Set(UUIDHeader, uuid)
+				req.Header().Set(protocol.UUIDHeader, uuid)
 			}
 			if token != "" {
-				req.Header().Set(TokenHeader, token)
+				req.Header().Set(protocol.TokenHeader, token)
 			}
 			return next(ctx, req)
 		}
@@ -64,16 +65,11 @@ func New(endpoint string, insecure bool, uuid, token string, timeout time.Durati
 			opts...,
 		),
 		endpoint: endpoint,
-		insecure: insecure,
 	}
 }
 
 func (c *HTTPClient) Address() string {
 	return c.endpoint
-}
-
-func (c *HTTPClient) Insecure() bool {
-	return c.insecure
 }
 
 var _ Client = (*HTTPClient)(nil)
@@ -83,5 +79,4 @@ type HTTPClient struct {
 	pingv1connect.PingServiceClient
 	runnerv1connect.RunnerServiceClient
 	endpoint string
-	insecure bool
 }

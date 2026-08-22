@@ -54,22 +54,6 @@ func NewPipelineExecutor(executors ...Executor) Executor {
 	return rtn
 }
 
-// NewConditionalExecutor creates a new executor based on conditions
-func NewConditionalExecutor(conditional Conditional, trueExecutor, falseExecutor Executor) Executor {
-	return func(ctx context.Context) error {
-		if conditional(ctx) {
-			if trueExecutor != nil {
-				return trueExecutor(ctx)
-			}
-		} else {
-			if falseExecutor != nil {
-				return falseExecutor(ctx)
-			}
-		}
-		return nil
-	}
-}
-
 // NewErrorExecutor creates a new executor that always errors out
 func NewErrorExecutor(err error) Executor {
 	return func(ctx context.Context) error {
@@ -190,12 +174,5 @@ func (e Executor) Finally(finally Executor) Executor {
 			return fmt.Errorf("Error occurred running finally: %v (original error: %v)", err2, err)
 		}
 		return err
-	}
-}
-
-// Not return an inverted conditional
-func (c Conditional) Not() Conditional {
-	return func(ctx context.Context) bool {
-		return !c(ctx)
 	}
 }
