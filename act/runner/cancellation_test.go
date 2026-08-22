@@ -107,17 +107,14 @@ func TestMainStepsExecutorMarksFailedOnTimeoutBetweenSteps(t *testing.T) {
 		"job1": createJob(t, `runs-on: ubuntu-latest`, ""),
 	})
 
-	// A short deadline that we let elapse between steps, so no step records the error itself.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
+	ctx := newControllableDeadlineContext(context.Background())
 
 	var ran []string
 	var laterStepCtxErr error
 	steps := []common.Executor{
-		func(c context.Context) error {
+		func(context.Context) error {
 			ran = append(ran, "step1")
-			// Block until the job deadline elapses, then return cleanly: the interrupt lands in the loop's between-steps check, not inside a step.
-			<-c.Done()
+			ctx.expire()
 			return nil
 		},
 		func(c context.Context) error {

@@ -528,18 +528,39 @@ func TestNewJobExecutor(t *testing.T) {
 	}
 }
 
+type controllableDeadlineContext struct {
+	context.Context
+	done chan struct{}
+}
+
+func newControllableDeadlineContext(parent context.Context) *controllableDeadlineContext {
+	return &controllableDeadlineContext{Context: parent, done: make(chan struct{})}
+}
+
+func (ctx *controllableDeadlineContext) Done() <-chan struct{} {
+	return ctx.done
+}
+
+func (ctx *controllableDeadlineContext) Err() error {
+	select {
+	case <-ctx.done:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
+func (ctx *controllableDeadlineContext) expire() {
+	close(ctx.done)
+}
+
 // TestNewJobExecutorRunsPostStepsAfterTimeout guards the timeout-minutes cleanup
 // path: when a job exceeds its timeout the job context is DeadlineExceeded, but
 // the post steps (cleanup hooks like actions/checkout post and cache save) must
 // still run against a fresh, non-expired context, and the job must still be
 // reported as failed.
 func TestNewJobExecutorRunsPostStepsAfterTimeout(t *testing.T) {
-	ctx := common.WithJobErrorContainer(context.Background())
-	// The timeout is generous so the main step (which blocks on ctx.Done below) is
-	// always reached before the deadline fires; otherwise the pipeline would
-	// short-circuit before the step runs and the job error would never be set.
-	ctx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
-	defer cancel()
+	ctx := newControllableDeadlineContext(common.WithJobErrorContainer(context.Background()))
 
 	jim := &jobInfoMock{}
 	sfm := &stepFactoryMock{}
@@ -570,11 +591,9 @@ func TestNewJobExecutorRunsPostStepsAfterTimeout(t *testing.T) {
 	sm := &stepMock{}
 	sfm.On("newStep", stepModel, rc).Return(sm, nil)
 	sm.On("pre").Return(func(ctx context.Context) error { return nil })
-	// The main step runs past the job timeout: it blocks until the job context is
-	// done, mirroring a step that overruns timeout-minutes.
-	sm.On("main").Return(func(ctx context.Context) error {
-		<-ctx.Done()
-		return ctx.Err()
+	sm.On("main").Return(func(stepCtx context.Context) error {
+		ctx.expire()
+		return stepCtx.Err()
 	})
 
 	var postRan bool

@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"gitea.com/gitea/runner/act/common"
 
@@ -148,12 +147,17 @@ func (m *mockDockerClient) NetworkRemove(ctx context.Context, id string, opts mo
 	return args.Get(0).(mobyclient.NetworkRemoveResult), args.Error(1)
 }
 
-type endlessReader struct {
-	io.Reader
+type interruptReader struct {
+	started     chan struct{}
+	interrupted chan struct{}
+	stopped     chan struct{}
 }
 
-func (r endlessReader) Read(_ []byte) (n int, err error) {
-	return 1, nil
+func (r *interruptReader) Read(_ []byte) (int, error) {
+	close(r.started)
+	<-r.interrupted
+	close(r.stopped)
+	return 0, io.EOF
 }
 
 type mockConn struct {
@@ -173,15 +177,18 @@ func (m *mockConn) Close() (err error) {
 func TestDockerExecAbort(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	reader := &interruptReader{started: make(chan struct{}), interrupted: make(chan struct{}), stopped: make(chan struct{})}
 	conn := &mockConn{}
-	conn.On("Write", mock.AnythingOfType("[]uint8")).Return(1, nil)
+	conn.On("Write", []byte{3}).
+		Run(func(mock.Arguments) { close(reader.interrupted) }).
+		Return(1, nil)
 
 	client := &mockDockerClient{}
 	client.On("ExecCreate", ctx, "123", mock.AnythingOfType("client.ExecCreateOptions")).Return(mobyclient.ExecCreateResult{ID: "id"}, nil)
 	client.On("ExecAttach", ctx, "id", mock.AnythingOfType("client.ExecAttachOptions")).Return(mobyclient.ExecAttachResult{
 		HijackedResponse: mobyclient.HijackedResponse{
 			Conn:   conn,
-			Reader: bufio.NewReader(endlessReader{}),
+			Reader: bufio.NewReader(reader),
 		},
 	}, nil)
 
@@ -199,11 +206,11 @@ func TestDockerExecAbort(t *testing.T) {
 		channel <- cr.exec([]string{""}, map[string]string{}, "user", "workdir")(ctx)
 	}()
 
-	time.Sleep(500 * time.Millisecond)
-
+	<-reader.started
 	cancel()
 
 	err := <-channel
+	<-reader.stopped
 	assert.ErrorIs(t, err, context.Canceled) //nolint:testifylint // pre-existing issue from nektos/act
 
 	conn.AssertExpectations(t)

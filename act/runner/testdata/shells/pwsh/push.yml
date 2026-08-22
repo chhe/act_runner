@@ -4,15 +4,12 @@ env:
 jobs:
   check:
     runs-on: ubuntu-latest
-    steps:
-      - shell: ${{ env.MY_SHELL }}
-        run: |
-          $PSVersionTable
-  check-job-default:
-    runs-on: ubuntu-latest
     defaults:
       run:
         shell: ${{ env.MY_SHELL }}
     steps:
+      - shell: ${{ env.MY_SHELL }}
+        run: |
+          $PSVersionTable
       - run: |
           $PSVersionTable

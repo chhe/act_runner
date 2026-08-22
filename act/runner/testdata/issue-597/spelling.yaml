@@ -1,4 +1,4 @@
-name: issue-597
+name: issues-597-598
 on: push
 
 
@@ -12,6 +12,9 @@ jobs:
         run: exit 1
       - name: My first true step
         if: ${{endsWith('Hello world', 'ld')}}
+        run: echo "Renst the Octocat"
+      - name: My second true step
+        if: "!endsWith('Hello world', 'od')"
         run: echo "Renst the Octocat"
       - name: My second false step
         if: "endsWith('Should not evaluate', 'o2')"

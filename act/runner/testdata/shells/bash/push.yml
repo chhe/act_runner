@@ -4,9 +4,18 @@ env:
 jobs:
   check:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: ${{ env.MY_SHELL }}
     steps:
       - shell: ${{ env.MY_SHELL }}
         run: |
+          if [[ -n "$BASH" ]]; then
+            echo "I'm $BASH!"
+          else
+            exit 1
+          fi
+      - run: |
           if [[ -n "$BASH" ]]; then
             echo "I'm $BASH!"
           else
@@ -18,18 +27,6 @@ jobs:
     steps:
       - shell: ${{ env.MY_SHELL }}
         run: |
-          if [[ -n "$BASH" ]]; then
-            echo "I'm $BASH!"
-          else
-            exit 1
-          fi
-  check-job-default:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: ${{ env.MY_SHELL }}
-    steps:
-      - run: |
           if [[ -n "$BASH" ]]; then
             echo "I'm $BASH!"
           else

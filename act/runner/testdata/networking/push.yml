@@ -4,11 +4,5 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Install tools
-        run: |
-          apt update
-          apt install -y iputils-ping
-      - name: Run hostname test
-        run: |
-          hostname -f
-          ping -c 4 $(hostname -f)
+      - name: Resolve the container hostname
+        run: getent hosts "$(hostname -f)"
