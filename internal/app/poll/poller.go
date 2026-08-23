@@ -368,7 +368,7 @@ func (p *Poller) fetchTask(ctx context.Context, s *workerState) (*runnerv1.Task,
 		// An Unauthenticated response means the server no longer knows this
 		// runner (e.g. it was deleted). Retrying forever is pointless, so stop
 		// polling and let the daemon exit with an error instead of spinning.
-		if connect.CodeOf(err) == connect.CodeUnauthenticated {
+		if isUnregistered(err) {
 			log.WithError(err).Error("server rejected the runner as unregistered, stopping poller")
 			p.unregistered.Store(true)
 			p.shutdownPolling()
@@ -413,6 +413,12 @@ func (p *Poller) fetchTask(ctx context.Context, s *workerState) (*runnerv1.Task,
 
 	metrics.PollFetchTotal.WithLabelValues(metrics.LabelResultTask).Inc()
 	return resp.Msg.Task, true
+}
+
+func isUnregistered(err error) bool {
+	var connectErr *connect.Error
+	return errors.As(err, &connectErr) && (connectErr.Code() == connect.CodeUnauthenticated ||
+		connectErr.Code() == connect.CodeUnknown && connect.IsWireError(err) && connectErr.Message() == "rpc error: code = Unauthenticated desc = unregistered runner")
 }
 
 func (p *Poller) markHealthyPoll() {

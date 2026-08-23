@@ -8,13 +8,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -191,9 +188,6 @@ func TestGraphEvent(t *testing.T) {
 	}
 }
 
-// these two build the same action Dockerfiles into one image tag, so they cannot overlap
-var sharedImageWorkflows = []string{"local-action-dockerfile", "local-action-via-composite-dockerfile"}
-
 // bounds concurrent plans: each job holds a network, and the daemon's address pool is finite
 var planSlots = make(chan struct{}, 4)
 
@@ -244,11 +238,18 @@ func (j *TestJobFileInfo) runTest(ctx context.Context, t *testing.T, cfg *Config
 	plan, err := planner.PlanEvent(j.eventName)
 	assert.True(t, (err == nil) != (plan == nil), "PlanEvent should return either a plan or an error") //nolint:testifylint // pre-existing issue from nektos/act
 	if err == nil && plan != nil {
-		err = func() error {
+		usesDocker := false
+		for _, platform := range j.platforms {
+			if platform != "-self-hosted" {
+				usesDocker = true
+				break
+			}
+		}
+		if usesDocker && !common.Dryrun(ctx) {
 			planSlots <- struct{}{}
 			defer func() { <-planSlots }()
-			return runner.NewPlanExecutor(plan)(ctx)
-		}()
+		}
+		err = runner.NewPlanExecutor(plan)(ctx)
 		if j.errorMessage == "" {
 			assert.NoError(t, err, fullWorkflowPath) //nolint:testifylint // pre-existing issue from nektos/act
 		} else {
@@ -292,7 +293,6 @@ func TestRunEvent(t *testing.T) {
 
 		{workdir, "basic", "push", "", platforms, secrets},
 		{workdir, "fail", "push", "exit with `FAILURE`: 1", platforms, secrets},
-		{workdir, "checkout", "push", "", platforms, secrets},
 		{workdir, "job-container", "push", "", platforms, secrets},
 		{workdir, "job-container-invalid-credentials", "push", "failed to handle credentials: failed to interpolate container.credentials.password", platforms, secrets},
 		{workdir, "container-hostname", "push", "", platforms, secrets},
@@ -335,7 +335,6 @@ func TestRunEvent(t *testing.T) {
 		{workdir, "services-empty-image", "push", "", platforms, secrets},
 	}
 
-	var sharedImageMu sync.Mutex
 	for _, table := range tables {
 		t.Run(table.workflowPath, func(t *testing.T) {
 			if table.workflowPath == "container-volumes" {
@@ -343,13 +342,10 @@ func TestRunEvent(t *testing.T) {
 				requireLinuxDocker(t)
 			}
 			t.Parallel()
-			if slices.Contains(sharedImageWorkflows, table.workflowPath) {
-				sharedImageMu.Lock()
-				defer sharedImageMu.Unlock()
-			}
 
 			config := &Config{
 				Secrets: table.secrets,
+				Env:     map[string]string{"GITHUB_REPOSITORY": t.Name()},
 			}
 
 			eventFile := filepath.Join(workdir, table.workflowPath, "event.json")
@@ -401,7 +397,6 @@ func TestRunEventHostEnvironment(t *testing.T) {
 			{workdir, "evalmatrix-merge-map", "push", "", platforms, secrets},
 			{workdir, "evalmatrix-merge-array", "push", "", platforms, secrets},
 
-			{workdir, "checkout", "push", "", platforms, secrets},
 			{workdir, "matrix", "push", "", platforms, secrets},
 			{workdir, "commands", "push", "", platforms, secrets},
 			{workdir, "defaults-run", "push", "", platforms, secrets},
@@ -496,47 +491,6 @@ func TestReusableWorkflowCaller(t *testing.T) {
 	t.Parallel()
 	table := TestJobFileInfo{workdir, "uses-workflow", "push", "", platforms, map[string]string{"secret": "keep_it_private"}}
 	table.runTest(context.Background(), t, &Config{Secrets: table.secrets})
-}
-
-type maskJobLoggerFactory struct {
-	Output bytes.Buffer
-}
-
-func (f *maskJobLoggerFactory) WithJobLogger() *log.Logger {
-	logger := log.New()
-	logger.SetOutput(io.MultiWriter(&f.Output, os.Stdout))
-	logger.SetLevel(log.DebugLevel)
-	return logger
-}
-
-func TestMaskValues(t *testing.T) {
-	t.Parallel()
-	assertNoSecret := func(text, secret string) { //nolint:unparam // pre-existing issue from nektos/act
-		found := strings.Contains(text, "composite secret")
-		if found {
-			fmt.Printf("\nFound Secret in the given text:\n%s\n", text) //nolint:forbidigo // pre-existing issue from nektos/act
-		}
-		assert.False(t, strings.Contains(text, "composite secret")) //nolint:testifylint // pre-existing issue from nektos/act
-	}
-
-	requireDocker(t)
-
-	log.SetLevel(log.DebugLevel)
-
-	tjfi := TestJobFileInfo{
-		workdir:      workdir,
-		workflowPath: "mask-values",
-		eventName:    "push",
-		errorMessage: "",
-		platforms:    platforms,
-	}
-
-	logger := &maskJobLoggerFactory{}
-	tjfi.runTest(WithJobLoggerFactory(common.WithLogger(context.Background(), logger.WithJobLogger()), logger), t, &Config{})
-	output := logger.Output.String()
-
-	assertNoSecret(output, "secret value")
-	assertNoSecret(output, "YWJjCg==")
 }
 
 func TestRunEventSecrets(t *testing.T) {

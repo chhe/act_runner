@@ -30,3 +30,12 @@ depending on the prefix:
   encoded forms too.
 - Command *properties* also escape `%3A` and `%2C`, which the UI never decodes, so the reporter
   decodes exactly those two when folding a location into an annotation.
+
+## End-to-end compatibility tests
+
+`make test-e2e` runs the runner against `E2E_GITEA_IMAGE`. It defaults to the nightly image.
+It requires Docker and is excluded from `make test`. CI runs stable and nightly variants in
+parallel.
+
+The suite shares one Gitea and regular runner. Cache and ephemeral scenarios use isolated
+repository runners. A run path is `<workflow>@<ref>` and a log row is `<timestamp>Z <payload>`.

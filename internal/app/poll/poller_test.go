@@ -106,28 +106,29 @@ func TestPoller_FetchTimeoutIsNoSignal(t *testing.T) {
 // response marks the runner as unregistered and cancels the polling context so
 // the daemon can exit instead of retrying forever.
 func TestPoller_FetchUnauthenticatedStopsPolling(t *testing.T) {
-	client := mocks.NewClient(t)
-	client.On("FetchTask", mock.Anything, mock.Anything).Return(
-		func(_ context.Context, _ *connect_go.Request[runnerv1.FetchTaskRequest]) (*connect_go.Response[runnerv1.FetchTaskResponse], error) {
-			return nil, connect_go.NewError(connect_go.CodeUnauthenticated, errors.New("unregistered runner"))
-		},
-	)
+	for name, fetchErr := range map[string]error{
+		"connect": connect_go.NewError(connect_go.CodeUnauthenticated, errors.New("unregistered runner")),
+		"gitea":   connect_go.NewWireError(connect_go.CodeUnknown, errors.New("rpc error: code = Unauthenticated desc = unregistered runner")),
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := mocks.NewClient(t)
+			client.On("FetchTask", mock.Anything, mock.Anything).Return(nil, fetchErr)
 
-	cfg, err := config.LoadDefault("")
-	require.NoError(t, err)
-	p := New(cfg, client, nil)
+			cfg, err := config.LoadDefault("")
+			require.NoError(t, err)
+			p := New(cfg, client, nil)
+			s := &workerState{}
+			_, ok := p.fetchTask(context.Background(), s)
+			require.False(t, ok)
 
-	s := &workerState{}
-	_, ok := p.fetchTask(context.Background(), s)
-	require.False(t, ok)
-
-	assert.True(t, p.Unregistered(), "runner should be marked unregistered")
-	assert.Equal(t, int64(0), s.consecutiveErrors, "unauthenticated must not drive error backoff")
-
-	select {
-	case <-p.pollingCtx.Done():
-	default:
-		t.Fatal("expected polling context to be cancelled after an Unauthenticated response")
+			assert.True(t, p.Unregistered(), "runner should be marked unregistered")
+			assert.Equal(t, int64(0), s.consecutiveErrors, "unauthenticated must not drive error backoff")
+			select {
+			case <-p.pollingCtx.Done():
+			default:
+				t.Fatal("expected polling context to be cancelled after an Unauthenticated response")
+			}
+		})
 	}
 }
 
