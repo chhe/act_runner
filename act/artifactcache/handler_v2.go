@@ -5,7 +5,8 @@ package artifactcache
 
 import (
 	"cmp"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -128,7 +129,7 @@ func (h *Handler) v2FinalizeCacheEntryUpload(w http.ResponseWriter, r *http.Requ
 	}
 	db.Close() // commitCache needs the store closed
 
-	cache.Size, _ = cmp.Or(req.SizeBytes, req.SizeBytesCamel).Int64()
+	cache.Size = int64(cmp.Or(req.SizeBytes, req.SizeBytesCamel))
 	if err := h.commitCache(cache); err != nil {
 		h.logger.Errorf("finalize cache %d (%s): %v", cache.ID, cache.Key, err)
 		h.twirpNotOK(w, r)
@@ -245,10 +246,10 @@ type (
 	}
 
 	v2FinalizeRequest struct {
-		Key            string      `json:"key"`
-		Version        string      `json:"version"`
-		SizeBytes      json.Number `json:"size_bytes"`
-		SizeBytesCamel json.Number `json:"sizeBytes"`
+		Key            string     `json:"key"`
+		Version        string     `json:"version"`
+		SizeBytes      twirpInt64 `json:"size_bytes"`
+		SizeBytesCamel twirpInt64 `json:"sizeBytes"`
 	}
 
 	v2DownloadRequest struct {
@@ -258,6 +259,31 @@ type (
 		RestoreKeysCamel []string `json:"restoreKeys"`
 	}
 )
+
+// twirpInt64 accepts its value as the JSON string the mapping prescribes or as a bare number.
+type twirpInt64 int64
+
+func (n *twirpInt64) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
+	val, err := dec.ReadValue()
+	if err != nil {
+		return err
+	}
+	digits := []byte(val)
+	switch val.Kind() {
+	case 'n': // absent, keep the zero value
+		return nil
+	case '"':
+		if digits, err = jsontext.AppendUnquote(nil, val); err != nil {
+			return err
+		}
+	}
+	parsed, err := strconv.ParseInt(string(digits), 10, 64)
+	if err != nil {
+		return err
+	}
+	*n = twirpInt64(parsed)
+	return nil
+}
 
 func (d v2DownloadRequest) keys() []string {
 	restoreKeys := d.RestoreKeys
@@ -269,6 +295,6 @@ func (d v2DownloadRequest) keys() []string {
 
 func decodeTwirpRequest[T any](r *http.Request) (T, error) {
 	var req T
-	err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req)
+	err := json.UnmarshalRead(io.LimitReader(r.Body, 1<<20), &req)
 	return req, err
 }

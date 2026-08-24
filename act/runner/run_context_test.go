@@ -214,11 +214,14 @@ type fakeContainer struct {
 	container.ExecutionsEnvironment
 }
 
-func (fakeContainer) Pull(bool) common.Executor  { return func(context.Context) error { return nil } }
+func (fakeContainer) Pull(bool) common.Executor { return func(context.Context) error { return nil } }
+
 func (fakeContainer) Start(bool) common.Executor { return func(context.Context) error { return nil } }
-func (fakeContainer) Remove() common.Executor    { return func(context.Context) error { return nil } }
-func (fakeContainer) Close() common.Executor     { return func(context.Context) error { return nil } }
-func (fakeContainer) GetActPath() string         { return "/var/run/act" }
+
+func (fakeContainer) Remove() common.Executor { return func(context.Context) error { return nil } }
+
+func (fakeContainer) Close() common.Executor { return func(context.Context) error { return nil } }
+func (fakeContainer) GetActPath() string     { return "/var/run/act" }
 func (fakeContainer) Create([]string, []string) common.Executor {
 	return func(context.Context) error { return nil }
 }

@@ -170,7 +170,7 @@ func getHashFilesFunction(ctx context.Context, rc *RunContext) func(v []reflect.
 							followSymlink = true
 							continue
 						}
-						return "", fmt.Errorf("Invalid glob option %s, available option: '--follow-symbolic-links'", s)
+						return "", fmt.Errorf("invalid glob option %s, available option: '--follow-symbolic-links'", s)
 					}
 				}
 				patterns = append(patterns, s)

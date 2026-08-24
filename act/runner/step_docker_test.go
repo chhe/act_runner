@@ -29,9 +29,9 @@ func TestStepDockerMain(t *testing.T) {
 		input = containerInput
 		return cm
 	}
-	defer (func() {
+	defer func() {
 		ContainerNewContainer = origContainerNewContainer
-	})()
+	}()
 
 	ctx := context.Background()
 

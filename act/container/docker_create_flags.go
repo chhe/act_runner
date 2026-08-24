@@ -55,11 +55,11 @@ func parseContainerOptions(options string) (*pflag.FlagSet, *containerOptions, *
 
 	args, err := shellquote.Split(options)
 	if err != nil {
-		return flags, copts, cf, fmt.Errorf("Cannot split container options: '%s': '%w'", options, err)
+		return flags, copts, cf, fmt.Errorf("cannot split container options: '%s': '%w'", options, err)
 	}
 
 	if err := flags.Parse(args); err != nil {
-		return flags, copts, cf, fmt.Errorf("Cannot parse container options: '%s': '%w'", options, err)
+		return flags, copts, cf, fmt.Errorf("cannot parse container options: '%s': '%w'", options, err)
 	}
 
 	return flags, copts, cf, nil

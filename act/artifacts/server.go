@@ -6,7 +6,7 @@ package artifacts
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -100,7 +100,7 @@ func uploads(router *httprouter.Router, baseDir string) {
 		}
 		defer file.Close()
 		if req.Body == nil {
-			panic(errors.New("No body given"))
+			panic(errors.New("no body given"))
 		}
 
 		_, err = io.Copy(file, req.Body)

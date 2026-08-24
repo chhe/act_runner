@@ -32,9 +32,9 @@ func TestRemoveOrphanNetworks(t *testing.T) {
 	client.On("NetworkList", ctx, mobyclient.NetworkListOptions{
 		Filters: make(mobyclient.Filters).Add("label", runnerUUIDLabel+"=runner-1"),
 	}).Return(mobyclient.NetworkListResult{Items: []network.Summary{
-		{Network: network.Network{ID: "orphan"}},
-		{Network: network.Network{ID: "busy"}},
-		{Network: network.Network{ID: "starting"}},
+		{ID: "orphan"},
+		{ID: "busy"},
+		{ID: "starting"},
 	}}, nil)
 	client.On("NetworkInspect", ctx, "orphan", mobyclient.NetworkInspectOptions{}).
 		Return(mobyclient.NetworkInspectResult{}, nil)

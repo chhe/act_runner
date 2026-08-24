@@ -87,8 +87,7 @@ func executeHealthCheck(ctx context.Context, script string, timeout time.Duratio
 	if err == nil {
 		return nil
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 		return fmt.Errorf("exited with code %d", exitErr.ExitCode())
 	}
 	return err

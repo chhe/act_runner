@@ -74,8 +74,7 @@ func (r *Runner) runPostTaskScript(ctx context.Context, reporter *report.Reporte
 			log.Warnf("post-task script %q for task %d: %v", script, task.Id, err)
 			return
 		}
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 			log.Warnf("post-task script %q for task %d exited with code %d", script, task.Id, exitErr.ExitCode())
 			return
 		}

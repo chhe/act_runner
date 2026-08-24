@@ -7,7 +7,7 @@ package artifactcache
 import (
 	"bytes"
 	"crypto/rand"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -136,7 +136,7 @@ func TestHandler(t *testing.T) {
 			defer resp.Body.Close()
 			assert.Equal(t, 200, resp.StatusCode)
 
-			require.NoError(t, json.NewDecoder(resp.Body).Decode(&first))
+			require.NoError(t, json.UnmarshalRead(resp.Body, &first))
 			assert.NotZero(t, first.CacheID)
 		}
 		{
@@ -151,7 +151,7 @@ func TestHandler(t *testing.T) {
 			defer resp.Body.Close()
 			assert.Equal(t, 200, resp.StatusCode)
 
-			require.NoError(t, json.NewDecoder(resp.Body).Decode(&second))
+			require.NoError(t, json.UnmarshalRead(resp.Body, &second))
 			assert.NotZero(t, second.CacheID)
 		}
 
@@ -204,7 +204,7 @@ func TestHandler(t *testing.T) {
 			got := struct {
 				CacheID uint64 `json:"cacheId"`
 			}{}
-			require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+			require.NoError(t, json.UnmarshalRead(resp.Body, &got))
 			id = got.CacheID
 		}
 		{
@@ -259,7 +259,7 @@ func TestHandler(t *testing.T) {
 			got := struct {
 				CacheID uint64 `json:"cacheId"`
 			}{}
-			require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+			require.NoError(t, json.UnmarshalRead(resp.Body, &got))
 			id = got.CacheID
 		}
 		{
@@ -315,7 +315,7 @@ func TestHandler(t *testing.T) {
 			got := struct {
 				CacheID uint64 `json:"cacheId"`
 			}{}
-			require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+			require.NoError(t, json.UnmarshalRead(resp.Body, &got))
 			id = got.CacheID
 		}
 		{
@@ -362,7 +362,7 @@ func TestHandler(t *testing.T) {
 			got := struct {
 				CacheID uint64 `json:"cacheId"`
 			}{}
-			require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+			require.NoError(t, json.UnmarshalRead(resp.Body, &got))
 			id = got.CacheID
 		}
 
@@ -413,7 +413,7 @@ func TestHandler(t *testing.T) {
 			got := struct {
 				CacheID uint64 `json:"cacheId"`
 			}{}
-			require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+			require.NoError(t, json.UnmarshalRead(resp.Body, &got))
 			id = got.CacheID
 		}
 		{
@@ -493,7 +493,7 @@ func TestHandler(t *testing.T) {
 			ArchiveLocation string `json:"archiveLocation"`
 			CacheKey        string `json:"cacheKey"`
 		}{}
-		require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+		require.NoError(t, json.UnmarshalRead(resp.Body, &got))
 		assert.Equal(t, "hit", got.Result)
 		assert.Equal(t, keys[except], got.CacheKey)
 
@@ -528,7 +528,7 @@ func TestHandler(t *testing.T) {
 				ArchiveLocation string `json:"archiveLocation"`
 				CacheKey        string `json:"cacheKey"`
 			}{}
-			require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+			require.NoError(t, json.UnmarshalRead(resp.Body, &got))
 			assert.Equal(t, "hit", got.Result)
 			assert.Equal(t, key, got.CacheKey)
 			assert.NotEqual(t, strings.ToLower(key), got.CacheKey)
@@ -577,7 +577,7 @@ func TestHandler(t *testing.T) {
 			ArchiveLocation string `json:"archiveLocation"`
 			CacheKey        string `json:"cacheKey"`
 		}{}
-		require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+		require.NoError(t, json.UnmarshalRead(resp.Body, &got))
 		assert.Equal(t, keys[expect], got.CacheKey)
 
 		contentResp, err := testClient.Get(got.ArchiveLocation)
@@ -633,7 +633,7 @@ func TestHandler(t *testing.T) {
 			ArchiveLocation string `json:"archiveLocation"`
 			CacheKey        string `json:"cacheKey"`
 		}{}
-		require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+		require.NoError(t, json.UnmarshalRead(resp.Body, &got))
 		assert.Equal(t, keys[expect], got.CacheKey)
 
 		contentResp, err := testClient.Get(got.ArchiveLocation)
@@ -677,7 +677,7 @@ func uploadCacheNormally(t *testing.T, base, key, version string, content []byte
 		got := struct {
 			CacheID uint64 `json:"cacheId"`
 		}{}
-		require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+		require.NoError(t, json.UnmarshalRead(resp.Body, &got))
 		id = got.CacheID
 	}
 	{
@@ -708,7 +708,7 @@ func uploadCacheNormally(t *testing.T, base, key, version string, content []byte
 			ArchiveLocation string `json:"archiveLocation"`
 			CacheKey        string `json:"cacheKey"`
 		}{}
-		require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+		require.NoError(t, json.UnmarshalRead(resp.Body, &got))
 		assert.Equal(t, "hit", got.Result)
 		assert.Equal(t, key, got.CacheKey)
 		archiveLocation = got.ArchiveLocation
@@ -1197,7 +1197,7 @@ func TestHandler_CrossRepoIsolation(t *testing.T) {
 	var reserved struct {
 		CacheID uint64 `json:"cacheId"`
 	}
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&reserved))
+	require.NoError(t, json.UnmarshalRead(resp.Body, &reserved))
 	resp.Body.Close()
 	require.NotZero(t, reserved.CacheID)
 
@@ -1331,7 +1331,7 @@ func TestHandler_ArtifactSignatureDownload(t *testing.T) {
 	var hit struct {
 		ArchiveLocation string `json:"archiveLocation"`
 	}
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&hit))
+	require.NoError(t, json.UnmarshalRead(resp.Body, &hit))
 	resp.Body.Close()
 
 	require.Contains(t, hit.ArchiveLocation, "sig=")

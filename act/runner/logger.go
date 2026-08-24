@@ -8,7 +8,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/url"
@@ -78,7 +79,7 @@ type JobLoggerFactory interface {
 
 type jobLoggerFactoryContextKey string
 
-var jobLoggerFactoryContextKeyVal = (jobLoggerFactoryContextKey)("jobloggerkey")
+var jobLoggerFactoryContextKeyVal = jobLoggerFactoryContextKey("jobloggerkey")
 
 func WithJobLoggerFactory(ctx context.Context, factory JobLoggerFactory) context.Context {
 	return context.WithValue(ctx, jobLoggerFactoryContextKeyVal, factory)
@@ -215,7 +216,7 @@ func base64ShiftEncoder(shift int) func(string) string {
 // escapes <, >, & (as act's own toJSON does); the non-HTML variant below covers the runtimes
 // that do not. When v has none of those characters both forms are equal and deduplicated.
 func jsonStringEscape(v string) string {
-	encoded, err := json.Marshal(v)
+	encoded, err := json.Marshal(v, jsontext.EscapeForHTML(true))
 	if err != nil {
 		return v
 	}
@@ -226,15 +227,11 @@ func jsonStringEscape(v string) string {
 // JavaScript (JSON.stringify) or .NET action emits, so a secret containing < > or & is
 // masked in that form too.
 func jsonStringEscapeNoHTML(v string) string {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
+	encoded, err := json.Marshal(v)
+	if err != nil {
 		return v
 	}
-	// Encode appends a newline; drop it along with the surrounding quotes.
-	encoded := strings.TrimRight(buf.String(), "\n")
-	return encoded[1 : len(encoded)-1]
+	return string(encoded[1 : len(encoded)-1])
 }
 
 func AppendSecretMasker(oldnew []string, v string) []string {
@@ -366,15 +363,16 @@ func (f *jobLogFormatter) printColored(b *bytes.Buffer, entry *logrus.Entry) {
 		debugFlag = "[DEBUG] "
 	}
 
-	if entry.Data[rawOutputField] == true {
+	switch {
+	case entry.Data[rawOutputField] == true:
 		if entry.Data[scriptLineCyanField] == true {
 			fmt.Fprintf(b, "\x1b[%dm|\x1b[0m \x1b[36;1m%s\x1b[0m", f.color, entry.Message)
 		} else {
 			fmt.Fprintf(b, "\x1b[%dm|\x1b[0m %s", f.color, entry.Message)
 		}
-	} else if entry.Data["dryrun"] == true {
+	case entry.Data["dryrun"] == true:
 		fmt.Fprintf(b, "\x1b[1m\x1b[%dm\x1b[7m*DRYRUN*\x1b[0m \x1b[%dm[%s] \x1b[0m%s%s", gray, f.color, job, debugFlag, entry.Message)
-	} else {
+	default:
 		fmt.Fprintf(b, "\x1b[%dm[%s] \x1b[0m%s%s", f.color, job, debugFlag, entry.Message)
 	}
 }
@@ -389,11 +387,12 @@ func (f *jobLogFormatter) print(b *bytes.Buffer, entry *logrus.Entry) {
 		debugFlag = "[DEBUG] "
 	}
 
-	if entry.Data[rawOutputField] == true {
+	switch {
+	case entry.Data[rawOutputField] == true:
 		fmt.Fprintf(b, "[%s]   | %s", job, entry.Message)
-	} else if entry.Data["dryrun"] == true {
+	case entry.Data["dryrun"] == true:
 		fmt.Fprintf(b, "*DRYRUN* [%s] %s%s", job, debugFlag, entry.Message)
-	} else {
+	default:
 		fmt.Fprintf(b, "[%s] %s%s", job, debugFlag, entry.Message)
 	}
 }

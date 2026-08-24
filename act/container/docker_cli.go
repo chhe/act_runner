@@ -17,8 +17,7 @@
 package container
 
 import (
-	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"net"
@@ -959,11 +958,11 @@ func parseSecurityOpts(securityOpts []string) ([]string, error) {
 				if err != nil {
 					return securityOpts, fmt.Errorf("opening seccomp profile (%s) failed: %w", v, err)
 				}
-				var b bytes.Buffer
-				if err := json.Compact(&b, f); err != nil {
+				profile := jsontext.Value(f)
+				if err := profile.Compact(); err != nil {
 					return securityOpts, fmt.Errorf("compacting json for seccomp profile (%s) failed: %w", v, err)
 				}
-				securityOpts[key] = "seccomp=" + b.String()
+				securityOpts[key] = "seccomp=" + string(profile)
 			}
 		}
 	}

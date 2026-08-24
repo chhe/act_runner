@@ -160,17 +160,17 @@ func TestSetupEnv(t *testing.T) {
 	setupEnv(context.Background(), sm)
 
 	// These are commit or system specific
-	delete((env), "GITHUB_REF")
-	delete((env), "GITHUB_REF_NAME")
-	delete((env), "GITHUB_REF_TYPE")
-	delete((env), "GITHUB_SHA")
-	delete((env), "GITHUB_WORKSPACE")
-	delete((env), "GITHUB_REPOSITORY")
-	delete((env), "GITHUB_REPOSITORY_OWNER")
-	delete((env), "GITHUB_ACTOR")
+	delete(env, "GITHUB_REF")
+	delete(env, "GITHUB_REF_NAME")
+	delete(env, "GITHUB_REF_TYPE")
+	delete(env, "GITHUB_SHA")
+	delete(env, "GITHUB_WORKSPACE")
+	delete(env, "GITHUB_REPOSITORY")
+	delete(env, "GITHUB_REPOSITORY_OWNER")
+	delete(env, "GITHUB_ACTOR")
 	// Host-dependent, asserted in TestRunContextWithGithubEnvRunnerValues instead.
-	delete((env), "RUNNER_NAME")
-	delete((env), "RUNNER_WORKSPACE")
+	delete(env, "RUNNER_NAME")
+	delete(env, "RUNNER_WORKSPACE")
 
 	assert.Equal(t, map[string]string{
 		"ACT":                      "true",

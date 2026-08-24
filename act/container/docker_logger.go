@@ -8,7 +8,7 @@ package container
 
 import (
 	"bufio"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"io"
 
@@ -20,8 +20,8 @@ type dockerMessage struct {
 	Stream      string `json:"stream"`
 	Error       string `json:"error"`
 	ErrorDetail struct {
-		Message string
-	}
+		Message string `json:"message"`
+	} `json:"errorDetail"`
 	Status   string `json:"status"`
 	Progress string `json:"progress"`
 }
@@ -60,15 +60,16 @@ func logDockerResponse(logger logrus.FieldLogger, dockerResponse io.ReadCloser, 
 			return errors.New(msg.ErrorDetail.Message)
 		}
 
-		if msg.Status != "" {
+		switch {
+		case msg.Status != "":
 			if msg.Progress != "" {
 				writeLog(logger, isError, "%s :: %s :: %s\n", msg.Status, msg.ID, msg.Progress)
 			} else {
 				writeLog(logger, isError, "%s :: %s\n", msg.Status, msg.ID)
 			}
-		} else if msg.Stream != "" {
+		case msg.Stream != "":
 			writeLog(logger, isError, "%s", msg.Stream)
-		} else {
+		default:
 			writeLog(logger, false, "Unable to handle line: %s", string(line))
 		}
 	}

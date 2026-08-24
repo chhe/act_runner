@@ -303,19 +303,20 @@ func runExecList(planner model.WorkflowPlanner, execArgs *executeArgs) error {
 	}
 
 	var err error
-	if execArgs.job != "" {
+	switch {
+	case execArgs.job != "":
 		log.Infof("Preparing plan with a job: %s", execArgs.job)
 		filterPlan, err = planner.PlanJob(execArgs.job)
 		if err != nil {
 			return err
 		}
-	} else if filterEventName != "" {
+	case filterEventName != "":
 		log.Infof("Preparing plan for a event: %s", filterEventName)
 		filterPlan, err = planner.PlanEvent(filterEventName)
 		if err != nil {
 			return err
 		}
-	} else {
+	default:
 		log.Infof("Preparing plan with all jobs")
 		filterPlan, err = planner.PlanAll()
 		if err != nil {
@@ -348,18 +349,19 @@ func runExec(ctx context.Context, execArgs *executeArgs) func(cmd *cobra.Command
 		// collect all events from loaded workflows
 		events := planner.GetEvents()
 
-		if len(execArgs.event) > 0 {
+		switch {
+		case len(execArgs.event) > 0:
 			log.Infof("Using chosed event for filtering: %s", execArgs.event)
 			eventName = execArgs.event
-		} else if len(events) == 1 && len(events[0]) > 0 {
+		case len(events) == 1 && len(events[0]) > 0:
 			log.Infof("Using the only detected workflow event: %s", events[0])
 			eventName = events[0]
-		} else if execArgs.autodetectEvent && len(events) > 0 && len(events[0]) > 0 {
+		case execArgs.autodetectEvent && len(events) > 0 && len(events[0]) > 0:
 			// set default event type to first event from many available
 			// this way user dont have to specify the event.
 			log.Infof("Using first detected workflow event: %s", events[0])
 			eventName = events[0]
-		} else {
+		default:
 			log.Infof("Using default workflow event: push")
 			eventName = "push"
 		}

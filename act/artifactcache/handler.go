@@ -11,7 +11,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -357,8 +357,8 @@ func (h *Handler) Close() error {
 
 func (h *Handler) openDB() (*bolthold.Store, error) {
 	return bolthold.Open(filepath.Join(h.dir, "bolt.db"), 0o644, &bolthold.Options{
-		Encoder: json.Marshal,
-		Decoder: json.Unmarshal,
+		Encoder: func(value any) ([]byte, error) { return json.Marshal(value) },
+		Decoder: func(data []byte, value any) error { return json.Unmarshal(data, value) },
 		Options: &bbolt.Options{
 			Timeout:      5 * time.Second,
 			NoGrowSync:   bbolt.DefaultOptions.NoGrowSync,
@@ -422,7 +422,7 @@ func (h *Handler) lookupCache(db *bolthold.Store, repo string, keys []string, ve
 func (h *Handler) reserve(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	cred := credFromContext(r.Context())
 	api := &Request{}
-	if err := json.NewDecoder(r.Body).Decode(api); err != nil {
+	if err := json.UnmarshalRead(r.Body, api); err != nil {
 		h.responseJSON(w, r, 400, err)
 		return
 	}
@@ -692,7 +692,7 @@ func (h *Handler) ResultsURL(cred JobCredential) string {
 
 func (h *Handler) internalRegister(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	var body internalRegisterBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.UnmarshalRead(r.Body, &body); err != nil {
 		h.responseJSON(w, r, http.StatusBadRequest, err)
 		return
 	}
@@ -708,7 +708,7 @@ func (h *Handler) internalRegister(w http.ResponseWriter, r *http.Request, _ htt
 // POST /_internal/revoke
 func (h *Handler) internalRevoke(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	var body internalRevokeBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.UnmarshalRead(r.Body, &body); err != nil {
 		h.responseJSON(w, r, http.StatusBadRequest, err)
 		return
 	}

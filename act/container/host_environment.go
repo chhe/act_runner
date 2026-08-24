@@ -351,8 +351,7 @@ func (e *HostEnvironment) exec(ctx context.Context, command []string, cmdline st
 	}
 	err = cmd.Wait()
 	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 			return ExitCodeError(exitErr.ExitCode())
 		}
 		return err

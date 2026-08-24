@@ -4,7 +4,8 @@
 package config
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"os"
 )
 
@@ -31,7 +32,7 @@ func LoadRegistration(file string) (*Registration, error) {
 	defer f.Close()
 
 	var reg Registration
-	if err := json.NewDecoder(f).Decode(&reg); err != nil {
+	if err := json.UnmarshalRead(f, &reg); err != nil {
 		return nil, err
 	}
 
@@ -49,7 +50,9 @@ func SaveRegistration(file string, reg *Registration) error {
 
 	reg.Warning = registrationWarning
 
-	enc := json.NewEncoder(f)
-	enc.SetIndent("", "  ")
-	return enc.Encode(reg)
+	if err := json.MarshalWrite(f, reg, jsontext.WithIndent("  ")); err != nil {
+		return err
+	}
+	_, err = f.WriteString("\n")
+	return err
 }

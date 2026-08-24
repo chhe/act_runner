@@ -46,8 +46,7 @@ linters:
     gocritic:
       enabled-checks:
         - equalFold
-      disabled-checks:
-        - ifElseChain
+      disabled-checks: []
     revive:
       severity: error
       rules:
@@ -71,10 +70,14 @@ linters:
         - name: unexported-return
         - name: var-declaration
         - name: var-naming
+          arguments:
+            - [] # AllowList - do not remove as args for the rule are positional and won't work without lists first
+            - [] # DenyList
+            - - skip-initialism-name-checks: true
     staticcheck:
       checks:
         - all
-        - -ST1005
+    testifylint: {}
     usetesting:
       os-temp-dir: true
     perfsprint:
@@ -92,8 +95,6 @@ linters:
     generated: lax
     presets:
       - comments
-      - common-false-positives
-      - legacy
       - std-error-handling
     rules:
       - linters:
@@ -118,7 +119,8 @@ formatters:
         - blank
         - default
     gofumpt:
-      extra-rules: true
+      extra:
+        group-params: true
   exclusions:
     generated: lax
 run:

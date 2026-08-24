@@ -60,7 +60,7 @@ func (sar *stepActionRemote) prepareActionExecutor() common.Executor {
 			sar.remoteAction = newRemoteAction(sar.Step.Uses)
 		}
 		if sar.remoteAction == nil {
-			return fmt.Errorf("Expected format {org}/{repo}[/path]@ref or %s{path}. Actual '%s' Input string was not in a correct format", selfRepoPrefix, sar.Step.Uses)
+			return fmt.Errorf("expected format {org}/{repo}[/path]@ref or %s{path}. Actual '%s' Input string was not in a correct format", selfRepoPrefix, sar.Step.Uses)
 		}
 
 		if sar.remoteAction.IsCheckout() && isLocalCheckout(github, sar.Step) && !sar.RunContext.Config.NoSkipCheckout {
@@ -94,12 +94,13 @@ func (sar *stepActionRemote) prepareActionExecutor() common.Executor {
 		var ntErr common.Executor
 		if err := gitClone(ctx); err != nil {
 			var refErr *git.Error
-			if errors.As(err, &refErr) && errors.Is(err, git.ErrShortRef) {
-				return fmt.Errorf("Unable to resolve action `%s`, the provided ref `%s` is the shortened version of a commit SHA, which is not supported. Please use the full commit SHA `%s` instead",
+			switch {
+			case errors.As(err, &refErr) && errors.Is(err, git.ErrShortRef):
+				return fmt.Errorf("unable to resolve action `%s`, the provided ref `%s` is the shortened version of a commit SHA, which is not supported. Please use the full commit SHA `%s` instead",
 					sar.Step.Uses, sar.remoteAction.Ref, refErr.Commit())
-			} else if errors.Is(err, gogit.ErrForceNeeded) { // TODO: figure out if it will be easy to shadow/alias go-git err's
+			case errors.Is(err, gogit.ErrForceNeeded): // TODO: figure out if it will be easy to shadow/alias go-git err's
 				ntErr = common.NewInfoExecutor("Non-terminating error while running 'git clone': %v", err)
-			} else {
+			default:
 				return err
 			}
 		}

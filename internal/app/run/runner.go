@@ -6,7 +6,7 @@ package run
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"maps"
@@ -676,7 +676,7 @@ func postInternalCache(url, secret string, body map[string]any) (map[string]any,
 	}
 	answer := map[string]any{}
 	// A server too old to answer with a body is not an error, it simply tells us nothing.
-	_ = json.NewDecoder(resp.Body).Decode(&answer)
+	_ = json.UnmarshalRead(resp.Body, &answer)
 	return answer, nil
 }
 

@@ -46,14 +46,14 @@ func (lw *lineWriter) Write(p []byte) (n int, err error) {
 		line, err := pBuf.ReadString('\n')
 		w, _ := lw.buffer.WriteString(line)
 		written += w
-		if err == nil {
-			lw.handleLine(lw.buffer.String())
-			lw.buffer.Reset()
-		} else if err == io.EOF {
-			break
-		} else {
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
 			return written, err
 		}
+		lw.handleLine(lw.buffer.String())
+		lw.buffer.Reset()
 	}
 
 	return written, nil

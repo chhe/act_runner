@@ -274,11 +274,12 @@ func CloneIfRequired(ctx context.Context, refName plumbing.ReferenceName, input 
 			return r, true, nil
 		}
 
-		if err != nil {
+		switch {
+		case err != nil:
 			logger.Debugf("Removing cached clone at %s because origin cannot be read: %v", input.Dir, err)
-		} else if len(remote.Config().URLs) == 0 {
+		case len(remote.Config().URLs) == 0:
 			logger.Debugf("Removing cached clone at %s because origin has no URL", input.Dir)
-		} else {
+		default:
 			logger.Debugf("Removing cached clone at %s because origin URL changed from %s to %s", input.Dir, remote.Config().URLs[0], input.URL)
 		}
 		if err := os.RemoveAll(input.Dir); err != nil {

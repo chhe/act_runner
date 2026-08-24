@@ -64,7 +64,9 @@ func (rc *RunContext) runJobHook(ctx context.Context, hookPath, name string) err
 	}
 	// Processed even on failure, so a hook that exports what it managed to set up before
 	// failing still hands it to the job.
-	err = cmp.Or(err, rc.processHookFileCommands(ctx))
+	if processErr := rc.processHookFileCommands(ctx); err == nil {
+		err = processErr
+	}
 	if err == nil {
 		return nil
 	}

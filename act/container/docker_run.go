@@ -539,14 +539,14 @@ func (cr *containerReference) mergeContainerConfigs(ctx context.Context, config 
 	}
 
 	if err := cf.validate(); err != nil {
-		return nil, nil, fmt.Errorf("Cannot process container options: '%s': '%w'", input.Options, err)
+		return nil, nil, fmt.Errorf("cannot process container options: '%s': '%w'", input.Options, err)
 	}
 
 	// FIXME: If everything is fine after gitea/act v0.260.0, remove the following comment.
 	// In the old fork version, the code is
 	// if len(copts.netMode.Value()) == 0 {
 	// 	if err = copts.netMode.Set("host"); err != nil {
-	// 		return nil, nil, fmt.Errorf("Cannot parse networkmode=host. This is an internal error and should not happen: '%w'", err)
+	// 		return nil, nil, fmt.Errorf("cannot parse networkmode=host. This is an internal error and should not happen: '%w'", err)
 	// 	}
 	// }
 	// And it has been commented with:
@@ -558,7 +558,7 @@ func (cr *containerReference) mergeContainerConfigs(ctx context.Context, config 
 
 	if len(copts.netMode.Value()) == 0 {
 		if err = copts.netMode.Set(cr.input.NetworkMode); err != nil {
-			return nil, nil, fmt.Errorf("Cannot parse networkmode=%s. This is an internal error and should not happen: '%w'", cr.input.NetworkMode, err)
+			return nil, nil, fmt.Errorf("cannot parse networkmode=%s. This is an internal error and should not happen: '%w'", cr.input.NetworkMode, err)
 		}
 	}
 
@@ -570,7 +570,7 @@ func (cr *containerReference) mergeContainerConfigs(ctx context.Context, config 
 
 	containerConfig, err := parse(flags, copts, runtime.GOOS)
 	if err != nil {
-		return nil, nil, fmt.Errorf("Cannot process container options: '%s': '%w'", input.Options, err)
+		return nil, nil, fmt.Errorf("cannot process container options: '%s': '%w'", input.Options, err)
 	}
 
 	// For Gitea
@@ -587,7 +587,7 @@ func (cr *containerReference) mergeContainerConfigs(ctx context.Context, config 
 
 	err = mergo.Merge(config, containerConfig.Config, mergo.WithOverride, mergo.WithAppendSlice)
 	if err != nil {
-		return nil, nil, fmt.Errorf("Cannot merge container.Config options: '%s': '%w'", input.Options, err)
+		return nil, nil, fmt.Errorf("cannot merge container.Config options: '%s': '%w'", input.Options, err)
 	}
 	logger.Debugf("Merged container.Config ==> %+v", config)
 
@@ -599,7 +599,7 @@ func (cr *containerReference) mergeContainerConfigs(ctx context.Context, config 
 	networkMode := hostConfig.NetworkMode
 	err = mergo.Merge(hostConfig, containerConfig.HostConfig, mergo.WithOverride)
 	if err != nil {
-		return nil, nil, fmt.Errorf("Cannot merge container.HostConfig options: '%s': '%w'", input.Options, err)
+		return nil, nil, fmt.Errorf("cannot merge container.HostConfig options: '%s': '%w'", input.Options, err)
 	}
 	hostConfig.Binds = binds
 	hostConfig.Mounts = mounts

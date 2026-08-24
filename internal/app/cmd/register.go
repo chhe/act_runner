@@ -276,7 +276,7 @@ func registerInteractive(ctx context.Context, configFile string, regArgs *regist
 		if stage == StageWaitingForRegistration {
 			log.Infof("Registering runner, name=%s, instance=%s, labels=%v.", inputs.RunnerName, inputs.InstanceAddr, inputs.Labels)
 			if err := doRegister(ctx, cfg, inputs); err != nil {
-				return fmt.Errorf("Failed to register runner: %w", err)
+				return fmt.Errorf("failed to register runner: %w", err)
 			}
 			log.Infof("Runner registered successfully.")
 			return nil
@@ -340,7 +340,7 @@ func registerNoInteractive(ctx context.Context, configFile string, regArgs *regi
 		return err
 	}
 	if err := doRegister(ctx, cfg, inputs); err != nil {
-		return fmt.Errorf("Failed to register runner: %w", err)
+		return fmt.Errorf("failed to register runner: %w", err)
 	}
 	log.Infof("Runner registered successfully.")
 	return nil
@@ -349,14 +349,15 @@ func registerNoInteractive(ctx context.Context, configFile string, regArgs *regi
 func doRegister(ctx context.Context, cfg *config.Config, inputs *registerInputs) error {
 	// Refuse to rewrite the runner file while another process is using it.
 	releaseLock, err := lock.TryLock(cfg.Runner.File)
-	if errors.Is(err, lock.ErrLocked) {
+	switch {
+	case errors.Is(err, lock.ErrLocked):
 		return fmt.Errorf("another process is already using %q; stop it before re-registering", cfg.Runner.File)
-	} else if err != nil {
+	case err != nil:
 		// Best-effort guard: if the lock file can't be created, warn and
 		// register anyway; writing the runner file will surface any real
 		// permission problem with a clearer error.
 		log.Warnf("could not lock runner file %q, continuing without the single-process guard: %v", cfg.Runner.File, err)
-	} else {
+	default:
 		defer func() { _ = releaseLock() }()
 	}
 

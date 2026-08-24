@@ -6,7 +6,7 @@ package artifactcache
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -32,7 +32,7 @@ func v2Call(t *testing.T, handler *Handler, client *http.Client, method string, 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	got := map[string]any{}
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	require.NoError(t, json.UnmarshalRead(resp.Body, &got))
 	return got
 }
 
@@ -227,7 +227,7 @@ func TestCacheServiceV2Lookups(t *testing.T) {
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 
 		got := map[string]any{}
-		require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+		require.NoError(t, json.UnmarshalRead(resp.Body, &got))
 		assert.Equal(t, "deps-abc", got["cacheKey"])
 		assert.NotEmpty(t, got["archiveLocation"])
 	})

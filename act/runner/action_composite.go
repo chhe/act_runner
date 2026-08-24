@@ -55,7 +55,7 @@ func newCompositeRunContext(ctx context.Context, parent *RunContext, step action
 	env := evaluateCompositeInputAndEnv(ctx, parent, step)
 
 	// run with the global config but without secrets
-	configCopy := *(parent.Config)
+	configCopy := *parent.Config
 	configCopy.Secrets = nil
 
 	// create a run context for the composite action to run in

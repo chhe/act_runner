@@ -5,7 +5,7 @@ package run
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -152,7 +152,7 @@ func TestRunner_CacheFullFlow_MatchesToolkit(t *testing.T) {
 
 func decodeJSON(resp *http.Response, v any) error {
 	defer resp.Body.Close()
-	return json.NewDecoder(resp.Body).Decode(v)
+	return json.UnmarshalRead(resp.Body, v)
 }
 
 // End-to-end against a remote cache-server: token unknown → 401, register →

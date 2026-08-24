@@ -11,7 +11,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -198,14 +198,15 @@ func (rc *RunContext) networkNameForGitea() (string, bool) {
 func getDockerDaemonSocketMountPath(daemonPath string) string {
 	if before, after, ok := strings.Cut(daemonPath, "://"); ok {
 		scheme := before
-		if strings.EqualFold(scheme, "npipe") {
+		switch {
+		case strings.EqualFold(scheme, "npipe"):
 			// linux container mount on windows, use the default socket path of the VM / wsl2
 			return "/var/run/docker.sock"
-		} else if strings.EqualFold(scheme, "unix") {
+		case strings.EqualFold(scheme, "unix"):
 			return after
-		} else if strings.IndexFunc(scheme, func(r rune) bool {
+		case strings.IndexFunc(scheme, func(r rune) bool {
 			return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z')
-		}) == -1 {
+		}) == -1:
 			// unknown protocol use default
 			return "/var/run/docker.sock"
 		}
@@ -550,7 +551,7 @@ func (rc *RunContext) startJobContainer() common.Executor {
 			AllocatePTY:    rc.Config.AllocatePTY,
 		})
 		if rc.JobContainer == nil {
-			return errors.New("Failed to create job container")
+			return errors.New("failed to create job container")
 		}
 
 		rc.jobNetworkName = networkName

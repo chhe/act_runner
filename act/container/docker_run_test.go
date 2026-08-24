@@ -186,10 +186,8 @@ func TestDockerExecAbort(t *testing.T) {
 	client := &mockDockerClient{}
 	client.On("ExecCreate", ctx, "123", mock.AnythingOfType("client.ExecCreateOptions")).Return(mobyclient.ExecCreateResult{ID: "id"}, nil)
 	client.On("ExecAttach", ctx, "id", mock.AnythingOfType("client.ExecAttachOptions")).Return(mobyclient.ExecAttachResult{
-		HijackedResponse: mobyclient.HijackedResponse{
-			Conn:   conn,
-			Reader: bufio.NewReader(reader),
-		},
+		Conn:   conn,
+		Reader: bufio.NewReader(reader),
 	}, nil)
 
 	cr := &containerReference{
@@ -225,10 +223,8 @@ func TestDockerExecFailure(t *testing.T) {
 	client := &mockDockerClient{}
 	client.On("ExecCreate", ctx, "123", mock.AnythingOfType("client.ExecCreateOptions")).Return(mobyclient.ExecCreateResult{ID: "id"}, nil)
 	client.On("ExecAttach", ctx, "id", mock.AnythingOfType("client.ExecAttachOptions")).Return(mobyclient.ExecAttachResult{
-		HijackedResponse: mobyclient.HijackedResponse{
-			Conn:   conn,
-			Reader: bufio.NewReader(strings.NewReader("output")),
-		},
+		Conn:   conn,
+		Reader: bufio.NewReader(strings.NewReader("output")),
 	}, nil)
 	client.On("ExecInspect", ctx, "id", mobyclient.ExecInspectOptions{}).Return(mobyclient.ExecInspectResult{
 		ExitCode: 1,
@@ -280,10 +276,8 @@ func TestDockerAttachFlushesTrailingLine(t *testing.T) {
 	client := &mockDockerClient{}
 	client.On("ContainerAttach", ctx, "123", mock.AnythingOfType("client.ContainerAttachOptions")).
 		Return(mobyclient.ContainerAttachResult{
-			HijackedResponse: mobyclient.HijackedResponse{
-				Conn:   &mockConn{},
-				Reader: bufio.NewReader(framed),
-			},
+			Conn:   &mockConn{},
+			Reader: bufio.NewReader(framed),
 		}, nil)
 
 	statusCh := make(chan container.WaitResponse, 1)
@@ -594,21 +588,19 @@ func TestSanitizeOptionsHostConfig(t *testing.T) {
 
 	dangerous := func() *container.HostConfig {
 		return &container.HostConfig{
-			PidMode:      "host",
-			IpcMode:      "host",
-			UTSMode:      "host",
-			CgroupnsMode: "host",
-			UsernsMode:   "host",
-			CapAdd:       []string{"ALL"},
-			SecurityOpt:  []string{"seccomp=unconfined", "apparmor=unconfined"},
-			VolumesFrom:  []string{"other"},
-			Runtime:      "runc",
-			Resources: container.Resources{
-				CgroupParent:      "/custom",
-				Devices:           []container.DeviceMapping{{PathOnHost: "/dev/sda", PathInContainer: "/dev/sda", CgroupPermissions: "rwm"}},
-				DeviceCgroupRules: []string{"a *:* rwm"},
-			},
-			Sysctls: map[string]string{"net.ipv4.ip_forward": "1"},
+			PidMode:           "host",
+			IpcMode:           "host",
+			UTSMode:           "host",
+			CgroupnsMode:      "host",
+			UsernsMode:        "host",
+			CapAdd:            []string{"ALL"},
+			SecurityOpt:       []string{"seccomp=unconfined", "apparmor=unconfined"},
+			VolumesFrom:       []string{"other"},
+			Runtime:           "runc",
+			CgroupParent:      "/custom",
+			Devices:           []container.DeviceMapping{{PathOnHost: "/dev/sda", PathInContainer: "/dev/sda", CgroupPermissions: "rwm"}},
+			DeviceCgroupRules: []string{"a *:* rwm"},
+			Sysctls:           map[string]string{"net.ipv4.ip_forward": "1"},
 		}
 	}
 
