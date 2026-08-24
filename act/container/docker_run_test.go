@@ -583,106 +583,133 @@ func TestCheckVolumes(t *testing.T) {
 	}
 }
 
+// A volume driver decides for itself what it mounts, e.g. the local driver with device= binds
+// any host path, which valid_volumes never gets to see.
+func TestMergeContainerConfigsDropsVolumeDriversFromWorkflows(t *testing.T) {
+	const escape = "--mount type=volume,src=job-escape,dst=/host,volume-driver=local,volume-opt=type=none,volume-opt=o=bind,volume-opt=device=/"
+
+	hostConfig, _ := mergeOptions(t, "", escape+" --mount type=volume,src=job-plain,dst=/cache", false)
+	require.Len(t, hostConfig.Mounts, 1)
+	assert.Equal(t, "job-plain", hostConfig.Mounts[0].Source)
+
+	// the same mount from the runner's own options is the administrator's to make
+	hostConfig, _ = mergeOptions(t, escape, "", false)
+	require.Len(t, hostConfig.Mounts, 1)
+	assert.Equal(t, "job-escape", hostConfig.Mounts[0].Source)
+}
+
+// Both of these are read here, on the runner, so a workflow could read the runner's files
+// and environment with them.
+func TestMergeContainerConfigsKeepsTheRunnersFilesAndEnvToItself(t *testing.T) {
+	hostFile := filepath.Join(t.TempDir(), "host.env")
+	require.NoError(t, os.WriteFile(hostFile, []byte("STOLEN=from-the-host\n"), 0o600))
+	t.Setenv("RUNNER_SECRET", "s3cr3t")
+
+	for _, option := range []string{"--env-file " + hostFile, "--label-file " + hostFile} {
+		logger, _ := test.NewNullLogger()
+		cr := &containerReference{input: &NewContainerInput{NetworkMode: "bridge", WorkflowOptions: option}}
+
+		_, _, err := cr.mergeContainerConfigs(common.WithLogger(context.Background(), logger), &container.Config{}, &container.HostConfig{})
+		require.ErrorContains(t, err, "not allowed in a workflow")
+
+		// the runner reading its own files is what those options are for
+		cr = &containerReference{input: &NewContainerInput{NetworkMode: "bridge", RunnerOptions: option}}
+		_, _, err = cr.mergeContainerConfigs(common.WithLogger(context.Background(), logger), &container.Config{}, &container.HostConfig{})
+		require.NoError(t, err)
+	}
+
+	// a bare name is no longer resolved from the runner's environment, for either source
+	logger, _ := test.NewNullLogger()
+	cr := &containerReference{input: &NewContainerInput{
+		NetworkMode:     "bridge",
+		RunnerOptions:   "--env RUNNER_SECRET",
+		WorkflowOptions: "--env RUNNER_SECRET --env GIVEN=value",
+	}}
+
+	config, _, err := cr.mergeContainerConfigs(common.WithLogger(context.Background(), logger), &container.Config{}, &container.HostConfig{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"RUNNER_SECRET", "RUNNER_SECRET", "GIVEN=value"}, config.Env)
+}
+
 func TestSanitizeOptionsHostConfig(t *testing.T) {
 	logger, _ := test.NewNullLogger()
 
-	dangerous := func() *container.HostConfig {
-		return &container.HostConfig{
-			PidMode:           "host",
-			IpcMode:           "host",
-			UTSMode:           "host",
-			CgroupnsMode:      "host",
-			UsernsMode:        "host",
-			CapAdd:            []string{"ALL"},
-			SecurityOpt:       []string{"seccomp=unconfined", "apparmor=unconfined"},
-			VolumesFrom:       []string{"other"},
-			Runtime:           "runc",
-			CgroupParent:      "/custom",
-			Devices:           []container.DeviceMapping{{PathOnHost: "/dev/sda", PathInContainer: "/dev/sda", CgroupPermissions: "rwm"}},
-			DeviceCgroupRules: []string{"a *:* rwm"},
-			Sysctls:           map[string]string{"net.ipv4.ip_forward": "1"},
-		}
+	// every field the sanitizer resets, so a reset dropped in a refactor fails here
+	hostConfig := &container.HostConfig{
+		PidMode:           "host",
+		IpcMode:           "host",
+		UTSMode:           "host",
+		CgroupnsMode:      "host",
+		UsernsMode:        "host",
+		CapAdd:            []string{"ALL"},
+		SecurityOpt:       []string{"seccomp=unconfined", "apparmor=unconfined"},
+		VolumesFrom:       []string{"other"},
+		Runtime:           "runc",
+		Isolation:         "process",
+		VolumeDriver:      "rogue",
+		MaskedPaths:       []string{},
+		ReadonlyPaths:     []string{},
+		CgroupParent:      "/custom",
+		Devices:           []container.DeviceMapping{{PathOnHost: "/dev/sda", PathInContainer: "/dev/sda", CgroupPermissions: "rwm"}},
+		DeviceCgroupRules: []string{"a *:* rwm"},
+		DeviceRequests:    []container.DeviceRequest{{Count: -1, Capabilities: [][]string{{"gpu"}}}},
+		Sysctls:           map[string]string{"net.ipv4.ip_forward": "1"},
 	}
 
-	hostConfig := dangerous()
-	sanitizeOptionsHostConfig(logger, hostConfig)
+	sanitizeOptionsHostConfig(logger, hostConfig, &container.HostConfig{})
 
-	assert.Empty(t, string(hostConfig.PidMode))
-	assert.Empty(t, string(hostConfig.IpcMode))
-	assert.Empty(t, string(hostConfig.UTSMode))
-	assert.Empty(t, string(hostConfig.CgroupnsMode))
-	assert.Empty(t, string(hostConfig.UsernsMode))
-	assert.Empty(t, hostConfig.CapAdd)
-	assert.Empty(t, hostConfig.SecurityOpt)
-	assert.Empty(t, hostConfig.Devices)
-	assert.Empty(t, hostConfig.DeviceCgroupRules)
-	assert.Empty(t, hostConfig.VolumesFrom)
-	assert.Empty(t, hostConfig.Runtime)
-	assert.Empty(t, hostConfig.CgroupParent)
-	assert.Empty(t, hostConfig.Sysctls)
+	assert.Equal(t, &container.HostConfig{}, hostConfig)
+}
+
+// mergeOptions merges both option sources into a bare container, returning the result and its log.
+func mergeOptions(t *testing.T, runnerOptions, workflowOptions string, privileged bool) (*container.HostConfig, *test.Hook) {
+	t.Helper()
+	logger, hook := test.NewNullLogger()
+	cr := &containerReference{input: &NewContainerInput{
+		RunnerOptions:   runnerOptions,
+		WorkflowOptions: workflowOptions,
+		NetworkMode:     "bridge",
+		UsernsMode:      "private",
+	}}
+
+	_, hostConfig, err := cr.mergeContainerConfigs(common.WithLogger(context.Background(), logger), &container.Config{}, &container.HostConfig{
+		Privileged:  privileged,
+		UsernsMode:  container.UsernsMode("private"),
+		NetworkMode: container.NetworkMode("bridge"),
+	})
+	require.NoError(t, err)
+	return hostConfig, hook
 }
 
 func TestMergeContainerConfigsStripsDangerousOptionsWhenUnprivileged(t *testing.T) {
-	// OS-independent options only: --device parsing requires a linux/windows
-	// server OS, which is not guaranteed for the test host.
+	// OS-independent options only, --device and --gpus need a linux/windows server OS
 	const dangerousOptions = "--pid=host --ipc=host --uts=host --cgroupns=host " +
 		"--userns=host --cap-add=ALL --security-opt seccomp=unconfined " +
-		"--security-opt apparmor=unconfined --volumes-from other " +
+		"--security-opt apparmor=unconfined --volumes-from other --isolation process " +
 		"--runtime runc --cgroup-parent /custom --sysctl net.ipv4.ip_forward=1"
 
-	t.Run("unprivileged strips host-escape options", func(t *testing.T) {
-		logger, _ := test.NewNullLogger()
-		ctx := common.WithLogger(context.Background(), logger)
-		cr := &containerReference{
-			input: &NewContainerInput{
-				Options:     dangerousOptions,
-				NetworkMode: "bridge",
-				UsernsMode:  "private",
-			},
-		}
+	// whatever the workflow adds, an unprivileged container comes out exactly as the runner's
+	// own options alone describe it, field for field
+	for _, runnerOptions := range []string{"--shm-size 1g", dangerousOptions, "--cap-add SYS_ADMIN --security-opt seccomp=unconfined"} {
+		runnerOnly, _ := mergeOptions(t, runnerOptions, "", false)
+		withWorkflow, _ := mergeOptions(t, runnerOptions, dangerousOptions, false)
 
-		_, hostConfig, err := cr.mergeContainerConfigs(ctx, &container.Config{}, &container.HostConfig{
-			Privileged:  false,
-			UsernsMode:  container.UsernsMode("private"),
-			NetworkMode: container.NetworkMode("bridge"),
-		})
-		require.NoError(t, err)
+		assert.Equal(t, runnerOnly, withWorkflow, "runner options: %q", runnerOptions)
+	}
 
-		assert.False(t, hostConfig.Privileged)
-		assert.Empty(t, string(hostConfig.PidMode))
-		assert.Empty(t, string(hostConfig.IpcMode))
-		assert.Empty(t, string(hostConfig.UTSMode))
-		assert.Empty(t, string(hostConfig.CgroupnsMode))
-		// UsernsMode must keep the runner-controlled value, not the one from options.
-		assert.Equal(t, "private", string(hostConfig.UsernsMode))
-		assert.Empty(t, hostConfig.CapAdd)
-		assert.Empty(t, hostConfig.SecurityOpt)
-		assert.Empty(t, hostConfig.VolumesFrom)
-		assert.Empty(t, hostConfig.Runtime)
-		assert.Empty(t, hostConfig.CgroupParent)
-		assert.Empty(t, hostConfig.Sysctls)
-	})
+	// the same options from the runner reach the daemon, even --userns, which no workflow may set
+	kept, _ := mergeOptions(t, dangerousOptions, "", false)
+	assert.Equal(t, "host", string(kept.PidMode))
+	assert.Equal(t, []string{"ALL"}, kept.CapAdd)
+	assert.Equal(t, "runc", kept.Runtime)
+	assert.Equal(t, "host", string(kept.UsernsMode))
+	assert.False(t, kept.Privileged)
 
-	t.Run("privileged preserves options", func(t *testing.T) {
-		logger, _ := test.NewNullLogger()
-		ctx := common.WithLogger(context.Background(), logger)
-		cr := &containerReference{
-			input: &NewContainerInput{
-				Options:     "--pid=host --cap-add=ALL --security-opt seccomp=unconfined",
-				NetworkMode: "bridge",
-			},
-		}
-
-		_, hostConfig, err := cr.mergeContainerConfigs(ctx, &container.Config{}, &container.HostConfig{
-			Privileged:  true,
-			NetworkMode: container.NetworkMode("bridge"),
-		})
-		require.NoError(t, err)
-
-		assert.Equal(t, "host", string(hostConfig.PidMode))
-		assert.Equal(t, []string{"ALL"}, hostConfig.CapAdd)
-		assert.Equal(t, []string{"seccomp=unconfined"}, hostConfig.SecurityOpt)
-	})
+	// privileged is the administrator opting in, so the workflow's options are honored
+	privileged, _ := mergeOptions(t, "", dangerousOptions, true)
+	assert.Equal(t, "host", string(privileged.PidMode))
+	assert.Equal(t, []string{"ALL"}, privileged.CapAdd)
+	assert.Equal(t, []string{"seccomp=unconfined", "apparmor=unconfined"}, privileged.SecurityOpt)
 }
 
 func TestCheckVolumesRejectsEscapingHostPaths(t *testing.T) {
@@ -780,8 +807,8 @@ func TestMergeContainerConfigsVolumesReplaceRunnerMounts(t *testing.T) {
 	ctx := common.WithLogger(context.Background(), logger)
 	cr := &containerReference{
 		input: &NewContainerInput{
-			NetworkMode: "bridge",
-			Options:     "--volume /host/tools:/opt/hostedtoolcache",
+			NetworkMode:   "bridge",
+			RunnerOptions: "--volume /host/tools:/opt/hostedtoolcache",
 		},
 	}
 
@@ -792,6 +819,17 @@ func TestMergeContainerConfigsVolumesReplaceRunnerMounts(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"/var/run/docker.sock:/var/run/docker.sock", "/host/tools:/opt/hostedtoolcache"}, hostConf.Binds)
 	assert.Empty(t, hostConf.Mounts)
+}
+
+func TestMergeContainerConfigsWarnsOnlyAboutOptionsThatWereGiven(t *testing.T) {
+	warnings := func(runnerOptions, workflowOptions string) int {
+		_, hook := mergeOptions(t, runnerOptions, workflowOptions, false)
+		return len(hook.AllEntries())
+	}
+
+	assert.Zero(t, warnings("--volume /host/tools:/opt/hostedtoolcache", ""))
+	assert.Zero(t, warnings("", "--shm-size 1g"))
+	assert.Equal(t, 1, warnings("--network host", ""))
 }
 
 // A dead daemon must fail the job, not panic through logrus and not silently

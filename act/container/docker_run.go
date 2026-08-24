@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"runtime"
 	"slices"
@@ -57,7 +58,7 @@ func NewContainer(input *NewContainerInput) ExecutionsEnvironment {
 	cr := new(containerReference)
 	cr.input = input
 	// Resolved up front because the image pull runs before the container is created.
-	cf := createFlagsFromOptions(input.Options)
+	cf := createFlagsFromOptions(input.allOptions())
 	if cf.platform != "" {
 		cr.input.Platform = cf.platform
 	}
@@ -524,22 +525,32 @@ func (cr *containerReference) waitForRemoval(ctx context.Context, idOrName strin
 	}
 }
 
+// allOptions puts the runner's options first, so a flag both sources set ends up the workflow's.
+func (input *NewContainerInput) allOptions() string {
+	return strings.TrimSpace(input.RunnerOptions + " " + input.WorkflowOptions)
+}
+
 func (cr *containerReference) mergeContainerConfigs(ctx context.Context, config *container.Config, hostConfig *container.HostConfig) (*container.Config, *container.HostConfig, error) {
 	logger := common.Logger(ctx)
-	input := cr.input
+	options := cr.input.allOptions()
 
-	if input.Options == "" {
+	if options == "" {
 		return config, hostConfig, nil
 	}
 
+	// For Gitea, checked here because the parse below is what would read those files
+	if err := rejectHostReadingOptions(cr.input.WorkflowOptions); err != nil {
+		return nil, nil, err
+	}
+
 	// parse configuration from CLI container.options
-	flags, copts, cf, err := parseContainerOptions(input.Options)
+	flags, copts, cf, err := parseContainerOptions(options)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	if err := cf.validate(); err != nil {
-		return nil, nil, fmt.Errorf("cannot process container options: '%s': '%w'", input.Options, err)
+		return nil, nil, fmt.Errorf("cannot process container options: '%s': '%w'", options, err)
 	}
 
 	// FIXME: If everything is fine after gitea/act v0.260.0, remove the following comment.
@@ -570,24 +581,23 @@ func (cr *containerReference) mergeContainerConfigs(ctx context.Context, config 
 
 	containerConfig, err := parse(flags, copts, runtime.GOOS)
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot process container options: '%s': '%w'", input.Options, err)
+		return nil, nil, fmt.Errorf("cannot process container options: '%s': '%w'", options, err)
 	}
 
-	// For Gitea
-	// When privileged mode is disabled, container.options is workflow-controlled
-	// untrusted input. Strip the HostConfig fields that would let a workflow break
-	// out of the container (host namespaces, capability expansion, security profile
-	// overrides, device and runtime access). Otherwise these survive into the final
-	// HostConfig even though --privileged is forced off.
+	// For Gitea, forcing --privileged off is not enough, other options reach the host too
 	if !hostConfig.Privileged {
-		sanitizeOptionsHostConfig(logger, containerConfig.HostConfig)
+		trusted, err := parseOptionsHostConfig(cr.input.RunnerOptions)
+		if err != nil {
+			return nil, nil, err
+		}
+		sanitizeOptionsHostConfig(logger, containerConfig.HostConfig, trusted)
 	}
 
 	logger.Debugf("Custom container.Config from options ==> %+v", containerConfig.Config)
 
 	err = mergo.Merge(config, containerConfig.Config, mergo.WithOverride, mergo.WithAppendSlice)
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot merge container.Config options: '%s': '%w'", input.Options, err)
+		return nil, nil, fmt.Errorf("cannot merge container.Config options: '%s': '%w'", options, err)
 	}
 	logger.Debugf("Merged container.Config ==> %+v", config)
 
@@ -599,14 +609,15 @@ func (cr *containerReference) mergeContainerConfigs(ctx context.Context, config 
 	networkMode := hostConfig.NetworkMode
 	err = mergo.Merge(hostConfig, containerConfig.HostConfig, mergo.WithOverride)
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot merge container.HostConfig options: '%s': '%w'", input.Options, err)
+		return nil, nil, fmt.Errorf("cannot merge container.HostConfig options: '%s': '%w'", options, err)
 	}
 	hostConfig.Binds = binds
 	hostConfig.Mounts = mounts
 	if cf.name != "" {
 		logger.Warn("--name in the options will be ignored.")
 	}
-	if len(copts.netMode.Value()) > 0 {
+	// the runner's own network mode was put into copts above, so ask the flags instead
+	if flags.Changed("network") || flags.Changed("net") {
 		logger.Warn("--network and --net in the options will be ignored.")
 	}
 	hostConfig.NetworkMode = networkMode
@@ -1112,74 +1123,64 @@ func (cr *containerReference) wait() common.Executor {
 }
 
 // For Gitea
-// sanitizeOptionsHostConfig clears the HostConfig fields parsed from a
-// workflow-controlled container.options string that could be used to escape the
-// container when privileged mode is disabled. It must only be called when the
-// runner has privileged mode turned off; with privileged mode enabled the
-// administrator has already opted into host access.
-func sanitizeOptionsHostConfig(logger logrus.FieldLogger, hostConfig *container.HostConfig) {
-	warn := func(option string) {
-		logger.Warnf("container option %q is not allowed when privileged mode is disabled and will be ignored", option)
-	}
+// sanitizeOptionsHostConfig takes back everything a workflow could escape the container with,
+// setting each field to trusted, which is what the runner's own options parse to on their own.
+// Only for unprivileged mode, since privileged mode grants host access anyway.
+func sanitizeOptionsHostConfig(logger logrus.FieldLogger, hostConfig, trusted *container.HostConfig) {
+	resetOption(logger, "--pid", &hostConfig.PidMode, trusted.PidMode)
+	resetOption(logger, "--ipc", &hostConfig.IpcMode, trusted.IpcMode)
+	resetOption(logger, "--uts", &hostConfig.UTSMode, trusted.UTSMode)
+	resetOption(logger, "--cgroupns", &hostConfig.CgroupnsMode, trusted.CgroupnsMode)
+	resetOption(logger, "--userns", &hostConfig.UsernsMode, trusted.UsernsMode) // --userns=host would undo the remapping the runner asked for
+	resetOption(logger, "--cap-add", &hostConfig.CapAdd, trusted.CapAdd)
+	resetOption(logger, "--security-opt", &hostConfig.SecurityOpt, trusted.SecurityOpt)
+	resetOption(logger, "--device", &hostConfig.Devices, trusted.Devices)
+	resetOption(logger, "--device-cgroup-rule", &hostConfig.DeviceCgroupRules, trusted.DeviceCgroupRules)
+	resetOption(logger, "--gpus", &hostConfig.DeviceRequests, trusted.DeviceRequests)
+	resetOption(logger, "--volumes-from", &hostConfig.VolumesFrom, trusted.VolumesFrom)
+	resetOption(logger, "--runtime", &hostConfig.Runtime, trusted.Runtime)
+	resetOption(logger, "--cgroup-parent", &hostConfig.CgroupParent, trusted.CgroupParent)
+	resetOption(logger, "--sysctl", &hostConfig.Sysctls, trusted.Sysctls)
+	resetOption(logger, "--isolation", &hostConfig.Isolation, trusted.Isolation) // windows: process isolation drops the hyper-v boundary
+	resetOption(logger, "--volume-driver", &hostConfig.VolumeDriver, trusted.VolumeDriver)
+	// systempaths=unconfined lands in these two rather than in SecurityOpt
+	resetOption(logger, "--security-opt", &hostConfig.MaskedPaths, trusted.MaskedPaths)
+	resetOption(logger, "--security-opt", &hostConfig.ReadonlyPaths, trusted.ReadonlyPaths)
 
-	if hostConfig.PidMode != "" {
-		warn("--pid")
-		hostConfig.PidMode = ""
+	// a driver mounts what it likes, e.g. local with device= binds any host path, which
+	// valid_volumes never gets to see
+	hostConfig.Mounts = slices.DeleteFunc(hostConfig.Mounts, func(mt mount.Mount) bool {
+		if mt.VolumeOptions == nil || mt.VolumeOptions.DriverConfig == nil ||
+			slices.ContainsFunc(trusted.Mounts, func(t mount.Mount) bool { return reflect.DeepEqual(t, mt) }) {
+			return false
+		}
+		logger.Warnf("volume driver of %q in the workflow is not allowed when privileged mode is disabled and will be ignored", mt.Source)
+		return true
+	})
+}
+
+// resetOption puts a field back to the runner's own value. It compares the values rather than
+// the flags, so a field that more than one option feeds cannot slip through.
+func resetOption[T any](logger logrus.FieldLogger, option string, field *T, trusted T) {
+	if reflect.DeepEqual(*field, trusted) {
+		return
 	}
-	if hostConfig.IpcMode != "" {
-		warn("--ipc")
-		hostConfig.IpcMode = ""
+	logger.Warnf("container option %q in the workflow is not allowed when privileged mode is disabled and will be ignored", option)
+	*field = trusted
+}
+
+// parseOptionsHostConfig parses one options string on its own, to see what it alone asks for.
+// Even "" goes through the parser, or its empty slices and maps would differ from a real parse.
+func parseOptionsHostConfig(options string) (*container.HostConfig, error) {
+	flags, copts, _, err := parseContainerOptions(options)
+	if err != nil {
+		return nil, err
 	}
-	if hostConfig.UTSMode != "" {
-		warn("--uts")
-		hostConfig.UTSMode = ""
+	containerConfig, err := parse(flags, copts, runtime.GOOS)
+	if err != nil {
+		return nil, fmt.Errorf("cannot process container options: '%s': '%w'", options, err)
 	}
-	if hostConfig.CgroupnsMode != "" {
-		warn("--cgroupns")
-		hostConfig.CgroupnsMode = ""
-	}
-	// UsernsMode is set from the runner-controlled input; never let options
-	// override it (e.g. --userns=host disables user namespace remapping).
-	if hostConfig.UsernsMode != "" {
-		warn("--userns")
-		hostConfig.UsernsMode = ""
-	}
-	if len(hostConfig.CapAdd) > 0 {
-		warn("--cap-add")
-		hostConfig.CapAdd = nil
-	}
-	if len(hostConfig.SecurityOpt) > 0 {
-		warn("--security-opt")
-		hostConfig.SecurityOpt = nil
-	}
-	if len(hostConfig.Devices) > 0 {
-		warn("--device")
-		hostConfig.Devices = nil
-	}
-	if len(hostConfig.DeviceCgroupRules) > 0 {
-		warn("--device-cgroup-rule")
-		hostConfig.DeviceCgroupRules = nil
-	}
-	if len(hostConfig.DeviceRequests) > 0 {
-		warn("--gpus")
-		hostConfig.DeviceRequests = nil
-	}
-	if len(hostConfig.VolumesFrom) > 0 {
-		warn("--volumes-from")
-		hostConfig.VolumesFrom = nil
-	}
-	if hostConfig.Runtime != "" {
-		warn("--runtime")
-		hostConfig.Runtime = ""
-	}
-	if hostConfig.CgroupParent != "" {
-		warn("--cgroup-parent")
-		hostConfig.CgroupParent = ""
-	}
-	if len(hostConfig.Sysctls) > 0 {
-		warn("--sysctl")
-		hostConfig.Sysctls = nil
-	}
+	return containerConfig.HostConfig, nil
 }
 
 // For Gitea

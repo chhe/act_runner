@@ -50,13 +50,13 @@ func TestCreateFlagsValidate(t *testing.T) {
 }
 
 func TestNewContainerAppliesCreateFlags(t *testing.T) {
-	input := &NewContainerInput{Platform: "linux/amd64", Options: "--platform linux/arm64 --pull never"}
+	input := &NewContainerInput{Platform: "linux/amd64", RunnerOptions: "--pull never", WorkflowOptions: "--platform linux/arm64"}
 	cr, ok := NewContainer(input).(*containerReference)
 	require.True(t, ok)
 	assert.Equal(t, "linux/arm64", input.Platform)
 	assert.Equal(t, pullPolicyNever, cr.pullPolicy)
 
-	kept := &NewContainerInput{Platform: "linux/amd64", Options: "--privileged"}
+	kept := &NewContainerInput{Platform: "linux/amd64", RunnerOptions: "--privileged"}
 	NewContainer(kept)
 	assert.Equal(t, "linux/amd64", kept.Platform)
 }

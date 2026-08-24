@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 
+	"github.com/docker/cli/opts"
 	"github.com/kballard/go-shellquote"
 	"github.com/spf13/pflag"
 )
@@ -51,6 +53,7 @@ func parseContainerOptions(options string) (*pflag.FlagSet, *containerOptions, *
 	flags := pflag.NewFlagSet("container_flags", pflag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	copts := addFlags(flags)
+	copts.env = opts.NewListOpts(validateEnv) // addFlags registered this field's address, so the swap takes effect
 	cf := registerCreateFlags(flags)
 
 	args, err := shellquote.Split(options)
@@ -71,6 +74,30 @@ func parseContainerOptions(options string) (*pflag.FlagSet, *containerOptions, *
 func createFlagsFromOptions(options string) *createFlags {
 	_, _, cf, _ := parseContainerOptions(options)
 	return cf
+}
+
+// validateEnv is opts.ValidateEnv without its lookup of a bare name in the runner's environment.
+func validateEnv(val string) (string, error) {
+	if name, _, _ := strings.Cut(val, "="); name == "" {
+		return "", errors.New("invalid environment variable: " + val)
+	}
+	return val, nil
+}
+
+// rejectHostReadingOptions refuses the flags naming files that are read here, on the
+// runner, rather than in the container.
+func rejectHostReadingOptions(options string) error {
+	flags, _, _, err := parseContainerOptions(options)
+	if err != nil {
+		return err
+	}
+
+	for _, name := range []string{"env-file", "label-file"} {
+		if flags.Changed(name) {
+			return fmt.Errorf("container option --%s reads files from the runner and is not allowed in a workflow", name)
+		}
+	}
+	return nil
 }
 
 func (cf *createFlags) validate() error {

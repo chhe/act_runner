@@ -25,26 +25,27 @@ func (e ExitCodeError) Error() string {
 
 // NewContainerInput the input for the New function
 type NewContainerInput struct {
-	Image          string
-	Username       string
-	Password       string
-	Entrypoint     []string
-	Cmd            []string
-	WorkingDir     string
-	Env            []string
-	Binds          []string
-	Mounts         map[string]string
-	Name           string
-	Stdout         io.Writer
-	Stderr         io.Writer
-	NetworkMode    string
-	Privileged     bool
-	UsernsMode     string
-	Platform       string
-	Options        string
-	NetworkAliases []string
-	ExposedPorts   nat.PortSet
-	PortBindings   nat.PortMap
+	Image           string
+	Username        string
+	Password        string
+	Entrypoint      []string
+	Cmd             []string
+	WorkingDir      string
+	Env             []string
+	Binds           []string
+	Mounts          map[string]string
+	Name            string
+	Stdout          io.Writer
+	Stderr          io.Writer
+	NetworkMode     string
+	Privileged      bool
+	UsernsMode      string
+	Platform        string
+	RunnerOptions   string // container options the runner was configured with, trusted
+	WorkflowOptions string // container options the workflow asked for, untrusted
+	NetworkAliases  []string
+	ExposedPorts    nat.PortSet
+	PortBindings    nat.PortMap
 
 	// Gitea specific
 	AutoRemove   bool

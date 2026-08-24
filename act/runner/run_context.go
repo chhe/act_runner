@@ -497,27 +497,27 @@ func (rc *RunContext) startJobContainer() common.Executor {
 
 			serviceContainerName := createContainerName(rc.jobContainerName(), serviceID)
 			c := newContainer(&container.NewContainerInput{
-				Name:           serviceContainerName,
-				WorkingDir:     ext.ToContainerPath(rc.Config.Workdir),
-				Image:          serviceImage,
-				Username:       serviceUsername,
-				Password:       servicePassword,
-				Cmd:            interpolatedCmd,
-				Env:            envs,
-				Mounts:         serviceMounts,
-				Binds:          serviceBinds,
-				Stdout:         logWriter,
-				Stderr:         logWriter,
-				Privileged:     rc.Config.Privileged,
-				UsernsMode:     rc.Config.UsernsMode,
-				Platform:       rc.Config.ContainerArchitecture,
-				AutoRemove:     false, // so a dead service's log survives, cleanupJobResources removes it
-				Options:        rc.ExprEval.Interpolate(ctx, spec.Options),
-				NetworkMode:    networkName,
-				NetworkAliases: []string{serviceID},
-				ExposedPorts:   exposedPorts,
-				PortBindings:   portBindings,
-				AllocatePTY:    rc.Config.AllocatePTY,
+				Name:            serviceContainerName,
+				WorkingDir:      ext.ToContainerPath(rc.Config.Workdir),
+				Image:           serviceImage,
+				Username:        serviceUsername,
+				Password:        servicePassword,
+				Cmd:             interpolatedCmd,
+				Env:             envs,
+				Mounts:          serviceMounts,
+				Binds:           serviceBinds,
+				Stdout:          logWriter,
+				Stderr:          logWriter,
+				Privileged:      rc.Config.Privileged,
+				UsernsMode:      rc.Config.UsernsMode,
+				Platform:        rc.Config.ContainerArchitecture,
+				AutoRemove:      false, // so a dead service's log survives, cleanupJobResources removes it
+				WorkflowOptions: rc.ExprEval.Interpolate(ctx, spec.Options),
+				NetworkMode:     networkName,
+				NetworkAliases:  []string{serviceID},
+				ExposedPorts:    exposedPorts,
+				PortBindings:    portBindings,
+				AllocatePTY:     rc.Config.AllocatePTY,
 			})
 			rc.serviceContainers = append(rc.serviceContainers, &serviceContainer{name: serviceID, image: serviceImage, container: c})
 		}
@@ -528,27 +528,28 @@ func (rc *RunContext) startJobContainer() common.Executor {
 		jobContainerNetwork := networkName
 
 		rc.JobContainer = newContainer(&container.NewContainerInput{
-			Cmd:            nil,
-			Entrypoint:     []string{"/bin/sleep", fmt.Sprint(rc.Config.ContainerMaxLifetime.Round(time.Second).Seconds())},
-			WorkingDir:     ext.ToContainerPath(rc.Config.Workdir),
-			Image:          image,
-			Username:       username,
-			Password:       password,
-			Name:           name,
-			Env:            envList,
-			Mounts:         mounts,
-			NetworkMode:    jobContainerNetwork,
-			NetworkAliases: []string{rc.Name},
-			Binds:          binds,
-			Stdout:         logWriter,
-			Stderr:         logWriter,
-			Privileged:     rc.Config.Privileged,
-			UsernsMode:     rc.Config.UsernsMode,
-			Platform:       rc.Config.ContainerArchitecture,
-			Options:        rc.options(ctx),
-			AutoRemove:     true,
-			ValidVolumes:   rc.validVolumes(),
-			AllocatePTY:    rc.Config.AllocatePTY,
+			Cmd:             nil,
+			Entrypoint:      []string{"/bin/sleep", fmt.Sprint(rc.Config.ContainerMaxLifetime.Round(time.Second).Seconds())},
+			WorkingDir:      ext.ToContainerPath(rc.Config.Workdir),
+			Image:           image,
+			Username:        username,
+			Password:        password,
+			Name:            name,
+			Env:             envList,
+			Mounts:          mounts,
+			NetworkMode:     jobContainerNetwork,
+			NetworkAliases:  []string{rc.Name},
+			Binds:           binds,
+			Stdout:          logWriter,
+			Stderr:          logWriter,
+			Privileged:      rc.Config.Privileged,
+			UsernsMode:      rc.Config.UsernsMode,
+			Platform:        rc.Config.ContainerArchitecture,
+			RunnerOptions:   rc.Config.ContainerOptions,
+			WorkflowOptions: rc.workflowOptions(ctx),
+			AutoRemove:      true,
+			ValidVolumes:    rc.validVolumes(),
+			AllocatePTY:     rc.Config.AllocatePTY,
 		})
 		if rc.JobContainer == nil {
 			return errors.New("failed to create job container")
@@ -1090,14 +1091,13 @@ func (rc *RunContext) platformImage(ctx context.Context) string {
 	return rc.runsOnImage(ctx)
 }
 
-func (rc *RunContext) options(ctx context.Context) string {
-	job := rc.Run.Job()
-	c := job.Container()
-	if c != nil {
-		return rc.Config.ContainerOptions + " " + rc.ExprEval.Interpolate(ctx, c.Options)
+func (rc *RunContext) workflowOptions(ctx context.Context) string {
+	c := rc.Run.Job().Container()
+	if c == nil {
+		return ""
 	}
 
-	return rc.Config.ContainerOptions
+	return rc.ExprEval.Interpolate(ctx, c.Options)
 }
 
 func (rc *RunContext) isEnabled(ctx context.Context) (bool, error) {
