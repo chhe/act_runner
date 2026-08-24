@@ -207,7 +207,7 @@ func (runner *runnerImpl) NewPlanExecutor(plan *model.Plan) common.Executor {
 
 				matrixes, err := job.GetMatrixes()
 				if err != nil {
-					log.Errorf("Error while get job's matrix: %v", err)
+					return fmt.Errorf("could not get job matrix: %w", err)
 				}
 				log.Debugf("Job Matrices: %v", matrixes)
 

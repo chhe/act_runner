@@ -8,6 +8,7 @@ import (
 
 	"gitea.dev/actionslib/pkg/model"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.yaml.in/yaml/v4"
 )
 
@@ -63,4 +64,21 @@ func TestMaxParallelStrategy(t *testing.T) {
 			assert.Equal(t, tt.expectedMaxParallel, job.Strategy.MaxParallel)
 		})
 	}
+}
+
+func TestNewPlanExecutorInvalidMatrix(t *testing.T) {
+	var rawMatrix yaml.Node
+	require.NoError(t, rawMatrix.Encode(map[string]any{
+		"config": map[string]any{"nested": "value"},
+	}))
+
+	plan := &model.Plan{Stages: []*model.Stage{{Runs: []*model.Run{{
+		Workflow: &model.Workflow{Jobs: map[string]*model.Job{
+			"test": {Strategy: &model.Strategy{RawMatrix: rawMatrix}},
+		}},
+		JobID: "test",
+	}}}}}
+	runner := &runnerImpl{config: &Config{}}
+
+	require.ErrorContains(t, runner.NewPlanExecutor(plan)(t.Context()), "could not get job matrix:")
 }
