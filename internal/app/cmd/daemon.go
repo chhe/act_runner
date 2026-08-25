@@ -24,6 +24,7 @@ import (
 	"gitea.com/gitea/runner/internal/pkg/labels"
 	"gitea.com/gitea/runner/internal/pkg/lock"
 	"gitea.com/gitea/runner/internal/pkg/metrics"
+	"gitea.com/gitea/runner/internal/pkg/report"
 	"gitea.com/gitea/runner/internal/pkg/ver"
 
 	"connectrpc.com/connect"
@@ -283,7 +284,7 @@ func initLogging(cfg *config.Config) {
 		FullTimestamp:    true,
 		CallerPrettyfier: callPrettyfier,
 	}
-	log.SetFormatter(format)
+	log.SetFormatter(report.MaskingFormatter(format))
 
 	l := cfg.Log.Level
 	if l == "" {

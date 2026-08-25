@@ -209,7 +209,7 @@ func TestReporter_parseLogRow(t *testing.T) {
 				got := "<nil>"
 
 				if rv != nil {
-					got = rv.Content
+					got = r.mask(rv.Content)
 				}
 
 				assert.Equal(t, tt.want[idx], got)
@@ -226,8 +226,7 @@ func TestReporter_parseLogRowAddMask(t *testing.T) {
 
 		assert.Nil(t, r.parseLogRow(&log.Entry{Message: line}), line)
 
-		row := r.parseLogRow(&log.Entry{Message: "using supersecret now"})
-		assert.Equal(t, "using *** now", row.Content, line)
+		assert.Equal(t, "using *** now", r.mask("using supersecret now"), line)
 	}
 }
 
@@ -1042,12 +1041,16 @@ func TestReporter_StopHeartbeats(t *testing.T) {
 }
 
 func TestAppendLogRow(t *testing.T) {
-	r := &Reporter{}
-	row := &runnerv1.LogRow{Time: timestamppb.Now(), Content: "hello"}
+	r := &Reporter{logReplacer: strings.NewReplacer("supersecret", "***")}
 	r.appendLogRow(nil)
-	r.appendLogRow(row)
-	r.appendLogRow(nil)
-	assert.Equal(t, []*runnerv1.LogRow{row}, r.logRows)
+	r.appendLogRow(&runnerv1.LogRow{Time: timestamppb.Now(), Content: "hello supersecret"})
+	require.Len(t, r.logRows, 1)
+	assert.Equal(t, "hello ***", r.logRows[0].Content)
+
+	// repairing the invalid byte spells out the secret, so the repair has to come first
+	r = &Reporter{logReplacer: strings.NewReplacer("a?b", "***")}
+	r.appendLogRow(&runnerv1.LogRow{Time: timestamppb.Now(), Content: "a\xffb"})
+	assert.Equal(t, "***", r.logRows[0].Content)
 }
 
 func TestReporter_Levels(t *testing.T) {
@@ -1060,7 +1063,7 @@ func TestReporter_Result(t *testing.T) {
 }
 
 func TestReporter_SetOutputs(t *testing.T) {
-	r := &Reporter{state: &runnerv1.TaskState{}, logReplacer: strings.NewReplacer()}
+	r := &Reporter{state: &runnerv1.TaskState{}, logReplacer: strings.NewReplacer("s3cr3t", "***")}
 
 	r.SetOutputs(map[string]string{"foo": "bar"})
 	got, ok := r.outputs["foo"]
@@ -1083,12 +1086,43 @@ func TestReporter_SetOutputs(t *testing.T) {
 	_, ok = r.outputs["big"]
 	assert.False(t, ok)
 
+	// a value carrying a secret is skipped, as GitHub does, rather than sent masked
+	r.SetOutputs(map[string]string{"leaky": "has s3cr3t in it"})
+	_, ok = r.outputs["leaky"]
+	assert.False(t, ok)
+
+	// invalid UTF-8 is not a secret, so the value is kept as it is rather than dropped
+	r.SetOutputs(map[string]string{"binary": "caf\xff"})
+	got, ok = r.outputs["binary"]
+	require.True(t, ok)
+	assert.Equal(t, "caf\xff", got.value)
+
 	// a value at exactly the limit is still stored
 	maxValue := strings.Repeat("v", maxOutputValueLen)
 	r.SetOutputs(map[string]string{"atlimit": maxValue})
 	got, ok = r.outputs["atlimit"]
 	require.True(t, ok)
 	assert.Len(t, got.value, maxOutputValueLen)
+}
+
+// Gitea delivers ACTIONS_STEP_DEBUG as a secret, so masking "true" would drop any job output
+// saying it. GitHub skips the same two keys.
+func TestReporter_DebugSettingsAreNotMasked(t *testing.T) {
+	taskCtx, err := structpb.NewStruct(map[string]any{})
+	require.NoError(t, err)
+
+	reporter := NewReporter(context.Background(), nil, nil, &runnerv1.Task{
+		Context: taskCtx,
+		Secrets: map[string]string{"ACTIONS_STEP_DEBUG": "true", "ACTIONS_RUNNER_DEBUG": "true", "TOKEN": "s3cr3t"},
+	}, &config.Config{})
+	defer deregisterGlobalMasks(reporter)
+
+	assert.True(t, reporter.debugOutputEnabled)
+	assert.Equal(t, "debug is true", reporter.mask("debug is true"))
+	assert.Equal(t, "***", reporter.mask("s3cr3t"))
+
+	reporter.SetOutputs(map[string]string{"changed": "true"})
+	assert.Equal(t, "true", reporter.outputs["changed"].value) // needs.<job>.outputs.changed == 'true' still works
 }
 
 // An output the server acknowledged is not reported again.
@@ -1160,11 +1194,10 @@ func TestReporter_masksEncodedSecrets(t *testing.T) {
 		"basic " + base64.StdEncoding.EncodeToString([]byte(secret)),
 		"https://example.com/?token=" + url.QueryEscape(secret),
 	} {
-		row := r.parseLogRow(&log.Entry{Message: line})
-		require.NotNil(t, row)
-		assert.Contains(t, row.Content, "***")
-		assert.NotContains(t, row.Content, secret)
-		assert.NotContains(t, row.Content, base64.StdEncoding.EncodeToString([]byte(secret)))
+		masked := r.mask(line)
+		assert.Contains(t, masked, "***")
+		assert.NotContains(t, masked, secret)
+		assert.NotContains(t, masked, base64.StdEncoding.EncodeToString([]byte(secret)))
 	}
 }
 
@@ -1295,6 +1328,45 @@ func TestReporter_NoteReport(t *testing.T) {
 	reporter.noteReport(metrics.LabelMethodUpdateTask, nil)
 	require.Len(t, hook.AllEntries(), 2)
 	assert.Contains(t, hook.LastEntry().Message, "reconnected")
+}
+
+// A job's final error can carry a secret, e.g. one interpolated into a failing
+// expression, so Close must mask it like every other row.
+func TestReporter_CloseMasksLastWords(t *testing.T) {
+	const secret = "supersecret"
+	var rows []*runnerv1.LogRow
+
+	client := mocks.NewClient(t)
+	client.On("UpdateLog", mock.Anything, mock.Anything).Return(
+		func(_ context.Context, req *connect_go.Request[runnerv1.UpdateLogRequest]) (*connect_go.Response[runnerv1.UpdateLogResponse], error) {
+			rows = append(rows, req.Msg.Rows...)
+			return connect_go.NewResponse(&runnerv1.UpdateLogResponse{
+				AckIndex: req.Msg.Index + int64(len(req.Msg.Rows)),
+			}), nil
+		},
+	)
+	client.On("UpdateTask", mock.Anything, mock.Anything).Return(
+		func(_ context.Context, _ *connect_go.Request[runnerv1.UpdateTaskRequest]) (*connect_go.Response[runnerv1.UpdateTaskResponse], error) {
+			return connect_go.NewResponse(&runnerv1.UpdateTaskResponse{}), nil
+		},
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	const idToken = "id-token-request-secret"
+	taskCtx, err := structpb.NewStruct(map[string]any{"actions_id_token_request_token": idToken})
+	require.NoError(t, err)
+	cfg, _ := config.LoadDefault("")
+	reporter := NewReporter(ctx, cancel, client, &runnerv1.Task{
+		Context: taskCtx,
+		Secrets: map[string]string{"TOKEN": secret},
+	}, cfg)
+	close(reporter.daemon)
+
+	require.NoError(t, reporter.Close("could not get job matrix: "+secret+" "+idToken))
+
+	require.Len(t, rows, 1)
+	assert.Equal(t, "could not get job matrix: *** ***", rows[0].Content)
 }
 
 // giteaLogModel mirrors how Gitea stores a task log: UpdateLog appends rows to one

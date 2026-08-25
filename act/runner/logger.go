@@ -122,7 +122,7 @@ func WithJobLogger(ctx context.Context, jobID, jobName string, config *Config, m
 
 	logger.SetFormatter(&maskedFormatter{
 		Formatter: logger.Formatter,
-		masker:    valueMasker(config.InsecureSecrets, config.Secrets),
+		masker:    valueMasker(config.InsecureSecrets, config.maskers()),
 	})
 	rtn := logger.WithFields(logrus.Fields{
 		"job":    jobName,
@@ -234,6 +234,17 @@ func jsonStringEscapeNoHTML(v string) string {
 	return string(encoded[1 : len(encoded)-1])
 }
 
+// AppendSecretMaskers skips the debug settings, as GitHub does: they arrive as secrets, but
+// masking "true" would corrupt unrelated log lines and drop job outputs that say it.
+func AppendSecretMaskers(oldnew []string, secrets map[string]string) []string {
+	for k, v := range secrets {
+		if k != "ACTIONS_STEP_DEBUG" && k != "ACTIONS_RUNNER_DEBUG" {
+			oldnew = AppendSecretMasker(oldnew, v)
+		}
+	}
+	return oldnew
+}
+
 func AppendSecretMasker(oldnew []string, v string) []string {
 	ret := oldnew
 
@@ -269,13 +280,9 @@ func AppendSecretMasker(oldnew []string, v string) []string {
 
 // valueMasker applies secrets and ::add-mask:: patterns to every log entry, including
 // raw_output (command/stream) lines; there is no bypass by field.
-func valueMasker(insecureSecrets bool, secrets map[string]string) entryProcessor {
-	var oldnew []string
-	for _, v := range secrets {
-		oldnew = AppendSecretMasker(oldnew, v)
-	}
+func valueMasker(insecureSecrets bool, oldnew []string) entryProcessor {
 	oldnew = slices.Clip(oldnew)
-	defReplacer := strings.NewReplacer(oldnew...)
+	defReplacer := NewSecretReplacer(oldnew)
 
 	// A ::add-mask:: only ever appends to the job's mask slice, so the replacer built for
 	// it stays valid until the slice grows. Cache it, keyed by the slice itself and its
@@ -311,7 +318,7 @@ func valueMasker(insecureSecrets bool, secrets map[string]string) entryProcessor
 				pairs = AppendSecretMasker(pairs, v)
 			}
 			masked = len(*masks)
-			replacer = strings.NewReplacer(pairs...)
+			replacer = NewSecretReplacer(pairs)
 		}
 		cmasker := replacer
 		mu.Unlock()
@@ -418,4 +425,40 @@ func checkIfTerminal(w io.Writer) bool {
 	default:
 		return false
 	}
+}
+
+// maskSecrets hides this job's secrets in a value that reaches somewhere the log maskers cannot,
+// such as a container name or a job summary. Masks added at runtime count, so a summary written
+// after ::add-mask:: is covered too.
+func (rc *RunContext) maskSecrets(value string) string {
+	oldnew := rc.Config.maskers()
+	for _, mask := range rc.Masks {
+		oldnew = AppendSecretMasker(oldnew, mask)
+	}
+	return NewSecretReplacer(oldnew).Replace(value)
+}
+
+// maskers is every value this job's configuration says to hide, whatever the sink.
+func (c *Config) maskers() []string {
+	oldnew := AppendSecretMaskers(nil, c.Secrets)
+	for _, mask := range c.ExtraMasks {
+		oldnew = AppendSecretMasker(oldnew, mask)
+	}
+	return oldnew
+}
+
+// NewSecretReplacer masks the longest secret first. Replacer matches in argument order, so a
+// secret that prefixes another would otherwise mask only that prefix and print the rest.
+func NewSecretReplacer(oldnew []string) *strings.Replacer {
+	pairs := make([][2]string, 0, len(oldnew)/2)
+	for i := 0; i+1 < len(oldnew); i += 2 {
+		pairs = append(pairs, [2]string{oldnew[i], oldnew[i+1]})
+	}
+	slices.SortFunc(pairs, func(a, b [2]string) int { return len(b[0]) - len(a[0]) })
+
+	sorted := make([]string, 0, len(pairs)*2)
+	for _, pair := range pairs {
+		sorted = append(sorted, pair[0], pair[1])
+	}
+	return strings.NewReplacer(sorted...)
 }

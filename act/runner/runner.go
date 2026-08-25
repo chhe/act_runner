@@ -36,6 +36,7 @@ type Config struct {
 	JSONLogger                    bool                                          // use json or text logger
 	Env                           map[string]string                             // env for containers
 	Secrets                       map[string]string                             // list of secrets
+	ExtraMasks                    []string                                      // values to hide that are not in Secrets, such as the proxy password
 	Vars                          map[string]string                             // list of vars
 	Token                         string                                        // GitHub token
 	InsecureSecrets               bool                                          // switch hiding output when printing to terminal
@@ -238,7 +239,7 @@ func (runner *runnerImpl) NewPlanExecutor(plan *model.Plan) common.Executor {
 						maxJobNameLen = len(rc.String())
 					}
 					if rc.caller != nil { // For Gitea
-						rc.caller.setReusedWorkflowJobResult(rc.JobName, "pending")
+						rc.caller.setReusedWorkflowJobResult(rc.Run.JobID, "pending")
 					}
 					stageExecutor = append(stageExecutor, func(ctx context.Context) error {
 						jobName := fmt.Sprintf("%-*s", maxJobNameLen, rc.String())
@@ -324,7 +325,7 @@ func (runner *runnerImpl) newRunContext(ctx context.Context, run *model.Run, mat
 		caller:      runner.caller,
 	}
 	rc.ExprEval = rc.NewExpressionEvaluator(ctx)
-	rc.Name = rc.ExprEval.Interpolate(ctx, run.String())
+	rc.Name = rc.maskSecrets(rc.ExprEval.Interpolate(ctx, run.String()))
 	// Snapshot the job's pristine output expressions now, before any matrix combo runs and
 	// rewrites the shared Job.Outputs (see interpolateOutputs).
 	if job := run.Job(); job != nil {
@@ -335,8 +336,9 @@ func (runner *runnerImpl) newRunContext(ctx context.Context, run *model.Run, mat
 }
 
 // For Gitea
-func (c *caller) setReusedWorkflowJobResult(jobName, result string) {
+// Keyed by job id, not name: only the values are read, and masking can collapse two names into one.
+func (c *caller) setReusedWorkflowJobResult(jobID, result string) {
 	c.updateResultLock.Lock()
 	defer c.updateResultLock.Unlock()
-	c.reusedWorkflowJobResults[jobName] = result
+	c.reusedWorkflowJobResults[jobID] = result
 }

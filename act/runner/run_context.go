@@ -180,7 +180,8 @@ func (rc *RunContext) GetEnv() map[string]string {
 }
 
 func (rc *RunContext) jobContainerName() string {
-	nameParts := []string{rc.Config.ContainerNamePrefix, "WORKFLOW-" + rc.Run.Workflow.Name, "JOB-" + rc.Name}
+	// The job id, never evaluated, keeps two jobs apart when masking collapses their names.
+	nameParts := []string{rc.Config.ContainerNamePrefix, "WORKFLOW-" + rc.Run.Workflow.Name, "JOB-" + rc.Run.JobID, rc.Name}
 	if rc.caller != nil {
 		nameParts = append(nameParts, "CALLED-BY-"+rc.caller.runContext.JobName)
 	}
@@ -1026,7 +1027,7 @@ func (rc *RunContext) Executor() (common.Executor, error) {
 			// unfinished. rc.caller is only set for reusable workflows.
 			rc.result("failure")
 			if rc.caller != nil { // For Gitea
-				rc.caller.setReusedWorkflowJobResult(rc.JobName, "failure")
+				rc.caller.setReusedWorkflowJobResult(rc.Run.JobID, "failure")
 			}
 			return err
 		}
@@ -1116,7 +1117,7 @@ func (rc *RunContext) isEnabled(ctx context.Context) (bool, error) {
 
 	if !runJob {
 		if rc.caller != nil { // For Gitea
-			rc.caller.setReusedWorkflowJobResult(rc.JobName, "skipped")
+			rc.caller.setReusedWorkflowJobResult(rc.Run.JobID, "skipped")
 			return false, nil
 		}
 		l.WithField("jobResult", "skipped").Debugf("Skipping job '%s' due to '%s'", job.Name, job.If.Value)

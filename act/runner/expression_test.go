@@ -356,3 +356,25 @@ on:
 		}
 	}
 }
+
+func TestJobNameMasksSecrets(t *testing.T) {
+	workflow, err := model.ReadWorkflow(strings.NewReader(`
+jobs:
+  a:
+    name: deploy ${{ secrets.A }}
+  b:
+    name: deploy ${{ secrets.B }}
+`))
+	require.NoError(t, err)
+
+	runner := &runnerImpl{config: &Config{Secrets: map[string]string{"A": "s3cr3t-a", "B": "s3cr3t-b"}}}
+	containerName := func(jobID string) string {
+		rc := runner.newRunContext(t.Context(), &model.Run{JobID: jobID, Workflow: workflow}, nil)
+		assert.NotContains(t, rc.Name, "s3cr3t")
+		return rc.jobContainerName()
+	}
+
+	a, b := containerName("a"), containerName("b")
+	assert.NotContains(t, a, "s3cr3t") // it reaches the container name, which no log masker covers
+	assert.NotEqual(t, a, b)           // masking the name must not collapse two jobs onto one container
+}

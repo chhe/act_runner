@@ -1096,3 +1096,37 @@ func TestJobSetContinueOnError(t *testing.T) {
 		assert.True(t, j.ContinueOnError)
 	})
 }
+
+func TestTryUploadJobSummaryMasksSecrets(t *testing.T) {
+	var got string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		assert.NoError(t, err)
+		got = string(body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	cm := &containerMock{}
+	cm.On("GetContainerArchive", mock.Anything, "/var/run/act/workflow/step-summary-0.md").Return(
+		io.NopCloser(bytes.NewReader(tarArchive(t, tarEntry{
+			name: "step-summary-0.md", body: "deployed true with s3cr3t and runtime-added via pr0xypw",
+		}))),
+		nil,
+	).Once()
+
+	rc := newJobSummaryRC(map[string]string{
+		"GITEA_ACTIONS_CAPABILITIES": "job-summary",
+		"ACTIONS_RUNTIME_URL":        server.URL,
+		"ACTIONS_RUNTIME_TOKEN":      fakeRuntimeToken(34),
+		"GITEA_RUN_ID":               "12",
+	}, cm, 1)
+	rc.Config.Secrets = map[string]string{"TOK": "s3cr3t", "ACTIONS_STEP_DEBUG": "true"}
+	rc.Config.ExtraMasks = []string{"pr0xypw"}
+	rc.Masks = []string{"runtime-added"}
+
+	tryUploadJobSummary(context.Background(), rc)
+
+	assert.Equal(t, "deployed true with *** and *** via ***", got)
+	cm.AssertExpectations(t)
+}

@@ -47,7 +47,7 @@ func TestValueMasker(t *testing.T) {
 	for _, entry := range table {
 		t.Run(entry.name, func(t *testing.T) {
 			ctx := WithMasks(t.Context(), &entry.masks)
-			masker := valueMasker(false, entry.secrets)
+			masker := valueMasker(false, AppendSecretMaskers(nil, entry.secrets))
 			for line := range strings.SplitSeq(entry.lines, "\n") {
 				lentry := masker(&logrus.Entry{
 					Context: ctx,
@@ -65,7 +65,7 @@ func TestValueMasker(t *testing.T) {
 // URL — must be masked as well: masking only the verbatim value leaks it.
 func TestValueMaskerEncodedSecrets(t *testing.T) {
 	secret := `p@ss w"rd/1`
-	masker := valueMasker(false, map[string]string{"TOKEN": secret})
+	masker := valueMasker(false, AppendSecretMaskers(nil, map[string]string{"TOKEN": secret}))
 
 	for _, tc := range []struct {
 		name string
@@ -94,7 +94,7 @@ func TestValueMaskerEncodedSecrets(t *testing.T) {
 // form, so a JS-serialized JSON body does not leak it.
 func TestValueMaskerJSONEscapesBothWays(t *testing.T) {
 	secret := `a"<b>&c`
-	masker := valueMasker(false, map[string]string{"TOKEN": secret})
+	masker := valueMasker(false, AppendSecretMaskers(nil, map[string]string{"TOKEN": secret}))
 
 	for _, tc := range []struct {
 		name string
@@ -112,10 +112,20 @@ func TestValueMaskerJSONEscapesBothWays(t *testing.T) {
 	}
 }
 
+// With debug logging on, the job logger writes to stdout, which no reporter masks, so it has
+// to hide the values that are not job secrets too.
+func TestValueMaskerHidesExtraMasks(t *testing.T) {
+	masker := valueMasker(false, (&Config{ExtraMasks: []string{"pr0xypw"}}).maskers())
+
+	entry := masker(&logrus.Entry{Context: t.Context(), Message: "proxy is http://user:pr0xypw@proxy:3128"})
+
+	assert.Equal(t, "proxy is http://user:***@proxy:3128", entry.Message)
+}
+
 // ::add-mask:: values go through the same masker, so they get the same treatment.
 func TestValueMaskerEncodedMasks(t *testing.T) {
 	masks := []string{"s3cr3t value"}
-	masker := valueMasker(false, nil)
+	masker := valueMasker(false, AppendSecretMaskers(nil, nil))
 
 	entry := masker(&logrus.Entry{
 		Context: WithMasks(t.Context(), &masks),
@@ -131,7 +141,7 @@ func TestValueMaskerEncodedMasks(t *testing.T) {
 // the token to anyone who can decode the log.
 func TestValueMaskerBase64Alignments(t *testing.T) {
 	secret := "s3cr3t-token-value"
-	masker := valueMasker(false, map[string]string{"TOKEN": secret})
+	masker := valueMasker(false, AppendSecretMaskers(nil, map[string]string{"TOKEN": secret}))
 
 	// One prefix per alignment: len%3 of 0, 1 and 2.
 	for _, prefix := range []string{"x-access-token:", "user:", "ab:"} {
@@ -155,7 +165,7 @@ func TestValueMaskerBase64Alignments(t *testing.T) {
 // The masker caches its replacer, so it has to notice both a mask appended to the same
 // slice and a composite action logging with a slice of its own.
 func TestValueMaskerCachedReplacerSeesNewMasks(t *testing.T) {
-	masker := valueMasker(false, map[string]string{"TOKEN": "secret-token"})
+	masker := valueMasker(false, AppendSecretMaskers(nil, map[string]string{"TOKEN": "secret-token"}))
 	mask := func(masks *[]string, message string) string {
 		return masker(&logrus.Entry{Context: WithMasks(t.Context(), masks), Message: message}).Message
 	}

@@ -111,16 +111,17 @@ func NewReporter(ctx context.Context, cancel context.CancelFunc, client client.C
 	if v := task.Context.Fields["gitea_runtime_token"].GetStringValue(); v != "" {
 		oldnew = runner.AppendSecretMasker(oldnew, v)
 	}
-	for _, v := range task.Secrets {
+	if v := task.Context.Fields["actions_id_token_request_token"].GetStringValue(); v != "" {
 		oldnew = runner.AppendSecretMasker(oldnew, v)
 	}
+	oldnew = runner.AppendSecretMaskers(oldnew, task.Secrets)
 
 	rv := &Reporter{
 		ctx:                 ctx,
 		cancel:              cancel,
 		client:              client,
 		oldnew:              oldnew,
-		logReplacer:         strings.NewReplacer(oldnew...),
+		logReplacer:         runner.NewSecretReplacer(oldnew),
 		logReportInterval:   cfg.Runner.LogReportInterval,
 		logReportMaxLatency: cfg.Runner.LogReportMaxLatency,
 		logBatchSize:        cfg.Runner.LogReportBatchSize,
@@ -138,6 +139,8 @@ func NewReporter(ctx context.Context, cancel context.CancelFunc, client client.C
 	}
 
 	rv.daemonWait = 6 * rv.effectiveCloseTimeout()
+
+	registerGlobalMasks(rv)
 
 	if task.Secrets["ACTIONS_STEP_DEBUG"] == "true" {
 		rv.debugOutputEnabled = true
@@ -167,12 +170,13 @@ func (r *Reporter) Levels() []log.Level {
 	return log.AllLevels
 }
 
-// appendLogRow buffers a row for the uploader and mirrors it into job.log. A nil row is one
-// the command handler dropped, such as ::add-mask::. Caller holds stateMu.
+// appendLogRow masks a row before buffering it for Gitea and the local job.log, the one point
+// feeding both. A nil row is one the command handler dropped. Caller holds stateMu.
 func (r *Reporter) appendLogRow(row *runnerv1.LogRow) {
 	if row == nil {
 		return
 	}
+	row.Content = r.mask(row.Content)
 	r.logRows = append(r.logRows, row)
 	r.jobLog.write(row.Time.AsTime(), row.Content)
 }
@@ -223,7 +227,7 @@ func (r *Reporter) Fire(entry *log.Entry) error {
 	r.stateChanged = true
 
 	if log.IsLevelEnabled(log.TraceLevel) {
-		log.WithFields(entry.Data).Trace(entry.Message)
+		log.WithFields(entry.Data).Trace(r.mask(entry.Message)) // the process masker has no ::add-mask:: value
 	}
 
 	timestamp := entry.Time
@@ -445,7 +449,7 @@ func (r *Reporter) logf(format string, a ...any) {
 	if !r.duringSteps() {
 		// Masked like any other row: these bypass parseLogRow, but a caller can still
 		// interpolate a secret, such as a configured URL carrying credentials.
-		r.appendLogRow(r.newLogRow(timestamppb.Now(), fmt.Sprintf(format, a...)))
+		r.appendLogRow(&runnerv1.LogRow{Time: timestamppb.Now(), Content: fmt.Sprintf(format, a...)})
 	}
 }
 
@@ -469,6 +473,11 @@ func (r *Reporter) SetOutputs(outputs map[string]string) {
 			r.logf("ignore output %q because the value is too long: %d > %d", k, l, maxOutputValueLen)
 			continue
 		}
+		if r.logReplacer.Replace(v) != v { // GitHub skips an output that may carry a secret rather than masking it
+			log.Warnf("ignore output %q because it may contain a secret", k)
+			r.logf("ignore output %q because it may contain a secret", k)
+			continue
+		}
 		if _, ok := r.outputs[k]; !ok {
 			r.outputs[k] = jobOutput{value: v}
 		}
@@ -476,6 +485,7 @@ func (r *Reporter) SetOutputs(outputs map[string]string) {
 }
 
 func (r *Reporter) Close(lastWords string) error {
+	defer deregisterGlobalMasks(r) // deferred so a panic below cannot strand this task's masks
 	r.stateMu.Lock()
 	r.closed = true
 	if r.state.Result == runnerv1.Result_RESULT_UNSPECIFIED {
@@ -880,22 +890,18 @@ func (r *Reporter) parseLogRow(entry *log.Entry) *runnerv1.LogRow {
 		}
 	}
 
-	return r.newLogRow(timestamppb.New(entry.Time), content)
+	return &runnerv1.LogRow{Time: timestamppb.New(entry.Time), Content: content}
 }
 
-// newLogRow applies the masking and validation every row must carry, whatever built it.
-func (r *Reporter) newLogRow(t *timestamppb.Timestamp, content string) *runnerv1.LogRow {
-	return &runnerv1.LogRow{
-		Time:    t,
-		Content: r.mask(content),
-	}
-}
-
+// mask repairs the content first, so a secret the repair itself spells out is still caught.
 func (r *Reporter) mask(content string) string {
-	return strings.ToValidUTF8(r.logReplacer.Replace(content), "?")
+	return r.logReplacer.Replace(strings.ToValidUTF8(content, "?"))
 }
 
+// addMask deliberately leaves the process-wide masker alone. Its entries come from every live
+// task at once, so a workflow could otherwise mask "error" there and rewrite the runner's own
+// log, and every other task's, for the rest of the job.
 func (r *Reporter) addMask(msg string) {
 	r.oldnew = runner.AppendSecretMasker(r.oldnew, msg)
-	r.logReplacer = strings.NewReplacer(r.oldnew...)
+	r.logReplacer = runner.NewSecretReplacer(r.oldnew)
 }

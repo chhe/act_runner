@@ -388,7 +388,7 @@ func setJobResult(ctx context.Context, info jobInfo, rc *RunContext, success boo
 
 	if rc.caller != nil {
 		// set reusable workflow job result
-		rc.caller.setReusedWorkflowJobResult(rc.JobName, jobResult) // For Gitea
+		rc.caller.setReusedWorkflowJobResult(rc.Run.JobID, jobResult) // For Gitea
 		return
 	}
 
@@ -487,7 +487,8 @@ func tryUploadJobSummary(ctx context.Context, rc *RunContext) {
 		if !ok || len(body) == 0 {
 			continue
 		}
-		uploadJobSummary(ctx, client, base+strconv.Itoa(i)+"/summary", runtimeToken, body)
+		// Gitea renders summaries on the run page, so mask before the upload.
+		uploadJobSummary(ctx, client, base+strconv.Itoa(i)+"/summary", runtimeToken, []byte(rc.maskSecrets(string(body))))
 	}
 }
 

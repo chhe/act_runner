@@ -236,7 +236,7 @@ func setReusedWorkflowCallerResult(rc *RunContext, runner *runnerImpl) common.Ex
 			}
 
 			if rc.caller != nil {
-				rc.caller.setReusedWorkflowJobResult(rc.JobName, reusedWorkflowJobResult)
+				rc.caller.setReusedWorkflowJobResult(rc.Run.JobID, reusedWorkflowJobResult)
 			} else {
 				// Serialize this shared Job.Result write against the other matrix combos
 				// and setJobResult (same lockJob key).

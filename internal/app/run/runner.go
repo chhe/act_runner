@@ -519,6 +519,7 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 		Env:                  envs,
 		ProxyEnv:             proxyEnv,
 		Secrets:              task.Secrets,
+		ExtraMasks:           append(proxyPasswords(), preset.Token),
 		GitHubInstance:       strings.TrimSuffix(r.client.Address(), "/"),
 		NoSkipCheckout:       true,
 		DisableActEnv:        r.cfg.Runner.SetActEnv != nil && !*r.cfg.Runner.SetActEnv,

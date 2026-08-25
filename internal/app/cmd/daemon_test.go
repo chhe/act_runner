@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"gitea.com/gitea/runner/internal/pkg/config"
+	"gitea.com/gitea/runner/internal/pkg/report"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
@@ -57,10 +58,15 @@ func TestInitLoggingSetsLevelAndCaller(t *testing.T) {
 		log.SetReportCaller(oldReportCaller)
 	})
 
+	oldFormatter := log.StandardLogger().Formatter
+	t.Cleanup(func() { log.SetFormatter(oldFormatter) })
+
 	cfg := &config.Config{}
 	cfg.Log.Level = "debug"
 	initLogging(cfg)
 
 	require.Equal(t, log.DebugLevel, log.GetLevel())
 	require.True(t, log.StandardLogger().ReportCaller)
+	// act plans a job on this logger, so a live task's secrets have to be masked out of it
+	require.IsType(t, report.MaskingFormatter(nil), log.StandardLogger().Formatter)
 }
