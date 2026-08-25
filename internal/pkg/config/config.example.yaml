@@ -71,7 +71,7 @@ runner:
   # This ensures bursty output (e.g., npm install) is delivered promptly.
   #log_report_batch_size: 100
   # The interval for reporting task state (step status, timing) to the Gitea instance.
-  # State is also reported immediately on step transitions (start/stop).
+  # State is also reported on step transitions (start/stop) and after each log flush.
   #state_report_interval: 5s
   # Per-attempt deadline for flushing the final logs and task state when a job
   # finishes, on a detached context so a server cancel can't block the acknowledgement.
