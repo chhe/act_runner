@@ -282,6 +282,7 @@ func TestRunEvent(t *testing.T) {
 		{workdir, "uses-composite", "push", "", platforms, secrets},
 		{workdir, "uses-composite-with-error", "push", "Job 'failing-composite-action' failed", platforms, secrets},
 		{workdir, "uses-docker-url", "push", "", platforms, secrets},
+		{workdir, "uses-step-if-inputs-not-leaked", "push", "", platforms, secrets},
 		{workdir, "act-composite-env-test", "push", "", platforms, secrets},
 
 		// Eval

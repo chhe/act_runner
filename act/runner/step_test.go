@@ -279,6 +279,13 @@ func TestIsStepEnabled(t *testing.T) {
 		Conclusion: model.StepStatusFailure,
 	}
 	assertObject.True(isStepEnabled(context.Background(), step.getStepModel().If.Value, step, stepStageMain))
+
+	// neither env nor the step's own with: values are inputs, at any stage
+	step = createTestStep(t, "if: inputs.forged")
+	step.getRunContext().Env["INPUT_FORGED"] = "leaked"
+	*step.getEnv() = map[string]string{"INPUT_FORGED": "leaked"}
+	assertObject.False(isStepEnabled(context.Background(), step.getStepModel().If.Value, step, stepStageMain))
+	assertObject.False(isStepEnabled(context.Background(), step.getStepModel().If.Value, step, stepStagePost))
 }
 
 func TestIsContinueOnError(t *testing.T) {
@@ -338,6 +345,13 @@ func TestIsContinueOnError(t *testing.T) {
 	continueOnError, err = isContinueOnError(context.Background(), step.getStepModel().RawContinueOnError, step, stepStageMain)
 	assertObject.False(continueOnError)
 	assertObject.NoError(err) //nolint:testifylint // pre-existing issue from nektos/act
+
+	// the step's own with: values are not inputs
+	step = createTestStep(t, "continue-on-error: ${{ inputs.forged }}")
+	*step.getEnv() = map[string]string{"INPUT_FORGED": "true"}
+	continueOnError, err = isContinueOnError(context.Background(), step.getStepModel().RawContinueOnError, step, stepStageMain)
+	assertObject.False(continueOnError)
+	require.NoError(t, err)
 
 	// expression parse error
 	step = createTestStep(t, "continue-on-error: ${{ 'test' != test }}")

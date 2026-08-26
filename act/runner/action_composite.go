@@ -28,7 +28,7 @@ func evaluateCompositeInputAndEnv(ctx context.Context, parent *RunContext, step 
 		}
 	}
 
-	ee := parent.NewStepExpressionEvaluator(ctx, step)
+	ee := parent.NewActionInputsExpressionEvaluator(ctx, step)
 
 	for inputID, input := range step.getActionModel().Inputs {
 		envKey := regexp.MustCompile("[^A-Z0-9-]").ReplaceAllString(strings.ToUpper(inputID), "_")
@@ -75,13 +75,13 @@ func newCompositeRunContext(ctx context.Context, parent *RunContext, step action
 		StepResults:  map[string]*model.StepResult{},
 		JobContainer: parent.JobContainer,
 		ActionPath:   actionPath,
-		Env:          env,
 		GlobalEnv:    parent.GlobalEnv,
 		Masks:        parent.Masks,
 		ExtraPath:    parent.ExtraPath,
 		Parent:       parent,
 		EventJSON:    parent.EventJSON,
 	}
+	compositerc.setActionEnv(env)
 	compositerc.ExprEval = compositerc.NewExpressionEvaluator(ctx)
 
 	return compositerc

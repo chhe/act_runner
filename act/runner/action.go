@@ -346,7 +346,7 @@ func execAsDocker(ctx context.Context, step actionStep, actionName, actionDir, b
 			logger.Debugf("image '%s' for architecture '%s' already exists", image, rc.Config.ContainerArchitecture)
 		}
 	}
-	eval := rc.NewStepExpressionEvaluator(ctx, step)
+	eval := rc.NewActionInputsExpressionEvaluator(ctx, step)
 	cmd, err := shellquote.Split(eval.Interpolate(ctx, step.getStepModel().With["args"]))
 	if err != nil {
 		return err
@@ -410,13 +410,13 @@ func evalDockerArgs(ctx context.Context, step step, action *model.Action, cmd *[
 	}
 	mergeIntoMap(step, step.getEnv(), inputs)
 
-	stepEE := rc.NewStepExpressionEvaluator(ctx, step)
+	stepEE := rc.NewActionInputsExpressionEvaluator(ctx, step)
 	for i, v := range *cmd {
 		(*cmd)[i] = stepEE.Interpolate(ctx, v)
 	}
 	mergeIntoMap(step, step.getEnv(), action.Runs.Env)
 
-	ee := rc.NewStepExpressionEvaluator(ctx, step)
+	ee := rc.NewActionInputsExpressionEvaluator(ctx, step)
 	for k, v := range *step.getEnv() {
 		(*step.getEnv())[k] = ee.Interpolate(ctx, v)
 	}

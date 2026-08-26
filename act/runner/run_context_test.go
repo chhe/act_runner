@@ -992,6 +992,14 @@ func TestRunContextGetEnv(t *testing.T) {
 	}
 }
 
+// a remote composite action re-evaluates its env per stage, so inputs must follow it
+func TestSetActionEnvRefreshesInputs(t *testing.T) {
+	rc := &RunContext{}
+	rc.setActionEnv(map[string]string{"INPUT_MSG": "pre"})
+	rc.setActionEnv(map[string]string{"INPUT_MSG": "main"})
+	assert.Equal(t, map[string]any{"msg": "main"}, rc.actionInputs)
+}
+
 func TestCreateContainerNameBoundedForLongMatrixInput(t *testing.T) {
 	longMatrixValue := strings.Repeat("os=ubuntu-latest-go=1.24-node=22-", 20)
 	name := createContainerName(

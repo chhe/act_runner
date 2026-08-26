@@ -245,7 +245,7 @@ func (sar *stepActionRemote) getCompositeRunContext(ctx context.Context) *RunCon
 		// input for this action during the main stage, but the env
 		// was already created during the pre stage)
 		env := evaluateCompositeInputAndEnv(ctx, sar.RunContext, sar)
-		sar.compositeRunContext.Env = env
+		sar.compositeRunContext.setActionEnv(env)
 		sar.compositeRunContext.ExtraPath = sar.RunContext.ExtraPath
 	}
 	return sar.compositeRunContext

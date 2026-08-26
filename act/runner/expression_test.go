@@ -156,8 +156,10 @@ func TestEvaluateRunContext(t *testing.T) {
 
 func TestEvaluateStep(t *testing.T) {
 	rc := createRunContext(t)
+	rc.Env["INPUT_FORGED"] = "leaked"
 	step := &stepRun{
 		RunContext: rc,
+		env:        map[string]string{"INPUT_FORGED": "leaked"},
 	}
 
 	ee := rc.NewStepExpressionEvaluator(context.Background(), step)
@@ -176,6 +178,7 @@ func TestEvaluateStep(t *testing.T) {
 		{"steps.id_with_underscores.conclusion", model.StepStatusSuccess.String(), ""},
 		{"steps.id_with_underscores.outcome", model.StepStatusFailure.String(), ""},
 		{"steps.id_with_underscores.outputs.foo_with_underscores", "bar_with_underscores", ""},
+		{"inputs.forged", nil, ""}, // INPUT_* env is not an input
 	}
 
 	for _, table := range tables {
