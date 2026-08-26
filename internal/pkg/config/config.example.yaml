@@ -241,7 +241,7 @@ container:
   #valid_volumes: []
   # Overrides the docker client host with the specified one.
   # If it's empty, runner will find an available docker host automatically.
-  # If it's "-", runner will find an available docker host automatically, but the docker host won't be mounted to the job containers and service containers.
+  # If it's "-", runner will find an available docker host automatically, but won't mount it into the job and action containers.
   # If it's not empty or "-", the specified docker host will be used. An error will be returned if it doesn't work.
   #docker_host: ""
   # Pull docker image(s) even if already present.

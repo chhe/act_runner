@@ -235,9 +235,8 @@ func (rc *RunContext) containerDaemonSocket() string {
 
 const sharedToolCacheVolume = "act-toolcache" // mounted only when the tool cache is shared
 
-// validVolumes returns the volumes allowed on this job's containers: the configured base
-// plus the volumes the runner mounts automatically. It derives a fresh slice every call and
-// never mutates the shared Config (see containerDaemonSocket).
+// validVolumes returns what the job and action containers may mount, the configured base plus
+// the runner's own volumes. Fresh slice per call, the shared Config is never mutated.
 func (rc *RunContext) validVolumes() []string {
 	name := rc.jobContainerName()
 	volumes := slices.Clone(rc.Config.ValidVolumes)
@@ -283,7 +282,7 @@ func splitVolumes(specs []string) ([]string, map[string]string, map[string]bool)
 	for _, spec := range specs {
 		parsed, err := loader.ParseVolume(spec)
 		if err != nil {
-			binds = append(binds, spec) // let Docker report the malformed spec
+			binds = append(binds, spec) // unclassifiable, sanitizeConfig warns and drops it
 			continue
 		}
 		targets[parsed.Target] = true
@@ -493,7 +492,7 @@ func (rc *RunContext) startJobContainer() common.Executor {
 			for _, volume := range spec.Volumes {
 				interpolatedVolumes = append(interpolatedVolumes, rc.ExprEval.Interpolate(ctx, volume))
 			}
-			serviceBinds, serviceMounts := rc.GetServiceBindsAndMounts(interpolatedVolumes)
+			serviceBinds, serviceMounts, _ := splitVolumes(interpolatedVolumes)
 
 			interpolatedPorts := make([]string, 0, len(spec.Ports))
 			for _, port := range spec.Ports {
@@ -526,6 +525,7 @@ func (rc *RunContext) startJobContainer() common.Executor {
 				NetworkAliases:  []string{serviceID},
 				ExposedPorts:    exposedPorts,
 				PortBindings:    portBindings,
+				ValidVolumes:    rc.Config.ValidVolumes, // not validVolumes(), a service gets no docker socket
 				AllocatePTY:     rc.Config.AllocatePTY,
 			})
 			rc.serviceContainers = append(rc.serviceContainers, &serviceContainer{name: serviceID, image: serviceImage, container: c})
@@ -1586,13 +1586,4 @@ func (rc *RunContext) interpolateCredentials(ctx context.Context, credentials ma
 	}
 
 	return username, password, nil
-}
-
-// GetServiceBindsAndMounts returns the binds and mounts for the service container, resolving paths as appopriate
-func (rc *RunContext) GetServiceBindsAndMounts(svcVolumes []string) ([]string, map[string]string) {
-	binds, mounts, claimed := splitVolumes(svcVolumes)
-	if daemonSocket := rc.containerDaemonSocket(); daemonSocket != "-" && !claimed["/var/run/docker.sock"] {
-		binds = append(binds, getDockerDaemonSocketMountPath(daemonSocket)+":/var/run/docker.sock")
-	}
-	return binds, mounts
 }

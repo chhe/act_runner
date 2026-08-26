@@ -311,6 +311,23 @@ jobs:
 	require.Equal(t, [2]string{"", ""}, credentials["redis:latest"])
 }
 
+func TestStartJobContainerGivesServicesTheirVolumes(t *testing.T) {
+	redis := startJobContainerInputs(t, `
+jobs:
+  job:
+    services:
+      redis:
+        image: redis:latest
+        volumes:
+          - data:/data
+`, &Config{ValidVolumes: []string{"data"}})[0]
+
+	require.Equal(t, "redis:latest", redis.Image) // services are built before the job container
+	require.Equal(t, []string{"data"}, redis.ValidVolumes)
+	require.Equal(t, map[string]string{"data": "/data"}, redis.Mounts)
+	require.Empty(t, redis.Binds) // the docker socket is the job container's alone
+}
+
 // Only the workflow's options may be stripped later, so the two sources have to reach the
 // container apart from each other.
 func TestStartJobContainerKeepsRunnerOptionsApartFromWorkflowOptions(t *testing.T) {
@@ -520,37 +537,29 @@ func TestRunContext_GetBindsAndMounts(t *testing.T) {
 				rc.Run.JobID = "job1"
 				rc.Run.Workflow.Jobs = map[string]*model.Job{"job1": job}
 
-				jobBinds, jobMounts := rc.GetBindsAndMounts()
-				svcBinds, svcMounts := rc.GetServiceBindsAndMounts(testcase.volumes)
-				// job and service containers classify volumes alike, only their own mounts differ
-				for _, got := range []struct {
-					binds  []string
-					mounts map[string]string
-				}{{jobBinds, jobMounts}, {svcBinds, svcMounts}} {
-					gotbind, gotmount := got.binds, got.mounts
+				gotbind, gotmount := rc.GetBindsAndMounts()
 
-					if len(testcase.wantbind) > 0 {
-						assert.Contains(t, gotbind, testcase.wantbind)
-					}
+				if len(testcase.wantbind) > 0 {
+					assert.Contains(t, gotbind, testcase.wantbind)
+				}
 
-					for k, v := range testcase.wantmount {
-						assert.Contains(t, gotmount, k)
-						assert.Equal(t, gotmount[k], v)
-					}
+				for k, v := range testcase.wantmount {
+					assert.Contains(t, gotmount, k)
+					assert.Equal(t, gotmount[k], v)
+				}
 
-					// Docker rejects a container with two mounts on one target, so the job's own
-					// volumes must displace the runner's rather than pile up next to them.
-					targets := map[string]bool{}
-					for _, bind := range gotbind {
-						parsed, err := loader.ParseVolume(bind)
-						require.NoError(t, err)
-						assert.NotContains(t, targets, parsed.Target, "%s mounts an already mounted target", bind)
-						targets[parsed.Target] = true
-					}
-					for source, target := range gotmount {
-						assert.NotContains(t, targets, target, "%s mounts an already mounted target", source)
-						targets[target] = true
-					}
+				// Docker rejects a container with two mounts on one target, so the job's own
+				// volumes must displace the runner's rather than pile up next to them.
+				targets := map[string]bool{}
+				for _, bind := range gotbind {
+					parsed, err := loader.ParseVolume(bind)
+					require.NoError(t, err)
+					assert.NotContains(t, targets, parsed.Target, "%s mounts an already mounted target", bind)
+					targets[parsed.Target] = true
+				}
+				for source, target := range gotmount {
+					assert.NotContains(t, targets, target, "%s mounts an already mounted target", source)
+					targets[target] = true
 				}
 			})
 		}

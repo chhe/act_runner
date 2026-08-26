@@ -1221,6 +1221,12 @@ func (cr *containerReference) sanitizeConfig(ctx context.Context, config *contai
 		}
 		hostConfig.Mounts = sanitizedMounts
 	} else {
+		for _, bind := range hostConfig.Binds {
+			logger.Warnf("[%s] is not a valid volume, will be ignored", bind)
+		}
+		for _, mt := range hostConfig.Mounts {
+			logger.Warnf("[%s] is not a valid volume, will be ignored", mt.Source)
+		}
 		hostConfig.Binds = []string{}
 		hostConfig.Mounts = []mount.Mount{}
 	}
