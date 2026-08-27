@@ -6,8 +6,52 @@ package runner
 import (
 	"testing"
 
+	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/act/common/git"
+
+	"gitea.dev/actionslib/pkg/model"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestCompositeActionParity(t *testing.T) {
+	t.Run("inherits contexts without leaking inputs", func(t *testing.T) {
+		ctx := t.Context()
+		strategy := &model.Strategy{MaxParallel: 3}
+		parent := &RunContext{
+			Config:       &Config{},
+			Matrix:       map[string]any{"os": "linux"},
+			Run:          &model.Run{JobID: "job", Workflow: &model.Workflow{Name: "workflow", Jobs: map[string]*model.Job{"job": {Strategy: strategy}}}},
+			JobContainer: &jobContainerMock{},
+		}
+		composite := newCompositeRunContext(ctx, parent, &stepActionRemote{
+			Step:       &model.Step{With: map[string]string{"SHARED": "outer"}},
+			RunContext: parent,
+			action:     &model.Action{Inputs: map[string]model.Input{"shared": {Default: "outer-default"}}},
+			env:        map[string]string{"INPUT_SHARED": "outer"},
+		}, "/action")
+
+		assert.Same(t, strategy, composite.Run.Job().Strategy)
+		assert.Equal(t, "linux|3|outer", composite.NewExpressionEvaluator(ctx).Interpolate(ctx,
+			"${{ matrix.os }}|${{ strategy.max-parallel }}|${{ inputs.shared }}"))
+		assert.NotContains(t, composite.Env, "INPUT_SHARED")
+
+		nestedEnv := composite.GetEnv()
+		populateEnvsFromInput(ctx, &nestedEnv, &model.Action{Inputs: map[string]model.Input{"shared": {Default: "inner-default"}}}, composite)
+		assert.Equal(t, "inner-default", nestedEnv["INPUT_SHARED"])
+	})
+
+	t.Run("propagates pre failures", func(t *testing.T) {
+		setCloneExecutor(t, func(git.NewGitCloneExecutorInput) common.Executor { return common.NewErrorExecutor(assert.AnError) })
+		rc := &RunContext{
+			Config:       &Config{GitHubInstance: "github.com", ActionCacheDir: t.TempDir()},
+			Run:          &model.Run{JobID: "job", Workflow: &model.Workflow{Jobs: map[string]*model.Job{"job": {}}}},
+			JobContainer: &jobContainerMock{},
+		}
+
+		require.ErrorIs(t, rc.compositeExecutor(&model.Action{Runs: model.ActionRuns{Using: "composite", Steps: []model.Step{{ID: "nested", Uses: "org/action@v1"}}}}).pre(t.Context()), assert.AnError)
+	})
+}
 
 func TestAppendUniqueMasks(t *testing.T) {
 	tests := []struct {

@@ -7,6 +7,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"io"
 	"maps"
 	"runtime"
 	"slices"
@@ -21,6 +22,8 @@ import (
 	"github.com/sirupsen/logrus"
 	yaml "go.yaml.in/yaml/v4"
 )
+
+var builtinShells = []string{"bash", "sh", "pwsh", "powershell", "cmd", "python"}
 
 type stepRun struct {
 	Step               *model.Step
@@ -251,7 +254,7 @@ func getScriptName(rc *RunContext, step *model.Step) string {
 // OCI runtime exec failed: exec failed: container_linux.go:380: starting container process caused: exec: "${{": executable file not found in $PATH: unknown
 func (sr *stepRun) setupShellCommand(ctx context.Context) (name, script string, err error) {
 	logger := common.Logger(ctx)
-	sr.setupShell(ctx)
+	implicitShell := sr.setupShell(ctx)
 	sr.setupWorkingDirectory(ctx)
 
 	step := sr.Step
@@ -259,7 +262,18 @@ func (sr *stepRun) setupShellCommand(ctx context.Context) (name, script string, 
 	script = sr.RunContext.NewStepExpressionEvaluator(ctx, sr).Interpolate(ctx, step.Run)
 	sr.interpolatedScript = script
 
+	// GitHub matches the built-in names case-insensitively, so `shell: PWSH` is valid
+	if slices.Contains(builtinShells, strings.ToLower(step.Shell)) {
+		step.Shell = strings.ToLower(step.Shell)
+	}
+
 	scCmd := step.ShellCommand()
+	if implicitShell && (step.Shell == "bash" || step.Shell == "sh") {
+		scCmd = step.Shell + " -e {0}"
+	}
+	if !strings.Contains(scCmd, "{0}") {
+		return "", "", fmt.Errorf("invalid shell option %q: format must contain {0}", step.Shell)
+	}
 	sr.shellCommand = scCmd
 
 	name = getScriptName(sr.RunContext, step)
@@ -268,7 +282,8 @@ func (sr *stepRun) setupShellCommand(ctx context.Context) (name, script string, 
 	// Reference: https://github.com/actions/runner/blob/8109c962f09d9acc473d92c595ff43afceddb347/src/Runner.Worker/Handlers/ScriptHandlerHelpers.cs#L19-L27
 	runPrepend := ""
 	runAppend := ""
-	switch step.Shell {
+	shellCommand, _, _ := strings.Cut(step.Shell, " ")
+	switch shellCommand {
 	case "bash", "sh":
 		name += ".sh"
 	case "pwsh", "powershell":
@@ -292,13 +307,13 @@ func (sr *stepRun) setupShellCommand(ctx context.Context) (name, script string, 
 
 	rc := sr.getRunContext()
 	scriptPath := fmt.Sprintf("%s/%s", rc.JobContainer.GetActPath(), name)
-	sr.cmdline = strings.Replace(scCmd, `{0}`, scriptPath, 1)
+	sr.cmdline = strings.ReplaceAll(scCmd, `{0}`, scriptPath)
 	sr.cmd, err = shellquote.Split(sr.cmdline)
 
 	return name, script, err
 }
 
-func (sr *stepRun) setupShell(ctx context.Context) {
+func (sr *stepRun) setupShell(ctx context.Context) bool {
 	rc := sr.RunContext
 	step := sr.Step
 
@@ -306,31 +321,47 @@ func (sr *stepRun) setupShell(ctx context.Context) {
 		step.Shell = rc.Run.Job().Defaults.Run.Shell
 	}
 
-	step.Shell = rc.NewExpressionEvaluator(ctx).Interpolate(ctx, step.Shell)
+	step.Shell = rc.NewStepExpressionEvaluator(ctx, sr).Interpolate(ctx, step.Shell)
 
 	if step.Shell == "" {
 		step.Shell = rc.Run.Workflow.Defaults.Run.Shell
 	}
 
-	if step.Shell == "" {
+	implicitShell := step.Shell == ""
+	if implicitShell {
+		shellWithFallback := []string{"bash", "sh"}
+		env := maps.Clone(sr.env)
+		rc.ApplyExtraPath(ctx, &env)
 		if _, ok := rc.JobContainer.(*container.HostEnvironment); ok {
-			shellWithFallback := []string{"bash", "sh"}
 			// Don't use bash on windows by default, if not using a docker container
 			if runtime.GOOS == "windows" {
 				shellWithFallback = []string{"pwsh", "powershell"}
 			}
 			step.Shell = shellWithFallback[0]
-			env := maps.Clone(sr.env)
-			sr.getRunContext().ApplyExtraPath(ctx, &env)
 			_, err := lookpath.LookPath2(shellWithFallback[0], env)
 			if err != nil {
 				step.Shell = shellWithFallback[1]
 			}
-		} else if containerImage := rc.containerImage(ctx); containerImage != "" {
-			// Currently only linux containers are supported, use sh by default like actions/runner
-			step.Shell = "sh"
+		} else {
+			step.Shell = shellWithFallback[0]
+			if !rc.containerHasBash(ctx, env) {
+				step.Shell = shellWithFallback[1]
+			}
 		}
 	}
+	return implicitShell
+}
+
+// containerHasBash probes once per job, else every implicit-shell step pays for an exec.
+func (rc *RunContext) containerHasBash(ctx context.Context, env map[string]string) bool {
+	top := rc.topLevelRunContext()
+	if top.hasBash == nil {
+		stdout, stderr := rc.JobContainer.ReplaceLogWriter(io.Discard, io.Discard)
+		found := rc.JobContainer.Exec([]string{"sh", "-c", "command -v bash >/dev/null 2>&1"}, env, "", "")(ctx) == nil
+		rc.JobContainer.ReplaceLogWriter(stdout, stderr)
+		top.hasBash = &found
+	}
+	return *top.hasBash
 }
 
 func (sr *stepRun) setupWorkingDirectory(ctx context.Context) {
@@ -345,7 +376,7 @@ func (sr *stepRun) setupWorkingDirectory(ctx context.Context) {
 	}
 
 	// jobs can receive context values, so we interpolate
-	workingdirectory = rc.NewExpressionEvaluator(ctx).Interpolate(ctx, workingdirectory)
+	workingdirectory = rc.NewStepExpressionEvaluator(ctx, sr).Interpolate(ctx, workingdirectory)
 
 	// but top level keys in workflow file like `defaults` or `env` can't
 	if workingdirectory == "" {

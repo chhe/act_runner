@@ -36,7 +36,13 @@ func evaluateCompositeInputAndEnv(ctx context.Context, parent *RunContext, step 
 
 		// lookup if key is defined in the step but the already
 		// evaluated value from the environment
-		_, defined := step.getStepModel().With[inputID]
+		defined := false
+		for key := range step.getStepModel().With {
+			if strings.EqualFold(key, inputID) {
+				defined = true
+				break
+			}
+		}
 		if value, ok := stepEnv[envKey]; defined && ok {
 			env[envKey] = value
 		} else {
@@ -51,6 +57,15 @@ func evaluateCompositeInputAndEnv(ctx context.Context, parent *RunContext, step 
 	return env
 }
 
+func (rc *RunContext) setCompositeActionEnv(env map[string]string) {
+	rc.setActionEnv(env)
+	for key := range rc.Env {
+		if strings.HasPrefix(key, "INPUT_") {
+			delete(rc.Env, key)
+		}
+	}
+}
+
 func newCompositeRunContext(ctx context.Context, parent *RunContext, step actionStep, actionPath string) *RunContext {
 	env := evaluateCompositeInputAndEnv(ctx, parent, step)
 
@@ -62,12 +77,13 @@ func newCompositeRunContext(ctx context.Context, parent *RunContext, step action
 	compositerc := &RunContext{
 		Name:    parent.Name,
 		JobName: parent.JobName,
+		Matrix:  parent.Matrix,
 		Run: &model.Run{
 			JobID: parent.Run.JobID,
 			Workflow: &model.Workflow{
 				Name: parent.Run.Workflow.Name,
 				Jobs: map[string]*model.Job{
-					parent.Run.JobID: {},
+					parent.Run.JobID: {Strategy: parent.Run.Job().Strategy},
 				},
 			},
 		},
@@ -81,7 +97,7 @@ func newCompositeRunContext(ctx context.Context, parent *RunContext, step action
 		Parent:       parent,
 		EventJSON:    parent.EventJSON,
 	}
-	compositerc.setActionEnv(env)
+	compositerc.setCompositeActionEnv(env)
 	compositerc.ExprEval = compositerc.NewExpressionEvaluator(ctx)
 
 	return compositerc
@@ -131,7 +147,7 @@ func execAsComposite(step actionStep) common.Executor {
 		// repeated composite actions grow rc.Masks exponentially.
 		rc.Masks = appendUniqueMasks(rc.Masks, compositeRC.Masks)
 		rc.ExtraPath = compositeRC.ExtraPath
-		// compositeRC.Env is dirty, contains INPUT_ and merged step env, only rely on compositeRC.GlobalEnv
+		// Propagate GlobalEnv only, so composite inputs and step-local values do not escape.
 		mergeIntoMap := mergeIntoMapCaseSensitive
 		if rc.JobContainer.IsEnvironmentCaseInsensitive() {
 			mergeIntoMap = mergeIntoMapCaseInsensitive
@@ -194,6 +210,7 @@ func (rc *RunContext) compositeExecutor(action *model.Action) *compositeSteps {
 	}
 
 	steps = append(steps, common.JobError)
+	preSteps = append(preSteps, common.JobError)
 	return &compositeSteps{
 		pre: func(ctx context.Context) error {
 			return common.NewPipelineExecutor(preSteps...)(common.WithJobErrorContainer(ctx))

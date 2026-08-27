@@ -168,47 +168,75 @@ func withStepLogger(ctx context.Context, stepNumber int, stepID, stepName, stage
 
 type entryProcessor func(entry *logrus.Entry) *logrus.Entry
 
-// secretValueEncoders are the shapes a secret takes on its way into a log: a base64
-// payload, a JSON string, or a URL component. An action that serializes a secret leaks
-// it in one of these forms, which a mask of the verbatim value alone does not catch, so
-// every form is masked as well. This mirrors the value encoders of GitHub's runner.
 var secretValueEncoders = []func(string) string{
 	func(v string) string { return base64.StdEncoding.EncodeToString([]byte(v)) },
 	base64ShiftEncoder(1),
 	base64ShiftEncoder(2),
+	base64InteriorEncoder(0),
+	base64InteriorEncoder(1),
+	base64InteriorEncoder(2),
+	expressionStringEscape,
 	jsonStringEscape,
 	jsonStringEscapeNoHTML,
-	url.QueryEscape,
+	uriDataEscape,
+	url.QueryEscape, // the form-encoded twin of uriDataEscape, which spells a space "+"
 	url.PathEscape,
+	xmlDataEscape,
+	trimDoubleQuotes,
 }
 
-// minShiftedBase64Len is the shortest shifted base64 fragment worth masking. A shorter
-// one carries too few bytes of the secret to identify it and would mask unrelated output.
-const minShiftedBase64Len = 8
-
-// base64ShiftEncoder returns the part of a secret's base64 form that survives when the
-// secret does not start on a 3-byte boundary of the payload it is embedded in. base64
-// encodes three bytes at a time, so `Authorization: Basic base64("user:token")` contains
-// the base64 of the token alone only when the prefix length happens to be a multiple of
-// three; at the other two alignments the encoding of the whole value differs. Encoding
-// the secret behind shift filler bytes reproduces those alignments, which is what the
-// Base64StringEscapeShift1/2 encoders of GitHub's runner do.
-//
-// The leading group (filler mixed with the secret's first bytes) and the trailing group
-// (padded here, but continuing into whatever follows the secret) are dropped, leaving the
-// group-aligned middle that does appear verbatim in the log.
+// base64ShiftEncoder reproduces the 3-byte alignments of `Basic base64("user:token")`, and
+// its padded tail only matches a secret that ends the payload.
 func base64ShiftEncoder(shift int) func(string) string {
+	return func(v string) string {
+		value := []byte(v)
+		if len(value) > shift {
+			value = value[shift:]
+		}
+		return base64.StdEncoding.EncodeToString(value)
+	}
+}
+
+const minInteriorBase64Len = 8 // below this a fragment matches unrelated output
+
+// base64InteriorEncoder keeps the aligned middle, so a secret with data after it still matches.
+func base64InteriorEncoder(shift int) func(string) string {
 	return func(v string) string {
 		buf := make([]byte, shift+len(v))
 		copy(buf[shift:], v)
 		encoded := base64.StdEncoding.EncodeToString(buf)
-		// Keep only the aligned middle, and only when enough of it is left to be a
-		// distinctive pattern rather than a fragment that matches unrelated output.
-		if len(encoded) < 8+minShiftedBase64Len {
+		if len(encoded) < 8+minInteriorBase64Len {
 			return ""
 		}
 		return encoded[4 : len(encoded)-4]
 	}
+}
+
+func expressionStringEscape(v string) string {
+	return strings.ReplaceAll(v, "'", "''")
+}
+
+func uriDataEscape(v string) string {
+	return strings.ReplaceAll(url.QueryEscape(v), "+", "%20")
+}
+
+var xmlDataEscaper = strings.NewReplacer(
+	"&", "&amp;",
+	"<", "&lt;",
+	">", "&gt;",
+	`"`, "&quot;",
+	"'", "&apos;",
+)
+
+func xmlDataEscape(v string) string {
+	return xmlDataEscaper.Replace(v)
+}
+
+func trimDoubleQuotes(v string) string {
+	if len(v) > 8 && strings.HasPrefix(v, `"`) && strings.HasSuffix(v, `"`) {
+		return v[1 : len(v)-1]
+	}
+	return ""
 }
 
 // jsonStringEscape returns v as it appears inside a JSON string, without the quotes,
@@ -245,36 +273,34 @@ func AppendSecretMaskers(oldnew []string, secrets map[string]string) []string {
 	return oldnew
 }
 
+// AppendSecretMasker registers v and each of its lines, as GitHub does.
 func AppendSecretMasker(oldnew []string, v string) []string {
-	ret := oldnew
-
-	for l := range strings.SplitSeq(v, "\n") {
-		tm := strings.TrimSpace(l)
-		// formatted JSON secrets could otherwise mask {,[,],} everywhere
-		if len(tm) > 1 {
-			ret = append(ret, tm, "***")
-			// command data reaches the log escaped, so "pass%word" also arrives as "pass%25word"
-			if strings.ContainsAny(tm, "%\r\n") {
-				ret = append(ret, EscapeCommandData(tm), "***")
-			}
-		}
+	ret := appendMaskedValue(oldnew, v)
+	for l := range strings.FieldsFuncSeq(v, func(r rune) bool { return r == '\r' || r == '\n' }) {
+		ret = appendMaskedValue(ret, strings.TrimSpace(l))
 	}
+	return ret
+}
 
-	// The encoded forms are derived from the whole value: a multi-line secret is
-	// encoded as one string, not line by line.
-	trimmed := strings.TrimSpace(v)
-	if len(trimmed) <= 1 {
+// appendMaskedValue registers one value and every shape it takes on its way into a log.
+func appendMaskedValue(ret []string, v string) []string {
+	// formatted JSON secrets could otherwise mask {,[,],} everywhere
+	if len(strings.TrimSpace(v)) <= 1 || slices.Contains(ret, v) {
 		return ret
 	}
+	ret = append(ret, v, "***")
+	// command data reaches the log escaped, so "pass%word" also arrives as "pass%25word"
+	if strings.ContainsAny(v, "%\r\n") {
+		ret = append(ret, EscapeCommandData(v), "***")
+	}
 	for _, encode := range secretValueEncoders {
-		encoded := encode(trimmed)
+		encoded := encode(v)
 		// An encoding that leaves the value unchanged is already masked above.
-		if encoded == trimmed || len(encoded) <= 1 || slices.Contains(ret, encoded) {
+		if encoded == v || len(encoded) <= 1 || slices.Contains(ret, encoded) {
 			continue
 		}
 		ret = append(ret, encoded, "***")
 	}
-
 	return ret
 }
 

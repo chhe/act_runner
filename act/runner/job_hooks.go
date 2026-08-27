@@ -51,10 +51,11 @@ func (rc *RunContext) runJobHook(ctx context.Context, hookPath, name string) err
 		rawLogger.Infof("shell: %s", shell)
 	}
 
-	env := maps.Clone(rc.GetEnv())
+	env := map[string]string{}
 	if jobContainer := rc.Run.Job().Container(); jobContainer != nil {
 		maps.Copy(env, jobContainer.Env)
 	}
+	maps.Copy(env, rc.GetEnv())
 	rc.withGithubEnv(ctx, rc.getGithubContext(ctx), env)
 	rc.ApplyExtraPath(ctx, &env)
 
@@ -95,10 +96,11 @@ func (rc *RunContext) setupHookFileCommands(ctx context.Context, env map[string]
 }
 
 func (rc *RunContext) processHookFileCommands(ctx context.Context) error {
-	if err := processRunnerEnvFileCommand(ctx, hookEnvFileCommand, rc, rc.setEnv); err != nil {
-		return err
+	err := processRunnerEnvFileCommand(ctx, hookEnvFileCommand, rc, rc.setEnvFile)
+	if pathErr := rc.UpdateExtraPath(ctx, path.Join(rc.JobContainer.GetActPath(), hookPathFileCommand)); pathErr != nil && err == nil {
+		err = pathErr
 	}
-	return rc.UpdateExtraPath(ctx, path.Join(rc.JobContainer.GetActPath(), hookPathFileCommand))
+	return err
 }
 
 // hookCommand mirrors actions/runner, which deliberately does not apply the shell flags it

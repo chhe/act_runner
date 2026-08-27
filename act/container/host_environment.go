@@ -629,8 +629,11 @@ func (*HostEnvironment) JoinPathVariable(paths ...string) string {
 func goArchToActionArch(arch string) string {
 	archMapper := map[string]string{
 		"x86_64":  "X64",
+		"amd64":   "X64",
 		"386":     "X86",
+		"arm":     "ARM",
 		"aarch64": "ARM64",
+		"arm64":   "ARM64",
 	}
 	if arch, ok := archMapper[arch]; ok {
 		return arch
@@ -640,7 +643,9 @@ func goArchToActionArch(arch string) string {
 
 func goOsToActionOs(os string) string {
 	osMapper := map[string]string{
-		"darwin": "macOS",
+		"linux":   "Linux",
+		"darwin":  "macOS",
+		"windows": "Windows",
 	}
 	if os, ok := osMapper[os]; ok {
 		return os

@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"strings"
@@ -326,6 +327,7 @@ jobs:
 	require.Equal(t, []string{"data"}, redis.ValidVolumes)
 	require.Equal(t, map[string]string{"data": "/data"}, redis.Mounts)
 	require.Empty(t, redis.Binds) // the docker socket is the job container's alone
+	require.Empty(t, redis.WorkingDir)
 }
 
 // Only the workflow's options may be stripped later, so the two sources have to reach the
@@ -1352,10 +1354,15 @@ func TestRunContextGetRunnerContext(t *testing.T) {
 	t.Run("adds the runner values the container cannot know", func(t *testing.T) {
 		rc := createRunsOnRunContext(t, "ubuntu-latest")
 		rc.Config.RunnerName = "runner-1"
+		rc.Config.Workdir = "/workspace/owner/repo"
 
 		runnerContext := rc.getRunnerContext(ctx)
 		assert.Equal(t, "runner-1", runnerContext["name"])
 		assert.Equal(t, "self-hosted", runnerContext["environment"])
+		assert.Equal(t, "/workspace/owner", runnerContext["workspace"])
+		assert.Equal(t, "/workspace/owner/repo", rc.getGithubContext(ctx).Workspace)
+		rc.Config.Env = map[string]string{"GITHUB_WORKSPACE": "/configured/work"}
+		assert.Equal(t, "/configured/work", rc.getGithubContext(ctx).Workspace)
 		assert.NotContains(t, runnerContext, "debug")
 	})
 
@@ -1368,13 +1375,50 @@ func TestRunContextGetRunnerContext(t *testing.T) {
 
 	t.Run("keeps the execution environment values", func(t *testing.T) {
 		rc := createRunsOnRunContext(t, "ubuntu-latest")
-		rc.JobContainer = &container.HostEnvironment{TmpDir: "/tmp/act", ToolCache: "/tmp/tool_cache"}
+		rc.Config.Workdir = "/host/work/owner/repo"
+		rc.JobContainer = &container.HostEnvironment{Workdir: rc.Config.Workdir, Path: "/container/work/owner/repo", TmpDir: "/tmp/act", ToolCache: "/tmp/tool_cache"}
 
 		runnerContext := rc.getRunnerContext(ctx)
 		assert.Equal(t, "/tmp/act", runnerContext["temp"])
 		assert.Equal(t, "/tmp/tool_cache", runnerContext["tool_cache"])
+		assert.Equal(t, "/container/work/owner", runnerContext["workspace"])
+		assert.Equal(t, "/container/work/owner/repo", rc.getGithubContext(ctx).Workspace)
 		assert.NotEmpty(t, runnerContext["os"])
 	})
+}
+
+func TestRunContextUpdateExtraPath(t *testing.T) {
+	longPath := strings.Repeat("x", 64*1024+1)
+	for _, testcase := range []struct {
+		name    string
+		content []byte
+		want    string
+		wantErr bool
+	}{
+		{name: "UTF-8 BOM", content: []byte("\xef\xbb\xbf/utf8/tools\n"), want: "/utf8/tools"},
+		{name: "UTF-16 BOM", content: []byte{0xff, 0xfe, 'C', 0, ':', 0, '\\', 0, 't', 0, 'o', 0, 'o', 0, 'l', 0, 's', 0, '\n', 0}, want: `C:\tools`},
+		{name: "over 64 KiB", content: []byte(longPath + "\n"), want: longPath},
+		{name: "over 16 MiB", content: []byte(strings.Repeat("x", 16*1024*1024+1)), wantErr: true},
+	} {
+		t.Run(testcase.name, func(t *testing.T) {
+			logger := log.New()
+			logger.SetOutput(io.Discard)
+			ctx := common.WithLogger(t.Context(), logger)
+			jobContainer := &containerMock{}
+			jobContainer.On("GetContainerArchive", mock.Anything, "/github/path").
+				Return(io.NopCloser(bytes.NewReader(tarArchive(t, tarEntry{name: "path", body: string(testcase.content)}))), nil).Once()
+			defer jobContainer.AssertExpectations(t)
+			rc := &RunContext{JobContainer: jobContainer}
+
+			err := rc.UpdateExtraPath(ctx, "/github/path")
+			if testcase.wantErr {
+				require.ErrorContains(t, err, "reading path file")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, []string{testcase.want}, rc.ExtraPath)
+		})
+	}
 }
 
 func TestParentDir(t *testing.T) {

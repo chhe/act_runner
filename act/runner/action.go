@@ -351,9 +351,13 @@ func execAsDocker(ctx context.Context, step actionStep, actionName, actionDir, b
 	if err != nil {
 		return err
 	}
-	if len(cmd) == 0 {
-		cmd = action.Runs.Args
-		evalDockerArgs(ctx, step, action, &cmd)
+	ee := evalDockerEnv(ctx, step, action)
+	if action.Runs.Args != nil {
+		// a fresh slice, the manifest is evaluated again for every stage
+		cmd = make([]string, len(action.Runs.Args))
+		for i, v := range action.Runs.Args {
+			cmd[i] = ee.Interpolate(ctx, v)
+		}
 	}
 	entrypoint, err := dockerEntrypoint(ctx, step, eval, stage)
 	if err != nil {
@@ -381,10 +385,12 @@ func dockerEntrypoint(ctx context.Context, step actionStep, eval *expressionEval
 	case stepStagePost:
 		entrypoint = runs.PostEntrypoint
 	default:
-		if fields := strings.Fields(eval.Interpolate(ctx, step.getStepModel().With["entrypoint"])); len(fields) > 0 {
-			return fields, nil
-		}
 		entrypoint = runs.Entrypoint
+		if entrypoint == "" {
+			if fields := strings.Fields(eval.Interpolate(ctx, step.getStepModel().With["entrypoint"])); len(fields) > 0 {
+				return fields, nil
+			}
+		}
 	}
 
 	if entrypoint == "" {
@@ -393,7 +399,8 @@ func dockerEntrypoint(ctx context.Context, step actionStep, eval *expressionEval
 	return shellquote.Split(entrypoint)
 }
 
-func evalDockerArgs(ctx context.Context, step step, action *model.Action, cmd *[]string) {
+// evalDockerEnv returns an evaluator bound to the environment it installed.
+func evalDockerEnv(ctx context.Context, step step, action *model.Action) *expressionEvaluator {
 	rc := step.getRunContext()
 	stepModel := step.getStepModel()
 
@@ -410,16 +417,15 @@ func evalDockerArgs(ctx context.Context, step step, action *model.Action, cmd *[
 	}
 	mergeIntoMap(step, step.getEnv(), inputs)
 
-	stepEE := rc.NewActionInputsExpressionEvaluator(ctx, step)
-	for i, v := range *cmd {
-		(*cmd)[i] = stepEE.Interpolate(ctx, v)
-	}
-	mergeIntoMap(step, step.getEnv(), action.Runs.Env)
+	env := make(map[string]string, len(action.Runs.Env)+len(*step.getEnv()))
+	mergeIntoMap(step, &env, action.Runs.Env, *step.getEnv())
+	*step.getEnv() = env
 
 	ee := rc.NewActionInputsExpressionEvaluator(ctx, step)
 	for k, v := range *step.getEnv() {
 		(*step.getEnv())[k] = ee.Interpolate(ctx, v)
 	}
+	return ee
 }
 
 func newStepContainer(ctx context.Context, step step, image string, cmd, entrypoint []string, runnerOptions string) container.Container {

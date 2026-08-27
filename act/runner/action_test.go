@@ -492,8 +492,6 @@ func TestDockerActionImageTag(t *testing.T) {
 	)
 }
 
-// Only the entrypoint is stage specific: every stage of a docker action receives runs.args
-// and runs.env, and the `entrypoint` input applies to the main stage alone.
 func TestExecAsDockerStageEntrypoint(t *testing.T) {
 	orig := ContainerNewContainer
 	defer func() { ContainerNewContainer = orig }()
@@ -501,25 +499,62 @@ func TestExecAsDockerStageEntrypoint(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
 		stage          stepStage
+		with           map[string]string
+		runs           model.ActionRuns
+		env            map[string]string
+		wantCmd        []string
 		wantEntrypoint []string
 	}{
 		{
-			name:           "main stage prefers the entrypoint input",
-			stage:          stepStageMain,
-			wantEntrypoint: []string{"input.sh"},
+			name:  "main stage prefers manifest values",
+			stage: stepStageMain,
+			with:  map[string]string{"args": "caller", "entrypoint": "input.sh"},
+			runs: model.ActionRuns{
+				Entrypoint: "main.sh",
+				Args:       []string{"manifest"},
+				Env:        map[string]string{"ACTION_ONLY": "manifest"},
+			},
+			wantCmd:        []string{"manifest"},
+			wantEntrypoint: []string{"main.sh"},
 		},
 		{
-			name:           "pre stage uses runs.pre-entrypoint",
-			stage:          stepStagePre,
+			name:           "main stage uses caller fallbacks",
+			stage:          stepStageMain,
+			with:           map[string]string{"args": "caller --flag", "entrypoint": "input.sh --verbose"},
+			runs:           model.ActionRuns{Env: map[string]string{"ACTION_ONLY": "manifest"}},
+			wantCmd:        []string{"caller", "--flag"},
+			wantEntrypoint: []string{"input.sh", "--verbose"},
+		},
+		{
+			name:    "explicit empty manifest args suppress caller args",
+			stage:   stepStageMain,
+			with:    map[string]string{"args": "caller"},
+			runs:    model.ActionRuns{Args: []string{}},
+			wantCmd: []string{},
+		},
+		{
+			name:  "pre stage keeps step environment",
+			stage: stepStagePre,
+			with:  map[string]string{"entrypoint": "input.sh"},
+			runs: model.ActionRuns{
+				PreEntrypoint: "pre.sh --verbose",
+				Args:          []string{"hello"},
+				Env:           map[string]string{"SHARED": "manifest"},
+			},
+			env:            map[string]string{"SHARED": "step"},
+			wantCmd:        []string{"hello"},
 			wantEntrypoint: []string{"pre.sh", "--verbose"},
 		},
 		{
-			name:           "post stage uses runs.post-entrypoint",
+			name:           "post stage uses manifest entrypoint",
 			stage:          stepStagePost,
+			runs:           model.ActionRuns{PostEntrypoint: "post.sh", Args: []string{"hello"}},
+			wantCmd:        []string{"hello"},
 			wantEntrypoint: []string{"post.sh"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			tc.runs.Using, tc.runs.Image = "docker", "docker://node:14"
 			cm := &containerMock{}
 			var input *container.NewContainerInput
 			ContainerNewContainer = func(in *container.NewContainerInput) container.ExecutionsEnvironment {
@@ -528,22 +563,14 @@ func TestExecAsDockerStageEntrypoint(t *testing.T) {
 			}
 
 			step := &stepActionRemote{
-				Step: &model.Step{ID: "1", Uses: "org/action@v1", With: map[string]string{"entrypoint": "input.sh"}},
+				Step: &model.Step{ID: "1", Uses: "org/action@v1", With: tc.with},
 				RunContext: &RunContext{
 					Config:       &Config{},
 					Run:          &model.Run{JobID: "1", Workflow: &model.Workflow{Jobs: map[string]*model.Job{"1": {}}}},
 					JobContainer: cm,
 				},
-				action: &model.Action{Runs: model.ActionRuns{
-					Using:          "docker",
-					Image:          "docker://node:14",
-					PreEntrypoint:  "pre.sh --verbose",
-					Entrypoint:     "main.sh",
-					PostEntrypoint: "post.sh",
-					Args:           []string{"hello"},
-					Env:            map[string]string{"MY_VAR": "world"},
-				}},
-				env: map[string]string{},
+				action: &model.Action{Runs: tc.runs},
+				env:    mergeMaps(tc.env),
 			}
 
 			cm.On("Pull", false).Return(func(context.Context) error { return nil })
@@ -554,9 +581,11 @@ func TestExecAsDockerStageEntrypoint(t *testing.T) {
 
 			require.NoError(t, execAsDocker(context.Background(), step, "action", t.TempDir(), t.TempDir(), false, tc.stage))
 			require.NotNil(t, input)
+			assert.Equal(t, tc.wantCmd, input.Cmd)
 			assert.Equal(t, tc.wantEntrypoint, input.Entrypoint)
-			assert.Equal(t, []string{"hello"}, input.Cmd)
-			assert.Contains(t, input.Env, "MY_VAR=world")
+			for key, value := range mergeMaps(tc.runs.Env, tc.env) {
+				assert.Contains(t, input.Env, key+"="+value)
+			}
 		})
 	}
 }

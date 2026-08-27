@@ -583,6 +583,14 @@ func (cr *containerReference) mergeContainerConfigs(ctx context.Context, config 
 	if err != nil {
 		return nil, nil, fmt.Errorf("cannot process container options: '%s': '%w'", options, err)
 	}
+	// workflow aliases join the runner's own, deduped so a re-create cannot grow the input
+	for _, endpoint := range containerConfig.NetworkingConfig.EndpointsConfig {
+		for _, alias := range endpoint.Aliases {
+			if !slices.Contains(cr.input.NetworkAliases, alias) {
+				cr.input.NetworkAliases = append(cr.input.NetworkAliases, alias)
+			}
+		}
+	}
 
 	// For Gitea, forcing --privileged off is not enough, other options reach the host too
 	if !hostConfig.Privileged {

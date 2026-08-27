@@ -7,12 +7,15 @@ package runner
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"gitea.com/gitea/runner/act/common"
+	"gitea.com/gitea/runner/act/container"
 
 	"gitea.dev/actionslib/pkg/model"
 	log "github.com/sirupsen/logrus"
+	logrustest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -403,4 +406,93 @@ func TestRunStepExecutorDoesNotLeakRefusalToNextStep(t *testing.T) {
 	stepB := &stepRun{RunContext: rc, Step: &model.Step{ID: "b", If: yaml.Node{Value: "always()"}}, env: map[string]string{}}
 	errB := runStepExecutor(stepB, stepStageMain, func(context.Context) error { return nil })(ctx)
 	require.NoError(t, errB)
+}
+
+func TestRunStepExecutorParity(t *testing.T) {
+	newStep := func(t *testing.T, stepModel *model.Step) *stepRun {
+		rc := createRunContext(t)
+		rc.JobContainer = &container.HostEnvironment{ActPath: t.TempDir()}
+		rc.ExprEval = rc.NewExpressionEvaluator(context.Background())
+		return &stepRun{RunContext: rc, Step: stepModel, env: map[string]string{}}
+	}
+	badExpression := "${{ 'test' != test }}"
+	for _, test := range []struct {
+		name, wantError string
+		step            *model.Step
+		executor        common.Executor
+	}{
+		{"condition error", "if-expression", &model.Step{ID: "condition", If: yaml.Node{Value: badExpression}}, noopExecutor},
+		{"continue-on-error expression error", "continue-on-error expression", &model.Step{ID: "continue", RawContinueOnError: badExpression}, common.NewErrorExecutor(assert.AnError)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			step := newStep(t, test.step)
+			logger, hook := logrustest.NewNullLogger()
+			err := runStepExecutor(step, stepStageMain, test.executor)(common.WithLogger(context.Background(), logger))
+
+			require.ErrorContains(t, err, test.wantError)
+			assert.Equal(t, model.StepStatusFailure, step.RunContext.StepResults[test.step.ID].Conclusion)
+			assert.Equal(t, model.StepStatusFailure, hook.LastEntry().Data["stepResult"])
+		})
+	}
+
+	t.Run("file command error honors continue-on-error", func(t *testing.T) {
+		step := newStep(t, &model.Step{ID: "commands", RawContinueOnError: "true"})
+		logger, hook := logrustest.NewNullLogger()
+		err := runStepExecutor(step, stepStageMain, func(context.Context) error {
+			require.NoError(t, os.WriteFile(step.env["GITHUB_ENV"], []byte("GOOD=1\nmalformed\n"), 0o600))
+			require.NoError(t, os.WriteFile(step.env["GITHUB_OUTPUT"], []byte("kept=value\n"), 0o600))
+			require.NoError(t, os.WriteFile(step.env["GITHUB_STATE"], []byte("saved=value\n"), 0o600))
+			return nil
+		})(common.WithLogger(context.Background(), logger))
+
+		require.NoError(t, err)
+		result := step.RunContext.StepResults[step.Step.ID]
+		assert.Equal(t, model.StepStatusFailure, result.Outcome)
+		assert.Equal(t, model.StepStatusSuccess, result.Conclusion)
+		assert.Equal(t, model.StepStatusSuccess, hook.LastEntry().Data["stepResult"])
+		assert.Equal(t, "1", step.RunContext.Env["GOOD"])
+		assert.Equal(t, "value", result.Outputs["kept"])
+		assert.Equal(t, "value", step.RunContext.IntraActionState[step.Step.ID]["saved"])
+		for _, name := range []string{"GITHUB_ENV", "GITHUB_OUTPUT", "GITHUB_STATE", "GITHUB_PATH"} {
+			contents, readErr := os.ReadFile(step.env[name])
+			require.NoError(t, readErr)
+			assert.Empty(t, contents)
+		}
+	})
+
+	t.Run("composite child files do not leak", func(t *testing.T) {
+		outer := newStep(t, &model.Step{ID: "outer"})
+		childRC := &RunContext{
+			Config: outer.RunContext.Config, Run: outer.RunContext.Run, Env: map[string]string{}, StepResults: map[string]*model.StepResult{},
+			JobContainer: outer.RunContext.JobContainer, Parent: outer.RunContext,
+		}
+		childRC.ExprEval = childRC.NewExpressionEvaluator(context.Background())
+		child := &stepRun{RunContext: childRC, Step: &model.Step{ID: "child"}, env: map[string]string{}}
+
+		err := runStepExecutor(outer, stepStageMain, func(ctx context.Context) error {
+			require.NoError(t, runStepExecutor(child, stepStageMain, func(context.Context) error {
+				require.NoError(t, os.WriteFile(child.env["GITHUB_OUTPUT"], []byte("declared=child\nundeclared=leak\n"), 0o600))
+				require.NoError(t, os.WriteFile(child.env["GITHUB_STATE"], []byte("saved=child\n"), 0o600))
+				return nil
+			})(ctx))
+			outer.RunContext.setOutput(ctx, map[string]string{"name": "declared"}, "outer")
+			return nil
+		})(context.Background())
+
+		require.NoError(t, err)
+		assert.Equal(t, map[string]string{"declared": "outer"}, outer.RunContext.StepResults[outer.Step.ID].Outputs)
+		assert.Equal(t, map[string]string{"declared": "child", "undeclared": "leak"}, childRC.StepResults[child.Step.ID].Outputs)
+		assert.Empty(t, outer.RunContext.IntraActionState)
+		assert.Equal(t, "child", childRC.IntraActionState[child.Step.ID]["saved"])
+	})
+
+	t.Run("timeout must be positive", func(t *testing.T) {
+		exprEval := createRunContext(t).NewExpressionEvaluator(context.Background())
+		for timeout, wantDeadline := range map[string]bool{"-1": false, "0": false, "1": true} {
+			ctx, cancel := evaluateStepTimeout(context.Background(), exprEval, &model.Step{TimeoutMinutes: timeout})
+			_, hasDeadline := ctx.Deadline()
+			cancel()
+			assert.Equal(t, wantDeadline, hasDeadline, timeout)
+		}
+	})
 }

@@ -50,7 +50,7 @@ func parseEnvFile(e Container, srcPath string, env *map[string]string) common.Ex
 			case singleLineEnv != -1 && (multiLineEnv == -1 || singleLineEnv < multiLineEnv):
 				localEnv[line[:singleLineEnv]] = line[singleLineEnv+1:]
 			case multiLineEnv != -1:
-				multiLineEnvContent := ""
+				var multiLineEnvContent []string
 				multiLineEnvDelimiter := line[multiLineEnv+2:]
 				delimiterFound := false
 				for s.Scan() {
@@ -59,10 +59,7 @@ func parseEnvFile(e Container, srcPath string, env *map[string]string) common.Ex
 						delimiterFound = true
 						break
 					}
-					if multiLineEnvContent != "" {
-						multiLineEnvContent += "\n"
-					}
-					multiLineEnvContent += content
+					multiLineEnvContent = append(multiLineEnvContent, content)
 				}
 				if err := s.Err(); err != nil {
 					return fmt.Errorf("reading env file: %w", err)
@@ -70,7 +67,7 @@ func parseEnvFile(e Container, srcPath string, env *map[string]string) common.Ex
 				if !delimiterFound {
 					return fmt.Errorf("invalid format delimiter '%v' not found before end of file", multiLineEnvDelimiter)
 				}
-				localEnv[line[:multiLineEnv]] = multiLineEnvContent
+				localEnv[line[:multiLineEnv]] = strings.Join(multiLineEnvContent, "\n")
 			default:
 				return fmt.Errorf("invalid format '%v', expected a line with '=' or '<<'", line)
 			}

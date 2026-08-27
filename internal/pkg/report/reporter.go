@@ -783,8 +783,9 @@ var cmdRegex = regexp.MustCompile(`^::([^ :]+)( [^:]*)?::(.*)$`)
 // handleCommand takes value still escaped, so that the web UI decodes it exactly once. Only
 // the branches that consume the payload here decode it.
 func (r *Reporter) handleCommand(originalContent, command, properties, value string) *string {
+	command = strings.ToLower(command) // GitHub matches command names case-insensitively
 	if r.stopCommandEndToken != "" {
-		if command != r.stopCommandEndToken {
+		if !strings.EqualFold(command, r.stopCommandEndToken) {
 			return &originalContent
 		}
 		// Resumed here rather than from the switch, because the end token is arbitrary and a
@@ -871,13 +872,20 @@ func parseCommandProperties(properties string) map[string]string {
 	return props
 }
 
+func cutPrefixFold(s, prefix string) (string, bool) {
+	if len(s) < len(prefix) || !strings.EqualFold(s[:len(prefix)], prefix) {
+		return s, false
+	}
+	return s[len(prefix):], true
+}
+
 func (r *Reporter) parseLogRow(entry *log.Entry) *runnerv1.LogRow {
 	content := strings.TrimRight(entry.Message, "\r\n")
 
 	// cmdRegex only covers the ::cmd:: form, so the ##[add-mask] one would otherwise reach
 	// the log carrying its own secret. Registered and dropped like its ::add-mask:: twin.
-	if arg, ok := strings.CutPrefix(content, "##[add-mask]"); ok {
-		r.addMask(runner.UnescapeCommandData(arg))
+	if arg, ok := cutPrefixFold(content, "##[add-mask]"); ok {
+		r.addMask(runner.UnescapeLegacyCommand(arg))
 		return nil
 	}
 

@@ -833,6 +833,17 @@ func TestMergeContainerConfigsWarnsOnlyAboutOptionsThatWereGiven(t *testing.T) {
 	assert.Equal(t, 1, warnings("--network host", ""))
 }
 
+func TestMergeContainerConfigsKeepsNetworkAliasesFromOptions(t *testing.T) {
+	logger, _ := test.NewNullLogger()
+	cr := &containerReference{input: &NewContainerInput{
+		NetworkMode: "job-network", NetworkAliases: []string{"redis"}, WorkflowOptions: "--network-alias redis-primary",
+	}}
+
+	_, _, err := cr.mergeContainerConfigs(common.WithLogger(t.Context(), logger), &container.Config{}, &container.HostConfig{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"redis", "redis-primary"}, cr.input.NetworkAliases)
+}
+
 // A dead daemon must fail the job, not panic through logrus and not silently
 // drop the requested platform.
 func TestSupportsContainerImagePlatformDaemonError(t *testing.T) {

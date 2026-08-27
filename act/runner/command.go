@@ -18,11 +18,17 @@ var commandPatternGA *regexp.Regexp
 var commandPatternADO *regexp.Regexp
 
 func init() {
-	commandPatternGA = regexp.MustCompile("^::([^ ]+)( (.+))?::([^\r\n]*)[\r\n]+$")
-	commandPatternADO = regexp.MustCompile("^##\\[([^ ]+)( (.+))?]([^\r\n]*)[\r\n]+$")
+	commandPatternGA = regexp.MustCompile("^::([^ ]+?)( (.+?))?::([^\r\n]*)[\r\n]*$")
+	// excluding ']' ends the command info at the first bracket, as GitHub does
+	commandPatternADO = regexp.MustCompile("^##\\[([^ \\]]+)( ([^\\]]*))?]([^\r\n]*)[\r\n]*$")
 }
 
 func tryParseRawActionCommand(line string) (command string, kvPairs map[string]string, arg string, ok bool) {
+	command, kvPairs, arg, _, ok = tryParseActionCommand(line)
+	return command, kvPairs, arg, ok
+}
+
+func tryParseActionCommand(line string) (command string, kvPairs map[string]string, arg string, legacy, ok bool) {
 	if m := commandPatternGA.FindStringSubmatch(line); m != nil {
 		command = m[1]
 		kvPairs = parseKeyValuePairs(m[3], ",")
@@ -32,19 +38,21 @@ func tryParseRawActionCommand(line string) (command string, kvPairs map[string]s
 		command = m[1]
 		kvPairs = parseKeyValuePairs(m[3], ";")
 		arg = m[4]
+		legacy = true
 		ok = true
 	}
-	return command, kvPairs, arg, ok
+	return command, kvPairs, arg, legacy, ok
 }
 
 func (rc *RunContext) commandHandler(ctx context.Context) common.LineHandler {
 	logger := common.Logger(ctx)
 	resumeCommand := ""
 	return func(line string) bool {
-		command, kvPairs, arg, ok := tryParseRawActionCommand(line)
+		command, kvPairs, arg, legacy, ok := tryParseActionCommand(line)
 		if !ok {
 			return true
 		}
+		command = strings.ToLower(command)
 
 		if resumeCommand != "" {
 			// There should not be any emojis in the log output for Gitea.
@@ -54,19 +62,24 @@ func (rc *RunContext) commandHandler(ctx context.Context) common.LineHandler {
 			logger.Infof("%s", line)
 			// Resumed here rather than from the switch, because the end token is arbitrary
 			// and a token naming a real command would otherwise never resume.
-			if command == resumeCommand {
+			if strings.EqualFold(command, resumeCommand) {
 				resumeCommand = ""
 			}
 			return true
 		}
-		arg = UnescapeCommandData(arg)
-		kvPairs = unescapeKvPairs(kvPairs)
+		if legacy {
+			arg = UnescapeLegacyCommand(arg)
+			kvPairs = unescapeKvPairs(kvPairs, UnescapeLegacyCommand)
+		} else {
+			arg = UnescapeCommandData(arg)
+			kvPairs = unescapeKvPairs(kvPairs, unescapeCommandProperty)
+		}
 		if (command == "set-env" || command == "add-path") && rc.refuseUnsecureCommand(ctx, command) {
 			return true
 		}
 		switch command {
 		case "set-env":
-			rc.setEnv(ctx, kvPairs, arg)
+			rc.setEnv(ctx, kvPairs, arg, true)
 		case "set-output":
 			rc.setOutput(ctx, kvPairs, arg)
 		case "add-path":
@@ -139,8 +152,16 @@ func (rc *RunContext) takeUnsecureCommandError() error {
 	return err
 }
 
-func (rc *RunContext) setEnv(ctx context.Context, kvPairs map[string]string, arg string) {
+func (rc *RunContext) setEnv(ctx context.Context, kvPairs map[string]string, arg string, fromCommand bool) {
 	name := kvPairs["name"]
+	if strings.EqualFold(name, "NODE_OPTIONS") {
+		message := "Can't store NODE_OPTIONS output parameter using '$GITHUB_ENV' command."
+		if fromCommand {
+			message = "Can't update NODE_OPTIONS environment variable using ::set-env:: command."
+		}
+		common.Logger(ctx).WithField(rawOutputField, true).Errorf("##[error]%s", EscapeCommandData(message))
+		return
+	}
 	common.Logger(ctx).Infof("::set-env:: %s=%s", name, arg)
 	if rc.Env == nil {
 		rc.Env = make(map[string]string)
@@ -157,6 +178,10 @@ func (rc *RunContext) setEnv(ctx context.Context, kvPairs map[string]string, arg
 	}
 	mergeIntoMap(rc.Env, newenv)
 	mergeIntoMap(rc.GlobalEnv, newenv)
+}
+
+func (rc *RunContext) setEnvFile(ctx context.Context, kvPairs map[string]string, arg string) {
+	rc.setEnv(ctx, kvPairs, arg, false)
 }
 
 func (rc *RunContext) setOutput(ctx context.Context, kvPairs map[string]string, arg string) {
@@ -189,7 +214,7 @@ func parseKeyValuePairs(kvPairs, separator string) map[string]string {
 	rtn := make(map[string]string)
 	kvPairList := strings.SplitSeq(kvPairs, separator)
 	for kvPair := range kvPairList {
-		kv := strings.Split(kvPair, "=")
+		kv := strings.SplitN(kvPair, "=", 2)
 		if len(kv) == 2 {
 			rtn[kv[0]] = kv[1]
 		}
@@ -202,6 +227,7 @@ var (
 	commandDataEscaper       = strings.NewReplacer("%", "%25", "\r", "%0D", "\n", "%0A")
 	commandDataUnescaper     = strings.NewReplacer("%25", "%", "%0D", "\r", "%0A", "\n")
 	commandPropertyUnescaper = strings.NewReplacer("%25", "%", "%0D", "\r", "%0A", "\n", "%3A", ":", "%2C", ",")
+	legacyCommandUnescaper   = strings.NewReplacer("%3B", ";", "%0D", "\r", "%0A", "\n", "%5D", "]", "%25", "%")
 )
 
 // EscapeCommandData encodes the data part of a "::cmd::" or "##[cmd]" line the runner writes itself,
@@ -218,9 +244,14 @@ func unescapeCommandProperty(arg string) string {
 	return commandPropertyUnescaper.Replace(arg)
 }
 
-func unescapeKvPairs(kvPairs map[string]string) map[string]string {
+// UnescapeLegacyCommand decodes a "##[cmd]" line, which also spells ";" and "]" escaped.
+func UnescapeLegacyCommand(arg string) string {
+	return legacyCommandUnescaper.Replace(arg)
+}
+
+func unescapeKvPairs(kvPairs map[string]string, unescape func(string) string) map[string]string {
 	for k, v := range kvPairs {
-		kvPairs[k] = unescapeCommandProperty(v)
+		kvPairs[k] = unescape(v)
 	}
 	return kvPairs
 }

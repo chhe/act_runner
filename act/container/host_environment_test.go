@@ -27,6 +27,11 @@ import (
 // Type assert HostEnvironment implements ExecutionsEnvironment
 var _ ExecutionsEnvironment = &HostEnvironment{}
 
+func TestActionPlatformNames(t *testing.T) {
+	assert.Equal(t, []string{"Linux", "macOS", "Windows"}, []string{goOsToActionOs("linux"), goOsToActionOs("darwin"), goOsToActionOs("windows")})
+	assert.Equal(t, []string{"X86", "X64", "ARM", "ARM64"}, []string{goArchToActionArch("386"), goArchToActionArch("amd64"), goArchToActionArch("arm"), goArchToActionArch("arm64")})
+}
+
 func TestCopyDir(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()

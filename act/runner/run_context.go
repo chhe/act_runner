@@ -37,6 +37,8 @@ import (
 	"github.com/moby/moby/api/types/mount"
 	"github.com/opencontainers/selinux/go-selinux"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/text/encoding/unicode"
+	"golang.org/x/text/transform"
 )
 
 // RunContext contains info about current job
@@ -88,6 +90,7 @@ type RunContext struct {
 	jobFailed bool
 	// empty for a host-mode job, which starts no container
 	jobContainerID string
+	hasBash        *bool // memoized implicit-shell probe, only set on the top-level RunContext
 	jobNetworkName string
 	// stepEnv is a copy of the running step's environment, so that workflow commands parsed out
 	// of the container's output can be judged against it. Written by runStepExecutor and read on
@@ -506,7 +509,6 @@ func (rc *RunContext) startJobContainer() common.Executor {
 			serviceContainerName := createContainerName(rc.jobContainerName(), serviceID)
 			c := newContainer(&container.NewContainerInput{
 				Name:            serviceContainerName,
-				WorkingDir:      ext.ToContainerPath(rc.Config.Workdir),
 				Image:           serviceImage,
 				Username:        serviceUsername,
 				Password:        servicePassword,
@@ -679,12 +681,17 @@ func (rc *RunContext) UpdateExtraPath(ctx context.Context, githubEnvPath string)
 	if err != nil && err != io.EOF {
 		return err
 	}
-	s := bufio.NewScanner(reader)
+	decoded := transform.NewReader(reader, unicode.BOMOverride(unicode.UTF8.NewDecoder()))
+	s := bufio.NewScanner(decoded)
+	s.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for s.Scan() {
 		line := s.Text()
 		if len(line) > 0 {
 			rc.addPath(ctx, line)
 		}
+	}
+	if err := s.Err(); err != nil {
+		return fmt.Errorf("reading path file: %w", err)
 	}
 	return nil
 }
@@ -917,11 +924,24 @@ func (rc *RunContext) interpolateOutputs() common.Executor {
 		// pristine snapshot (outputTemplate) and write under the lock, so each combo overwrites
 		// with its own resolved values (last wins, as on GitHub) instead of the first combo's
 		// resolved values freezing the shared template against later combos.
-		defer lockJob(job)()
+		// Resolved up front so one failure publishes none of them, as GitHub does.
+		outputs := make(map[string]string, len(rc.outputTemplate))
+		var err error
 		for k, v := range rc.outputTemplate {
-			job.Outputs[k] = ee.Interpolate(ctx, v)
+			if outputs[k], err = ee.interpolate(ctx, v); err != nil {
+				err = fmt.Errorf("failed to evaluate job output %q: %w", k, err)
+				break
+			}
 		}
-		return nil
+		defer lockJob(job)()
+		for k := range rc.outputTemplate {
+			if err != nil {
+				job.Outputs[k] = ""
+				continue
+			}
+			job.Outputs[k] = outputs[k]
+		}
+		return err
 	}
 }
 
@@ -1245,10 +1265,21 @@ func (rc *RunContext) getRunnerContext(ctx context.Context) map[string]any {
 	}
 	runnerContext["name"] = rc.Config.RunnerName
 	runnerContext["environment"] = "self-hosted"
+	runnerContext["workspace"] = parentDir(rc.githubWorkspace())
 	if rc.Config.RunnerDebug() {
 		runnerContext["debug"] = "1"
 	}
 	return runnerContext
+}
+
+func (rc *RunContext) githubWorkspace() string {
+	if rc.JobContainer != nil {
+		return rc.JobContainer.ToContainerPath(rc.Config.Workdir)
+	}
+	if workspace := rc.Config.Env["GITHUB_WORKSPACE"]; workspace != "" {
+		return workspace
+	}
+	return rc.Config.Workdir
 }
 
 func (rc *RunContext) getGithubContext(ctx context.Context) *model.GithubContext {
@@ -1277,11 +1308,10 @@ func (rc *RunContext) getGithubContext(ctx context.Context) *model.GithubContext
 		RefType:          rc.Config.Env["GITHUB_REF_TYPE"],
 		BaseRef:          rc.Config.Env["GITHUB_BASE_REF"],
 		HeadRef:          rc.Config.Env["GITHUB_HEAD_REF"],
-		Workspace:        rc.Config.Env["GITHUB_WORKSPACE"],
+		Workspace:        rc.githubWorkspace(),
 	}
 	if rc.JobContainer != nil {
 		ghc.EventPath = rc.JobContainer.GetActPath() + "/workflow/event.json"
-		ghc.Workspace = rc.JobContainer.ToContainerPath(rc.Config.Workdir)
 	}
 
 	if ghc.RunID == "" {

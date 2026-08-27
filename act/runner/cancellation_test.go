@@ -61,6 +61,8 @@ func TestCancelledJobStatusEnablesAlwaysAndCancelledSteps(t *testing.T) {
 	enabled, err := interp.Evaluate("always()", exprparser.DefaultStatusCheckSuccess)
 	require.NoError(t, err)
 	assert.Equal(t, true, enabled, "`if: always()` step must run on a cancelled job")
+	setJobResult(context.Background(), rc, rc, true)
+	assert.Equal(t, "cancelled", rc.Run.Job().Result)
 }
 
 // TestMainStepsExecutorRunsAlwaysStepsAfterCancel verifies that newMainStepsExecutor does

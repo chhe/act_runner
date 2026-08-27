@@ -242,6 +242,23 @@ func TestStepActionRemote(t *testing.T) {
 			cm.AssertExpectations(t)
 		})
 	}
+
+	t.Run("refreshes composite inputs without leaking environment", func(t *testing.T) {
+		step := &stepActionRemote{
+			Step:         &model.Step{Uses: "org/composite@v1", With: map[string]string{"SHARED": "first"}},
+			RunContext:   &RunContext{Config: &Config{ActionCacheDir: t.TempDir()}, Run: &model.Run{JobID: "job", Workflow: &model.Workflow{Jobs: map[string]*model.Job{"job": {}}}}, JobContainer: &jobContainerMock{}},
+			action:       &model.Action{Inputs: map[string]model.Input{"shared": {}}},
+			env:          map[string]string{},
+			remoteAction: newRemoteAction("org/composite@v1"),
+		}
+
+		for _, value := range []string{"first", "second"} {
+			step.env["INPUT_SHARED"] = value
+			composite := step.getCompositeRunContext(t.Context())
+			assert.Equal(t, map[string]any{"shared": value}, composite.actionInputs)
+			assert.NotContains(t, composite.Env, "INPUT_SHARED")
+		}
+	})
 }
 
 func TestStepActionRemotePrepare(t *testing.T) {

@@ -86,6 +86,11 @@ func TestParseEnvFileMultiLineKeepsBlankLines(t *testing.T) {
 	env := map[string]string{}
 	require.NoError(t, parseEnvFile(e, envPath, &env)(context.Background()))
 	assert.Equal(t, "line1\n\nline2", env["FOO"])
+
+	require.NoError(t, os.WriteFile(envPath, []byte("FOO<<EOF\n\nline2\nEOF\n"), 0o600))
+	env = map[string]string{}
+	require.NoError(t, parseEnvFile(e, envPath, &env)(context.Background()))
+	assert.Equal(t, "\nline2", env["FOO"])
 }
 
 func TestParseEnvFileUTF8BOM(t *testing.T) {

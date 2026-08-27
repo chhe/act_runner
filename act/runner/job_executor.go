@@ -236,6 +236,13 @@ func newJobExecutor(info jobInfo, sf stepFactory, rc *RunContext) common.Executo
 
 	// Ahead of the teardown below, while the job environment is still up.
 	postExecutor = postExecutor.Finally(rc.runJobCompletedHook)
+	postExecutor = postExecutor.Finally(func(ctx context.Context) error {
+		// swallowed: a bad output fails this job, it must not abandon the rest of the plan
+		if err := info.interpolateOutputs()(ctx); err != nil {
+			reportStepError(ctx, rc, err)
+		}
+		return nil
+	})
 
 	postExecutor = postExecutor.Finally(func(ctx context.Context) error {
 		jobError := common.JobError(ctx)
@@ -267,7 +274,6 @@ func newJobExecutor(info jobInfo, sf stepFactory, rc *RunContext) common.Executo
 			defer cancel()
 			return postExecutor(postCtx)
 		}).
-		Finally(info.interpolateOutputs()).
 		Finally(info.closeContainer()))
 }
 
@@ -365,7 +371,7 @@ func setJobResult(ctx context.Context, info jobInfo, rc *RunContext, success boo
 	// concurrent succeeding one.
 	job := rc.Run.Job()
 	var continueOnError bool
-	if !success {
+	if !success && !rc.jobCancelled {
 		// Use a fresh context so an expired job timeout cannot block expression evaluation.
 		evalCtx := common.WithLogger(context.Background(), common.Logger(ctx))
 		continueOnError = evaluateJobContinueOnError(evalCtx, rc, job)
@@ -378,7 +384,11 @@ func setJobResult(ctx context.Context, info jobInfo, rc *RunContext, success boo
 		if len(info.matrix()) > 0 && job.Result != "" {
 			result = job.Result
 		}
-		if !success {
+		// cancelled is sticky, so a sibling combination finishing last cannot mask it
+		switch {
+		case rc.jobCancelled:
+			result = "cancelled"
+		case !success && result != "cancelled":
 			result = "failure"
 			job.SetContinueOnError(continueOnError)
 		}
@@ -392,9 +402,12 @@ func setJobResult(ctx context.Context, info jobInfo, rc *RunContext, success boo
 		return
 	}
 
-	jobResultMessage := "succeeded"
-	if jobResult != "success" {
-		jobResultMessage = "failed"
+	jobResultMessage := "failed"
+	switch jobResult {
+	case "success":
+		jobResultMessage = "succeeded"
+	case "cancelled":
+		jobResultMessage = "cancelled"
 	}
 
 	logger.WithField("jobResult", jobResult).Infof("Job %s", jobResultMessage)

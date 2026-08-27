@@ -58,13 +58,10 @@ func (s stepStage) String() string {
 func processRunnerEnvFileCommand(ctx context.Context, fileName string, rc *RunContext, setter func(context.Context, map[string]string, string)) error {
 	env := map[string]string{}
 	err := rc.JobContainer.UpdateFromEnv(path.Join(rc.JobContainer.GetActPath(), fileName), &env)(ctx)
-	if err != nil {
-		return err
-	}
 	for k, v := range env {
 		setter(ctx, map[string]string{"name": k}, v)
 	}
-	return nil
+	return err
 }
 
 func runStepExecutor(step step, stage stepStage, executor common.Executor) common.Executor {
@@ -91,13 +88,14 @@ func runStepExecutor(step step, stage stepStage, executor common.Executor) commo
 		if err != nil {
 			stepResult.Conclusion = model.StepStatusFailure
 			stepResult.Outcome = model.StepStatusFailure
+			logger.WithField("stepResult", stepResult.Conclusion).Infof("Failure - %s %s", stage, stepModel)
 			return err
 		}
 
 		if !runStep {
 			stepResult.Conclusion = model.StepStatusSkipped
 			stepResult.Outcome = model.StepStatusSkipped
-			logger.WithField("stepResult", stepResult.Outcome).Debugf("Skipping step '%s' due to '%s'", stepModel, ifExpression)
+			logger.WithField("stepResult", stepResult.Conclusion).Debugf("Skipping step '%s' due to '%s'", stepModel, ifExpression)
 			return nil
 		}
 
@@ -157,11 +155,11 @@ func runStepExecutor(step step, stage stepStage, executor common.Executor) commo
 		if topRC.summaryFileInitialized == nil {
 			topRC.summaryFileInitialized = map[int]bool{}
 		}
+		_ = rc.JobContainer.Copy(actPath, files...)(ctx)
 		if !topRC.summaryFileInitialized[stepSummaryIndex] {
-			files = append(files, &container.FileEntry{Name: summaryFileCommand, Mode: 0o666})
+			_ = rc.JobContainer.Copy(actPath, &container.FileEntry{Name: summaryFileCommand, Mode: 0o666})(ctx)
 			topRC.summaryFileInitialized[stepSummaryIndex] = true
 		}
-		_ = rc.JobContainer.Copy(actPath, files...)(ctx)
 
 		// The command handler needs the step's env to judge ACTIONS_ALLOW_UNSECURE_COMMANDS.
 		// Cloned: the step executor keeps writing to its own env map after this point, on a
@@ -179,15 +177,29 @@ func runStepExecutor(step step, stage stepStage, executor common.Executor) commo
 		if err == nil {
 			err = insecureErr
 		}
+		if fileErr := processRunnerEnvFileCommand(ctx, envFileCommand, rc, rc.setEnvFile); fileErr != nil && err == nil {
+			err = fileErr
+		}
+		if fileErr := processRunnerEnvFileCommand(ctx, stateFileCommand, rc, rc.saveState); fileErr != nil && err == nil {
+			err = fileErr
+		}
+		if fileErr := processRunnerEnvFileCommand(ctx, outputFileCommand, rc, rc.setOutput); fileErr != nil && err == nil {
+			err = fileErr
+		}
+		if fileErr := rc.UpdateExtraPath(ctx, path.Join(actPath, pathFileCommand)); fileErr != nil && err == nil {
+			err = fileErr
+		}
+		_ = rc.JobContainer.Copy(actPath, files...)(ctx)
 
 		if err == nil {
-			logger.WithField("stepResult", stepResult.Outcome).Infof("Success - %s %s", stage, stepString)
+			logger.WithField("stepResult", stepResult.Conclusion).Infof("Success - %s %s", stage, stepString)
 		} else {
 			stepResult.Outcome = model.StepStatusFailure
 
 			continueOnError, parseErr := isContinueOnError(ctx, stepModel.RawContinueOnError, step, stage)
 			if parseErr != nil {
 				stepResult.Conclusion = model.StepStatusFailure
+				logger.WithField("stepResult", stepResult.Conclusion).Infof("Failure - %s %s", stage, stepString)
 				return parseErr
 			}
 
@@ -202,28 +214,7 @@ func runStepExecutor(step step, stage stepStage, executor common.Executor) commo
 
 			// Infof: Errorf entries are promoted to the user log by the reporter,
 			// which would duplicate the ##[error] annotation emitted elsewhere.
-			logger.WithField("stepResult", stepResult.Outcome).Infof("Failure - %s %s", stage, stepString)
-		}
-		// Process Runner File Commands
-		orgerr := err
-		err = processRunnerEnvFileCommand(ctx, envFileCommand, rc, rc.setEnv)
-		if err != nil {
-			return err
-		}
-		err = processRunnerEnvFileCommand(ctx, stateFileCommand, rc, rc.saveState)
-		if err != nil {
-			return err
-		}
-		err = processRunnerEnvFileCommand(ctx, outputFileCommand, rc, rc.setOutput)
-		if err != nil {
-			return err
-		}
-		err = rc.UpdateExtraPath(ctx, path.Join(actPath, pathFileCommand))
-		if err != nil {
-			return err
-		}
-		if orgerr != nil {
-			return orgerr
+			logger.WithField("stepResult", stepResult.Conclusion).Infof("Failure - %s %s", stage, stepString)
 		}
 		return err
 	}
@@ -232,7 +223,7 @@ func runStepExecutor(step step, stage stepStage, executor common.Executor) commo
 func evaluateStepTimeout(ctx context.Context, exprEval *expressionEvaluator, stepModel *model.Step) (context.Context, context.CancelFunc) {
 	timeout := exprEval.Interpolate(ctx, stepModel.TimeoutMinutes)
 	if timeout != "" {
-		if timeOutMinutes, err := strconv.ParseInt(timeout, 10, 64); err == nil {
+		if timeOutMinutes, err := strconv.ParseInt(timeout, 10, 64); err == nil && timeOutMinutes > 0 {
 			return context.WithTimeout(ctx, time.Duration(timeOutMinutes)*time.Minute)
 		}
 	}
@@ -269,7 +260,8 @@ func mergeEnv(ctx context.Context, step step) {
 
 	c := job.Container()
 	if c != nil {
-		mergeIntoMap(step, env, rc.GetEnv(), c.Env)
+		// container env is the image's baseline, which job env and $GITHUB_ENV override
+		mergeIntoMap(step, env, c.Env, rc.GetEnv())
 	} else {
 		mergeIntoMap(step, env, rc.GetEnv())
 	}

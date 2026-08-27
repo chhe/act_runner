@@ -299,6 +299,7 @@ func TestNewJobExecutor(t *testing.T) {
 		executedSteps []string
 		result        string
 		hasError      bool
+		output        string
 	}{
 		{
 			name:          "zeroSteps",
@@ -319,8 +320,8 @@ func TestNewJobExecutor(t *testing.T) {
 			executedSteps: []string{
 				"startContainer",
 				"step1",
-				"stopContainer",
 				"interpolateOutputs",
+				"stopContainer",
 				"closeContainer",
 			},
 			result:   "success",
@@ -336,8 +337,8 @@ func TestNewJobExecutor(t *testing.T) {
 			executedSteps: []string{
 				"startContainer",
 				"step1",
-				"stopContainer",
 				"interpolateOutputs",
+				"stopContainer",
 				"closeContainer",
 			},
 			result:   "failure",
@@ -354,8 +355,8 @@ func TestNewJobExecutor(t *testing.T) {
 				"startContainer",
 				"pre1",
 				"step1",
-				"stopContainer",
 				"interpolateOutputs",
+				"stopContainer",
 				"closeContainer",
 			},
 			result:   "success",
@@ -372,8 +373,8 @@ func TestNewJobExecutor(t *testing.T) {
 				"startContainer",
 				"step1",
 				"post1",
-				"stopContainer",
 				"interpolateOutputs",
+				"stopContainer",
 				"closeContainer",
 			},
 			result:   "success",
@@ -391,8 +392,8 @@ func TestNewJobExecutor(t *testing.T) {
 				"pre1",
 				"step1",
 				"post1",
-				"stopContainer",
 				"interpolateOutputs",
+				"stopContainer",
 				"closeContainer",
 			},
 			result:   "success",
@@ -418,12 +419,21 @@ func TestNewJobExecutor(t *testing.T) {
 				"step3",
 				"post3",
 				"post2",
-				"stopContainer",
 				"interpolateOutputs",
+				"stopContainer",
 				"closeContainer",
 			},
 			result:   "success",
 			hasError: false,
+		},
+		{
+			name:          "jobOutputExpressionFailure",
+			steps:         []*model.Step{{ID: "1"}},
+			preSteps:      []bool{false},
+			postSteps:     []bool{false},
+			executedSteps: []string{"startContainer", "step1", "interpolateOutputs", "stopContainer", "closeContainer"},
+			result:        "failure",
+			output:        "${{ 'test' != test }}",
 		},
 	}
 
@@ -449,6 +459,10 @@ func TestNewJobExecutor(t *testing.T) {
 					},
 				},
 				Config: &Config{},
+			}
+			if tt.output != "" {
+				rc.Run.Job().Outputs = map[string]string{"bad": tt.output}
+				rc.outputTemplate = map[string]string{"bad": tt.output}
 			}
 			rc.ExprEval = rc.NewExpressionEvaluator(ctx)
 			executorOrder := make([]string, 0)
@@ -497,6 +511,9 @@ func TestNewJobExecutor(t *testing.T) {
 
 				jim.On("interpolateOutputs").Return(func(ctx context.Context) error {
 					executorOrder = append(executorOrder, "interpolateOutputs")
+					if tt.output != "" {
+						return rc.interpolateOutputs()(ctx)
+					}
 					return nil
 				})
 
@@ -518,6 +535,7 @@ func TestNewJobExecutor(t *testing.T) {
 			executor := newJobExecutor(jim, sfm, rc)
 			err := executor(ctx)
 			assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
+			assert.Empty(t, rc.Run.Job().Outputs["bad"])
 			assert.Equal(t, tt.executedSteps, executorOrder)
 
 			jim.AssertExpectations(t)

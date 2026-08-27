@@ -23,6 +23,7 @@ import (
 	"gitea.com/gitea/runner/internal/pkg/metrics"
 
 	connect_go "connectrpc.com/connect"
+	"gitea.dev/actionslib/pkg/model"
 	runnerv1 "gitea.dev/actionslib/runner/v1"
 	log "github.com/sirupsen/logrus"
 	logrustest "github.com/sirupsen/logrus/hooks/test"
@@ -273,14 +274,14 @@ func TestReporter_Fire(t *testing.T) {
 			"stepID":     []string{"0", "0"},
 			"stepNumber": 0,
 			"raw_output": true,
-			"stepResult": "failure",
+			"stepResult": model.StepStatusFailure,
 		}}))
 		assert.Equal(t, runnerv1.Result_RESULT_UNSPECIFIED, reporter.state.Steps[0].Result)
 		require.NoError(t, reporter.Fire(&log.Entry{Message: "step result", Data: map[string]any{
 			"stage":      "Main",
 			"stepNumber": 0,
 			"raw_output": true,
-			"stepResult": "success",
+			"stepResult": model.StepStatusSuccess,
 		}}))
 		assert.Equal(t, runnerv1.Result_RESULT_SUCCESS, reporter.state.Steps[0].Result)
 

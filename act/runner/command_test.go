@@ -26,12 +26,21 @@ func unsecureRC() *RunContext {
 
 func TestSetEnv(t *testing.T) {
 	a := assert.New(t)
-	ctx := context.Background()
+	logger, hook := test.NewNullLogger()
+	ctx := common.WithLogger(context.Background(), logger)
 	rc := unsecureRC()
 	handler := rc.commandHandler(ctx)
 
 	handler("::set-env name=x::valz\n")
 	a.Equal("valz", rc.Env["x"])
+	handler("::SET-ENV name=NODE_OPTIONS::--require command.js\n")
+	rc.setEnvFile(ctx, map[string]string{"name": "node_options"}, "--require env.js")
+	a.NotContains(rc.Env, "NODE_OPTIONS")
+	a.NotContains(rc.Env, "node_options")
+	entries := hook.AllEntries()
+	require.Len(t, entries, 3)
+	a.Equal("##[error]Can't update NODE_OPTIONS environment variable using ::set-env:: command.", entries[1].Message)
+	a.Equal("##[error]Can't store NODE_OPTIONS output parameter using '$GITHUB_ENV' command.", entries[2].Message)
 }
 
 func TestStopCommandsKeepsSuppressedLinesInLog(t *testing.T) {
@@ -85,6 +94,16 @@ func TestSetOutput(t *testing.T) {
 
 	handler("::set-output name=x%3A%2C%0A%25%0D%3A::percent2%25%0Atest\n")
 	a.Equal("percent2%\ntest", rc.StepResults["my-step"].Outputs["x:,\n%\r:"])
+	handler("::set-output name=symbol::std::vector")
+	a.Equal("std::vector", rc.StepResults["my-step"].Outputs["symbol"])
+	handler("::set-output name=a=b::value\n")
+	a.Equal("value", rc.StepResults["my-step"].Outputs["a=b"])
+	handler("##[set-output name=legacy%3B%5D]value%3B%5D")
+	a.Equal("value;]", rc.StepResults["my-step"].Outputs["legacy;]"])
+	handler("##[set-output name=bracket]value]tail")
+	a.Equal("value]tail", rc.StepResults["my-step"].Outputs["bracket"])
+	handler("::set-output name=modern%3B%5D::value%3B%5D\n")
+	a.Equal("value%3B%5D", rc.StepResults["my-step"].Outputs["modern%3B%5D"])
 }
 
 func TestAddpath(t *testing.T) {
@@ -110,7 +129,7 @@ func TestStopCommands(t *testing.T) {
 
 	handler("::set-env name=x::valz\n")
 	a.Equal("valz", rc.Env["x"])
-	handler("::stop-commands::my-end-token\n")
+	handler("::stop-commands::MY-END-TOKEN\n")
 	handler("::set-env name=x::abcd\n")
 	a.Equal("valz", rc.Env["x"])
 	handler("::my-end-token::\n")
@@ -163,10 +182,10 @@ func TestAddmask(t *testing.T) {
 
 	rc := new(RunContext)
 	handler := rc.commandHandler(loggerCtx)
-	handler("::add-mask::my-secret-value\n")
+	handler("::ADD-MASK::my::secret")
 
 	a.Equal("***", hook.LastEntry().Message)
-	a.NotEqual("*my-secret-value", hook.LastEntry().Message)
+	a.Equal([]string{"my::secret"}, rc.Masks)
 }
 
 // based on https://stackoverflow.com/a/10476304
