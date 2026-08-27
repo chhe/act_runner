@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"maps"
@@ -45,6 +46,8 @@ type executeArgs struct {
 	forcePull             bool
 	forceRebuild          bool
 	jsonLogger            bool
+	inputs                []string
+	inputfile             string
 	envs                  []string
 	envfile               string
 	secrets               []string
@@ -90,6 +93,11 @@ func (i *executeArgs) Envfile() string {
 	return i.resolve(i.envfile)
 }
 
+// Inputfile returns path to .env-format inputfile
+func (i *executeArgs) Inputfile() string {
+	return i.resolve(i.inputfile)
+}
+
 func (i *executeArgs) LoadSecrets() map[string]string {
 	s := make(map[string]string)
 	for _, secretPair := range i.secrets {
@@ -128,19 +136,55 @@ func readEnvs(path string, envs map[string]string) bool {
 	return false
 }
 
-func (i *executeArgs) LoadEnvs() map[string]string {
-	envs := make(map[string]string)
-	if i.envs != nil {
-		for _, envVar := range i.envs {
-			e := strings.SplitN(envVar, `=`, 2)
-			if len(e) == 2 {
-				envs[e[0]] = e[1]
-			} else {
-				envs[e[0]] = ""
-			}
+func (i *executeArgs) LoadVars() map[string]string {
+	return parseKVAndFile(i.vars, "")
+}
+
+func (i *executeArgs) LoadInputs() map[string]string {
+	return parseKVAndFile(i.inputs, i.Inputfile())
+}
+
+// eventJSON assembles the payload the run is triggered with, the `--input` values overriding
+// the inputs the `--eventpath` file carries.
+func (i *executeArgs) eventJSON() (string, error) {
+	payload := []byte("{}")
+	if path := i.resolve(i.eventpath); path != "" {
+		var err error
+		if payload, err = os.ReadFile(path); err != nil {
+			return "", fmt.Errorf("failed to read %s: %w", path, err)
 		}
 	}
-	_ = readEnvs(i.Envfile(), envs)
+
+	cliInputs := i.LoadInputs()
+	if len(cliInputs) == 0 {
+		return string(payload), nil
+	}
+
+	var event map[string]any
+	if err := json.Unmarshal(payload, &event); err != nil {
+		return "", fmt.Errorf("failed to parse event payload: %w", err)
+	}
+	if event == nil { // a JSON `null` payload unmarshals into a nil map
+		event = make(map[string]any)
+	}
+	inputs, ok := event["inputs"].(map[string]any)
+	if !ok {
+		inputs = make(map[string]any)
+	}
+	for name, value := range cliInputs {
+		inputs[name] = value
+	}
+	event["inputs"] = inputs
+
+	merged, err := json.Marshal(event)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal event payload: %w", err)
+	}
+	return string(merged), nil
+}
+
+func (i *executeArgs) LoadEnvs() map[string]string {
+	envs := parseKVAndFile(i.envs, i.Envfile())
 
 	envs["ACTIONS_CACHE_URL"] = i.cacheHandler.ExternalURL() + "/"
 	// The same server answers the cache service v2 API, so let the actions reach it.
@@ -149,20 +193,19 @@ func (i *executeArgs) LoadEnvs() map[string]string {
 	return envs
 }
 
-func (i *executeArgs) LoadVars() map[string]string {
-	vars := make(map[string]string)
-	if i.vars != nil {
-		for _, runVar := range i.vars {
-			e := strings.SplitN(runVar, `=`, 2)
-			if len(e) == 2 {
-				vars[e[0]] = e[1]
-			} else {
-				vars[e[0]] = ""
-			}
+func parseKVAndFile(rawKVs []string, filePath string) map[string]string {
+	result := make(map[string]string)
+	_ = readEnvs(filePath, result)
+
+	for _, raw := range rawKVs {
+		parts := strings.SplitN(raw, "=", 2)
+		if len(parts) == 2 {
+			result[parts[0]] = parts[1]
+		} else {
+			result[parts[0]] = ""
 		}
 	}
-
-	return vars
+	return result
 }
 
 // Workdir returns path to workdir
@@ -329,6 +372,52 @@ func runExecList(planner model.WorkflowPlanner, execArgs *executeArgs) error {
 	return nil
 }
 
+func (i *executeArgs) runnerConfig(eventName string, env, proxyEnv map[string]string, maxLifetime time.Duration, sharedToolCache bool) (*runner.Config, error) {
+	eventJSON, err := i.eventJSON()
+	if err != nil {
+		return nil, err
+	}
+
+	return &runner.Config{
+		Workdir:               i.Workdir(),
+		BindWorkdir:           false,
+		ForcePull:             i.forcePull,
+		ForceRebuild:          i.forceRebuild,
+		JSONLogger:            i.jsonLogger,
+		Env:                   env,
+		ProxyEnv:              proxyEnv,
+		Vars:                  i.LoadVars(),
+		Secrets:               i.LoadSecrets(),
+		InsecureSecrets:       i.insecureSecrets,
+		Privileged:            i.privileged,
+		UsernsMode:            i.usernsMode,
+		ContainerArchitecture: i.containerArchitecture,
+		ContainerDaemonSocket: i.containerDaemonSocket,
+		UseGitIgnore:          i.useGitIgnore,
+		GitHubInstance:        i.githubInstance,
+		ContainerCapAdd:       i.containerCapAdd,
+		ContainerCapDrop:      i.containerCapDrop,
+		ContainerOptions:      i.containerOptions,
+		ArtifactServerPath:    i.artifactServerPath,
+		ArtifactServerPort:    i.artifactServerPort,
+		ArtifactServerAddr:    i.artifactServerAddr,
+		NoSkipCheckout:        i.noSkipCheckout,
+		EventName:             eventName,
+		EventJSON:             eventJSON,
+		// PresetGitHubContext:   preset,
+		ContainerNamePrefix:               "GITEA-ACTIONS-TASK-" + eventName,
+		ContainerMaxLifetime:              maxLifetime,
+		ContainerNetworkMode:              container.NetworkMode(i.network),
+		DefaultActionInstance:             i.defaultActionsURL,
+		DefaultActionInstanceIsSelfHosted: i.defaultActionsURL != "" && i.defaultActionsURL != "https://github.com",
+		PlatformPicker: func(_ []string) string {
+			return i.image
+		},
+		ValidVolumes:    []string{"**"}, // All volumes are allowed for `exec` command
+		SharedToolCache: sharedToolCache,
+	}, nil
+}
+
 func runExec(ctx context.Context, execArgs *executeArgs) func(cmd *cobra.Command, args []string) error {
 	return func(cmd *cobra.Command, args []string) error {
 		planner, err := model.NewWorkflowPlanner(execArgs.WorkflowsPath(), execArgs.noWorkflowRecurse)
@@ -445,43 +534,9 @@ func runExec(ctx context.Context, execArgs *executeArgs) func(cmd *cobra.Command
 		}
 
 		// run the plan
-		config := &runner.Config{
-			Workdir:               execArgs.Workdir(),
-			BindWorkdir:           false,
-			ForcePull:             execArgs.forcePull,
-			ForceRebuild:          execArgs.forceRebuild,
-			JSONLogger:            execArgs.jsonLogger,
-			Env:                   env,
-			ProxyEnv:              proxyEnv,
-			Vars:                  execArgs.LoadVars(),
-			Secrets:               execArgs.LoadSecrets(),
-			InsecureSecrets:       execArgs.insecureSecrets,
-			Privileged:            execArgs.privileged,
-			UsernsMode:            execArgs.usernsMode,
-			ContainerArchitecture: execArgs.containerArchitecture,
-			ContainerDaemonSocket: execArgs.containerDaemonSocket,
-			UseGitIgnore:          execArgs.useGitIgnore,
-			GitHubInstance:        execArgs.githubInstance,
-			ContainerCapAdd:       execArgs.containerCapAdd,
-			ContainerCapDrop:      execArgs.containerCapDrop,
-			ContainerOptions:      execArgs.containerOptions,
-			ArtifactServerPath:    execArgs.artifactServerPath,
-			ArtifactServerPort:    execArgs.artifactServerPort,
-			ArtifactServerAddr:    execArgs.artifactServerAddr,
-			NoSkipCheckout:        execArgs.noSkipCheckout,
-			EventPath:             execArgs.resolve(execArgs.eventpath),
-			// PresetGitHubContext:   preset,
-			// EventJSON:             string(eventJSON),
-			ContainerNamePrefix:               "GITEA-ACTIONS-TASK-" + eventName,
-			ContainerMaxLifetime:              maxLifetime,
-			ContainerNetworkMode:              container.NetworkMode(execArgs.network),
-			DefaultActionInstance:             execArgs.defaultActionsURL,
-			DefaultActionInstanceIsSelfHosted: execArgs.defaultActionsURL != "" && execArgs.defaultActionsURL != "https://github.com",
-			PlatformPicker: func(_ []string) string {
-				return execArgs.image
-			},
-			ValidVolumes:    []string{"**"}, // All volumes are allowed for `exec` command
-			SharedToolCache: shared,
+		config, err := execArgs.runnerConfig(eventName, env, proxyEnv, maxLifetime, shared)
+		if err != nil {
+			return err
 		}
 
 		config.Env["ACT_EXEC"] = "true"
@@ -536,7 +591,9 @@ func loadExecCmd(ctx context.Context) *cobra.Command {
 	execCmd.Flags().BoolVarP(&execArg.forcePull, "pull", "p", false, "pull docker image(s) even if already present")
 	execCmd.Flags().BoolVarP(&execArg.forceRebuild, "rebuild", "", false, "rebuild local action docker image(s) even if already present")
 	execCmd.PersistentFlags().BoolVar(&execArg.jsonLogger, "json", false, "Output logs in json format")
-	execCmd.Flags().StringArrayVarP(&execArg.envs, "env", "", []string{}, "env to make available to actions with optional value (e.g. --env myenv=foo or --env myenv)")
+	execCmd.Flags().StringArrayVarP(&execArg.inputs, "input", "", []string{}, "set an input the workflow declares under its workflow_dispatch or workflow_call trigger, others stay invisible to the inputs context (e.g. --input name=bar; can be specified multiple times with highest precedence)")
+	execCmd.Flags().StringVarP(&execArg.inputfile, "input-file", "", "", "path to an .env-format file containing key=value pairs as baseline workflow inputs (override event inputs)")
+	execCmd.Flags().StringArrayVarP(&execArg.envs, "env", "", []string{}, "env to make available to actions with optional value (e.g. --env myenv=foo or --env myenv; override env-file)")
 	execCmd.PersistentFlags().StringVarP(&execArg.envfile, "env-file", "", ".env", "environment file to read and use as env in the containers")
 	execCmd.Flags().StringArrayVarP(&execArg.secrets, "secret", "s", []string{}, "secret to make available to actions with optional value (e.g. -s mysecret=foo or -s mysecret)")
 	execCmd.Flags().StringArrayVarP(&execArg.vars, "var", "", []string{}, "variable to make available to actions with optional value (e.g. --var myvar=foo or --var myvar)")
