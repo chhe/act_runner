@@ -8,6 +8,10 @@ import (
 	"context"
 	"io"
 	"io/fs"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -234,7 +238,7 @@ func TestActionRunner(t *testing.T) {
 				return true
 			})
 
-			cm.On("Exec", []string{"node", "/var/run/act/actions/dir/path"}, envMatcher, "", "").Return(func(ctx context.Context) error { return nil })
+			cm.On("Exec", []string{"node", "--preserve-symlinks-main", "/var/run/act/actions/dir/path"}, envMatcher, "", "").Return(func(ctx context.Context) error { return nil })
 
 			tt.step.getRunContext().JobContainer = cm
 
@@ -244,6 +248,32 @@ func TestActionRunner(t *testing.T) {
 			cm.AssertExpectations(t)
 		})
 	}
+}
+
+func TestNodeActionCommandPreservesSymlinkedEntrypoint(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on Windows")
+	}
+	requireHostTools(t, "node")
+
+	actionDir := t.TempDir()
+	entrypoint := filepath.Join(actionDir, "index.mjs")
+	require.NoError(t, os.WriteFile(entrypoint, []byte(`
+import {fileURLToPath} from "node:url";
+const self = fileURLToPath(import.meta.url);
+if (process.argv[1] !== self) {
+	console.log("argv[1]:", process.argv[1], "import.meta.url:", self);
+	process.exitCode = 1;
+}
+`), 0o600))
+
+	symlinkedActionDir := filepath.Join(t.TempDir(), "action")
+	require.NoError(t, os.Symlink(actionDir, symlinkedActionDir))
+	symlinkedEntrypoint := filepath.Join(symlinkedActionDir, "index.mjs")
+
+	args := nodeActionCommand(symlinkedEntrypoint)
+	output, err := exec.CommandContext(t.Context(), args[0], args[1:]...).CombinedOutput()
+	require.NoError(t, err, "%s", output)
 }
 
 func TestNewStepContainerDoesNotUseDockerSecrets(t *testing.T) {

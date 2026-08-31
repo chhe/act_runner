@@ -470,10 +470,10 @@ func TestStepActionRemotePost(t *testing.T) {
 			if tt.mocks.exec {
 				// Use mock.MatchedBy to match the exec command with hash-based path
 				execMatcher := mock.MatchedBy(func(args []string) bool {
-					if len(args) != 2 {
+					if len(args) != 3 {
 						return false
 					}
-					return args[0] == "node" && strings.Contains(args[1], "post.js")
+					return args[0] == "node" && args[1] == "--preserve-symlinks-main" && strings.Contains(args[2], "post.js")
 				})
 
 				cm.On("Exec", execMatcher, sar.env, "", "").Return(func(ctx context.Context) error { return tt.err })

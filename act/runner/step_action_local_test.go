@@ -254,7 +254,8 @@ func TestStepActionLocalPost(t *testing.T) {
 			if tt.mocks.exec {
 				suffixMatcher := func(suffix string) any {
 					return mock.MatchedBy(func(array []string) bool {
-						return strings.HasSuffix(array[1], suffix)
+						return len(array) == 3 && array[0] == "node" && array[1] == "--preserve-symlinks-main" &&
+							strings.HasSuffix(array[2], suffix)
 					})
 				}
 				cm.On("Exec", suffixMatcher("runner/local/action/post.js"), sal.env, "", "").Return(func(ctx context.Context) error { return tt.err })
