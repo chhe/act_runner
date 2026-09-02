@@ -260,7 +260,7 @@ container:
   # This is required for Docker-in-Docker (DinD) setups when jobs use docker compose
   # with bind mounts (e.g., ".:/app"), as volume-based workspaces are not accessible
   # from the DinD daemon's filesystem. When enabled, ensure the workspace parent
-  # directory is also mounted into the runner container and listed in valid_volumes.
+  # directory is also mounted into the runner container.
   #bind_workdir: false
   # How long a job waits for a service container that declares a healthcheck to become
   # healthy. A negative value (e.g. -1s) starts the steps without waiting.

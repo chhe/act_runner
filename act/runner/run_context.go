@@ -246,6 +246,9 @@ func (rc *RunContext) validVolumes() []string {
 	if rc.Config.SharedToolCache {
 		volumes = append(volumes, sharedToolCacheVolume)
 	}
+	if rc.Config.BindWorkdir {
+		volumes = append(volumes, rc.Config.Workdir)
+	}
 	// TODO: add a new configuration to control whether the docker daemon can be mounted
 	return append(volumes, name, name+"-env",
 		getDockerDaemonSocketMountPath(rc.containerDaemonSocket()))

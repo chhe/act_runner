@@ -604,6 +604,11 @@ func TestRunContextValidVolumes(t *testing.T) {
 	// a job may mount it only while the runner does
 	rc.Config.SharedToolCache = false
 	assert.NotContains(t, rc.validVolumes(), sharedToolCacheVolume)
+
+	rc.Config.Workdir = "/workspace/1/owner/repo"
+	assert.NotContains(t, rc.validVolumes(), rc.Config.Workdir)
+	rc.Config.BindWorkdir = true
+	assert.Contains(t, rc.validVolumes(), rc.Config.Workdir)
 }
 
 func TestCleanupJobResourcesCleansServicesWithoutJobContainer(t *testing.T) {
