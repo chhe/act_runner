@@ -2,7 +2,7 @@ module gitea.com/gitea/runner
 
 go 1.27
 
-toolchain go1.27.0
+toolchain go1.27.1
 
 require (
 	connectrpc.com/connect v1.20.0
