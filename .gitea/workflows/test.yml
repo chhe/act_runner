@@ -31,7 +31,7 @@ jobs:
       - name: pre-pull test images
         env:
           TEST_JOB_IMAGE: node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e # renovate: datasource=docker
-          TEST_SERVICE_IMAGE: nginx:alpine@sha256:db35bfc6b2951e7f8a72db5db120288c127ffaeeb4a6d4b95a26fead017d5913 # renovate: datasource=docker
+          TEST_SERVICE_IMAGE: nginx:alpine@sha256:72ba65eb42c10344912a84ff42408db7d34f2feb642204570ab8fc5ffd29f1d3 # renovate: datasource=docker
         run: |
           for image in "$TEST_JOB_IMAGE" "$TEST_SERVICE_IMAGE"; do
             for attempt in 1 2 3; do

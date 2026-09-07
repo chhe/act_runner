@@ -18,7 +18,7 @@ DOCKER_TAG ?= nightly
 DOCKER_REF := $(DOCKER_IMAGE):$(DOCKER_TAG)
 DOCKER_ROOTLESS_REF := $(DOCKER_IMAGE):$(DOCKER_TAG)-dind-rootless
 
-GOLANGCI_LINT_PACKAGE ?= github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 # renovate: datasource=go
+GOLANGCI_LINT_PACKAGE ?= github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2 # renovate: datasource=go
 GOVULNCHECK_PACKAGE ?= golang.org/x/vuln/cmd/govulncheck@v1.7.0 # renovate: datasource=go
 
 GOTEST_FLAGS ?= -race -timeout 20m -parallel 8
@@ -96,13 +96,8 @@ go-check:
 	fi
 
 .PHONY: fmt-check
-fmt-check: fmt
-	@diff=$$(git diff --color=always -- '*.go'); \
-	if [ -n "$$diff" ]; then \
-		echo "Please run 'make fmt' and commit the result:"; \
-		printf "%s" "$${diff}"; \
-		exit 1; \
-	fi
+fmt-check: ## check the Go code formatting
+	$(GO) run $(GOLANGCI_LINT_PACKAGE) fmt --diff-colored
 
 .PHONY: deps-tools
 deps-tools: ## install tool dependencies
@@ -149,13 +144,8 @@ tidy: ## run go mod tidy
 	fi
 
 .PHONY: tidy-check
-tidy-check: tidy
-	@diff=$$(git diff --color=always -- go.mod go.sum); \
-	if [ -n "$$diff" ]; then \
-		echo "Please run 'make tidy' and commit the result:"; \
-		printf "%s" "$${diff}"; \
-		exit 1; \
-	fi
+tidy-check: ## check that go.mod and go.sum are tidy
+	$(GO) mod tidy -diff
 
 .PHONY: test
 test: ## test everything (integration tests self-skip without docker/network)

@@ -2,7 +2,7 @@ module gitea.com/gitea/runner
 
 go 1.27
 
-toolchain go1.27.0
+toolchain go1.27.1
 
 require (
 	connectrpc.com/connect v1.20.0
@@ -17,7 +17,7 @@ require (
 	github.com/docker/go-units v0.5.0
 	github.com/go-git/go-billy/v5 v5.9.1
 	github.com/go-git/go-git/v5 v5.19.2
-	github.com/gobwas/glob v0.2.3
+	github.com/gobwas/glob v1.0.0
 	github.com/google/go-cmp v0.7.0
 	github.com/joho/godotenv v1.5.1
 	github.com/julienschmidt/httprouter v1.3.0
@@ -30,8 +30,8 @@ require (
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/opencontainers/selinux v1.15.1
 	github.com/prometheus/client_golang v1.24.1
-	github.com/prometheus/client_model v0.6.2
-	github.com/sirupsen/logrus v1.10.1
+	github.com/prometheus/client_model v0.6.3
+	github.com/sirupsen/logrus v1.10.2
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.12.1
