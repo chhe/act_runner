@@ -300,6 +300,8 @@ func TestNewJobExecutor(t *testing.T) {
 		result        string
 		hasError      bool
 		output        string
+		startError    error
+		cancelOnStart bool
 	}{
 		{
 			name:          "zeroSteps",
@@ -435,6 +437,21 @@ func TestNewJobExecutor(t *testing.T) {
 			result:        "failure",
 			output:        "${{ 'test' != test }}",
 		},
+		{
+			name:          "start failure",
+			steps:         []*model.Step{{ID: "1"}},
+			executedSteps: []string{"startContainer", "closeContainer"},
+			startError:    errors.New("start failed"),
+		},
+		{
+			name:          "cancelled at startup boundary",
+			steps:         []*model.Step{{ID: "1"}},
+			preSteps:      []bool{false},
+			postSteps:     []bool{true},
+			executedSteps: []string{"startContainer", "step1", "post1", "interpolateOutputs", "stopContainer", "closeContainer"},
+			result:        "cancelled",
+			cancelOnStart: true,
+		},
 	}
 
 	contains := func(needle string, haystack []string) bool {
@@ -445,7 +462,8 @@ func TestNewJobExecutor(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fmt.Printf("::group::%s\n", tt.name) //nolint:forbidigo // pre-existing issue from nektos/act
 
-			ctx := common.WithJobErrorContainer(context.Background())
+			ctx, cancel := context.WithCancel(common.WithJobErrorContainer(context.Background()))
+			defer cancel()
 			jim := &jobInfoMock{}
 			sfm := &stepFactoryMock{}
 			rc := &RunContext{
@@ -470,9 +488,12 @@ func TestNewJobExecutor(t *testing.T) {
 			jim.On("steps").Return(tt.steps)
 
 			if len(tt.steps) > 0 {
-				jim.On("startContainer").Return(func(ctx context.Context) error {
+				jim.On("startContainer").Return(func(_ context.Context) error {
 					executorOrder = append(executorOrder, "startContainer")
-					return nil
+					if tt.cancelOnStart {
+						cancel()
+					}
+					return tt.startError
 				})
 			}
 
@@ -506,7 +527,7 @@ func TestNewJobExecutor(t *testing.T) {
 				defer sm.AssertExpectations(t)
 			}
 
-			if len(tt.steps) > 0 {
+			if len(tt.steps) > 0 && tt.startError == nil {
 				jim.On("matrix").Return(map[string]any{})
 
 				jim.On("interpolateOutputs").Return(func(ctx context.Context) error {
@@ -520,12 +541,17 @@ func TestNewJobExecutor(t *testing.T) {
 				if contains("stopContainer", tt.executedSteps) {
 					jim.On("stopContainer").Return(func(ctx context.Context) error {
 						executorOrder = append(executorOrder, "stopContainer")
+						require.NoError(t, ctx.Err())
+						_, bounded := ctx.Deadline()
+						require.True(t, bounded)
 						return nil
 					})
 				}
 
 				jim.On("result", tt.result)
+			}
 
+			if len(tt.steps) > 0 {
 				jim.On("closeContainer").Return(func(ctx context.Context) error {
 					executorOrder = append(executorOrder, "closeContainer")
 					return nil
@@ -534,7 +560,14 @@ func TestNewJobExecutor(t *testing.T) {
 
 			executor := newJobExecutor(jim, sfm, rc)
 			err := executor(ctx)
-			assert.NoError(t, err) //nolint:testifylint // pre-existing issue from nektos/act
+			switch {
+			case tt.startError != nil:
+				require.ErrorIs(t, err, tt.startError)
+			case tt.cancelOnStart:
+				require.ErrorIs(t, err, context.Canceled)
+			default:
+				require.NoError(t, err)
+			}
 			assert.Empty(t, rc.Run.Job().Outputs["bad"])
 			assert.Equal(t, tt.executedSteps, executorOrder)
 

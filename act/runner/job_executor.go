@@ -263,18 +263,19 @@ func newJobExecutor(info jobInfo, sf stepFactory, rc *RunContext) common.Executo
 		return err
 	})
 
-	stepsExecutor := newStepsExecutor(rc, preSteps, steps)
-
-	return common.NewPipelineExecutor(info.startContainer(), stepsExecutor.
-		Finally(func(ctx context.Context) error {
+	return common.Executor(func(ctx context.Context) error {
+		if err := info.startContainer()(ctx); err != nil {
+			return err
+		}
+		return newStepsExecutor(rc, preSteps, steps).Finally(func(ctx context.Context) error {
 			// Record an interrupt (backstop for interrupts that land outside the main
 			// step loop) so the post steps observe the cancelled/failed job status.
 			rc.markInterrupted(ctx.Err())
 			postCtx, cancel := postStepsContext(ctx)
 			defer cancel()
 			return postExecutor(postCtx)
-		}).
-		Finally(info.closeContainer()))
+		})(ctx)
+	}).Finally(info.closeContainer())
 }
 
 // postStepsContext derives the context used to run the job's post/cleanup steps from the

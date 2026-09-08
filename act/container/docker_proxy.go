@@ -6,20 +6,22 @@
 package container
 
 import (
+	"bufio"
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"mime"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -35,64 +37,84 @@ import (
 const (
 	jobLabel      = "com.gitea.runner.job"
 	maxCreateBody = 8 << 20
+
+	dockerProxyProbeTimeout = 5 * time.Second
 )
 
 var (
 	createPath    = regexp.MustCompile(`^(/v[0-9.]+)?/(containers|networks|volumes)/create$`)
 	rawStreamPath = regexp.MustCompile(`^(/v[0-9.]+)?/(containers/[^/]+/attach|exec/[^/]+/start)$`)
-	proxyProbe    struct {
-		sync.Mutex
-		decided bool
-		dir     string
-	}
 )
 
-// DockerProxyDir returns where job proxy sockets live, "" while undecided or when the daemon cannot open the runner's files.
-func DockerProxyDir(ctx context.Context) string {
-	proxyProbe.Lock()
-	defer proxyProbe.Unlock()
-	if proxyProbe.decided {
-		return proxyProbe.dir
+func NewDockerProxy(ctx context.Context, job string) *DockerProxy {
+	if host := os.Getenv("DOCKER_HOST"); runtime.GOOS != "linux" || host != "" && !strings.HasPrefix(host, "unix://") {
+		return nil
 	}
-	dir := filepath.Join(os.TempDir(), "gitea-runner-docker")
-	ok, err := daemonSeesDir(ctx, dir)
+	probeCtx, cancel := context.WithTimeout(ctx, dockerProxyProbeTimeout)
+	defer cancel()
+	cli, err := GetDockerClient(probeCtx)
 	if err != nil {
-		common.Logger(ctx).Debugf("docker proxy probe postponed: %v", err)
-		return ""
-	}
-	proxyProbe.decided = true
-	if ok {
-		proxyProbe.dir = dir
-	} else {
-		common.Logger(ctx).Infof("the docker daemon cannot reach the runner's filesystem, jobs get the daemon socket directly")
-	}
-	return proxyProbe.dir
-}
-
-func daemonSeesDir(ctx context.Context, dir string) (bool, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return false, err
-	}
-	probe := filepath.Join(dir, "probe")
-	if err := os.WriteFile(probe, nil, 0o600); err != nil {
-		return false, err
-	}
-	cli, err := GetDockerClient(ctx)
-	if err != nil {
-		return false, err
+		return nil
 	}
 	defer cli.Close()
+	daemonSocket, ok := strings.CutPrefix(cli.DaemonHost(), "unix://")
+	if !ok {
+		return nil
+	}
+	if info, err := os.Stat(daemonSocket); err != nil || info.Mode()&os.ModeSocket == 0 {
+		return nil
+	}
+	dir, err := filepath.Abs(os.TempDir())
+	if err != nil {
+		common.Logger(ctx).Infof("docker proxy probe failed, jobs get the daemon socket directly: %v", err)
+		return nil
+	}
+	seen, err := daemonSeesDir(probeCtx, cli, dir)
+	if err != nil {
+		common.Logger(ctx).Infof("docker proxy probe failed, jobs get the daemon socket directly: %v", err)
+		return nil
+	}
+	if !seen {
+		common.Logger(ctx).Infof("the docker daemon cannot reach the runner's temporary filesystem, jobs get the daemon socket directly")
+		return nil
+	}
+	if ctx.Err() != nil {
+		return nil
+	}
+	proxy, err := StartDockerProxy(daemonSocket, dir, job)
+	if err != nil {
+		common.Logger(ctx).Warnf("docker proxy not started, the job gets the daemon socket directly: %v", err)
+	}
+	return proxy
+}
+
+// daemonSeesDir reports whether the daemon opens the files the runner writes in dir,
+// which is what a job's proxy socket mounted from there needs.
+func daemonSeesDir(ctx context.Context, cli client.APIClient, dir string) (bool, error) {
+	marker, err := os.CreateTemp(dir, "gitea-runner-probe-")
+	if err != nil {
+		return false, err
+	}
+	defer func() {
+		if err := os.Remove(marker.Name()); err != nil {
+			common.Logger(ctx).Warnf("removing the docker proxy probe marker failed: %v", err)
+		}
+	}()
+	if err := marker.Close(); err != nil {
+		return false, err
+	}
 	images, err := cli.ImageList(ctx, client.ImageListOptions{})
 	if err != nil {
 		return false, err
 	}
 	if len(images.Items) == 0 {
-		return false, errors.New("no image to probe with yet")
+		return false, errors.New("no image available for the docker proxy probe")
 	}
-	// creating validates that a bind source exists on the daemon's side, nothing is started
 	created, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
-		Config:     &container.Config{Image: images.Items[0].ID, Cmd: []string{"true"}},
-		HostConfig: &container.HostConfig{Mounts: []mount.Mount{{Type: mount.TypeBind, Source: probe, Target: "/gitea-runner-probe"}}},
+		Config: &container.Config{Image: images.Items[0].ID, Cmd: []string{"true"}},
+		HostConfig: &container.HostConfig{Mounts: []mount.Mount{
+			{Type: mount.TypeBind, Source: marker.Name(), Target: "/gitea-runner-probe", ReadOnly: true},
+		}},
 	})
 	if cerrdefs.IsInvalidArgument(err) {
 		return false, nil
@@ -100,24 +122,37 @@ func daemonSeesDir(ctx context.Context, dir string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	_, err = cli.ContainerRemove(ctx, created.ID, client.ContainerRemoveOptions{Force: true})
-	return true, err
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), dockerProxyProbeTimeout)
+	defer cancel()
+	if _, err := cli.ContainerRemove(cleanupCtx, created.ID, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true}); err != nil {
+		return false, fmt.Errorf("removing the docker proxy probe container failed: %w", err)
+	}
+	return true, nil
 }
 
 // StartDockerProxy serves a job's docker socket in dir, labelling what the job creates through it.
 func StartDockerProxy(daemonSocket, dir, job string) (*DockerProxy, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
-	}
-	digest := sha256.Sum256([]byte(job))
-	socket := filepath.Join(dir, hex.EncodeToString(digest[:8])+".sock")
-	_ = os.Remove(socket)
-	listener, err := net.Listen("unix", socket)
+	info, err := os.Stat(daemonSocket)
 	if err != nil {
 		return nil, err
 	}
-	if info, err := os.Stat(daemonSocket); err == nil {
-		_ = os.Chmod(socket, info.Mode().Perm())
+	if info.Mode()&os.ModeSocket == 0 {
+		return nil, errors.New("docker daemon path is not a Unix socket")
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	instance, err := os.MkdirTemp(dir, "p-")
+	if err != nil {
+		return nil, err
+	}
+	socket := filepath.Join(instance, "docker.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		return nil, errors.Join(err, os.RemoveAll(instance))
+	}
+	if err := copyDockerSocketPermissions(socket, info); err != nil {
+		return nil, errors.Join(err, listener.Close(), os.RemoveAll(instance))
 	}
 	dial := func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", daemonSocket)
@@ -130,61 +165,104 @@ func StartDockerProxy(daemonSocket, dir, job string) (*DockerProxy, error) {
 		},
 		Transport: transport,
 	}
-	server := &http.Server{ReadHeaderTimeout: 30 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method != http.MethodPost:
-		case createPath.MatchString(r.URL.Path):
+	streams, cancelStreams := context.WithCancel(context.Background())
+	creates, cancelCreates := context.WithCancel(context.Background())
+	var admission sync.Mutex
+	var handlers sync.WaitGroup
+	server := &http.Server{ReadHeaderTimeout: 30 * time.Second, ConnContext: func(ctx context.Context, conn net.Conn) context.Context {
+		return context.WithValue(ctx, dockerProxyConnKey{}, conn)
+	}, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		admission.Lock()
+		if streams.Err() != nil {
+			admission.Unlock()
+			http.Error(w, "docker proxy is closing", http.StatusServiceUnavailable)
+			return
+		}
+		handlers.Add(1)
+		admission.Unlock()
+		defer handlers.Done()
+		creating := r.Method == http.MethodPost && createPath.MatchString(r.URL.Path)
+		parent, lifetime := r.Context(), streams
+		if creating {
+			parent, lifetime = context.WithoutCancel(parent), creates
+		}
+		ctx, cancel := context.WithCancel(parent)
+		defer cancel()
+		stop := context.AfterFunc(lifetime, func() {
+			cancel()
+			if !creating {
+				if conn, ok := parent.Value(dockerProxyConnKey{}).(net.Conn); ok {
+					_ = conn.Close()
+				}
+			}
+		})
+		defer stop()
+		r = r.WithContext(ctx)
+		if creating {
+			r.Body = http.MaxBytesReader(w, r.Body, maxCreateBody)
 			if err := addLabel(r, job); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
+				status := http.StatusBadRequest
+				if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+					status = http.StatusRequestEntityTooLarge
+				}
+				http.Error(w, err.Error(), status)
 				return
 			}
-		case rawStreamPath.MatchString(r.URL.Path):
-			tunnel(w, r, dial)
+		} else if r.Method == http.MethodPost && rawStreamPath.MatchString(r.URL.Path) {
+			tunnel(w, r, dial, forward)
 			return
 		}
 		forward.ServeHTTP(w, r)
 	})}
-	go func() { _ = server.Serve(listener) }()
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		_ = server.Serve(listener)
+	}()
 	return &DockerProxy{Socket: socket, close: func(ctx context.Context) error {
-		err := removeJobResources(ctx, job)
-		_ = server.Close()
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		admission.Lock()
+		listenerErr := listener.Close()
+		cancelStreams()
+		admission.Unlock()
+		<-served
+		shutdownErr := server.Shutdown(ctx)
+		cancelCreates()
+		serverErr := server.Close()
+		handlers.Wait()
 		transport.CloseIdleConnections()
-		_ = os.Remove(socket)
-		return err
+		return errors.Join(ctx.Err(), listenerErr, shutdownErr, serverErr, os.RemoveAll(instance))
 	}}, nil
 }
 
 func addLabel(r *http.Request, job string) error {
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxCreateBody+1))
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		return err
 	}
-	if len(body) > maxCreateBody {
-		return errors.New("create request too large")
-	}
 	if len(bytes.TrimSpace(body)) == 0 {
-		r.Body = io.NopCloser(bytes.NewReader(body))
-		return nil
+		body = []byte("{}")
 	}
 	var fields map[string]json.RawMessage
+	var config struct{ Labels map[string]string }
 	if err := json.Unmarshal(body, &fields); err != nil {
 		return fmt.Errorf("invalid create request: %w", err)
 	}
-	key := "Labels"
-	for name := range fields {
-		if strings.EqualFold(name, key) {
-			key = name
-			break
-		}
+	if err := json.Unmarshal(body, &config); err != nil {
+		return fmt.Errorf("invalid create labels: %w", err)
 	}
-	labels := map[string]string{}
-	if raw := fields[key]; len(raw) > 0 && string(raw) != "null" {
-		if err := json.Unmarshal(raw, &labels); err != nil {
-			return fmt.Errorf("invalid create request: %w", err)
-		}
+	if fields == nil {
+		fields = make(map[string]json.RawMessage)
 	}
-	labels[jobLabel] = job
-	if fields[key], err = json.Marshal(labels); err != nil {
+	maps.DeleteFunc(fields, func(name string, _ json.RawMessage) bool {
+		return strings.EqualFold(name, "Labels")
+	})
+	if config.Labels == nil {
+		config.Labels = make(map[string]string)
+	}
+	config.Labels[jobLabel] = job
+	if fields["Labels"], err = json.Marshal(config.Labels); err != nil {
 		return err
 	}
 	if body, err = json.Marshal(fields); err != nil {
@@ -196,44 +274,92 @@ func addLabel(r *http.Request, job string) error {
 	return nil
 }
 
+type dockerProxyConnKey struct{}
+
+type dockerProxyResponse struct {
+	response *http.Response
+}
+
+func (r dockerProxyResponse) RoundTrip(_ *http.Request) (*http.Response, error) {
+	return r.response, nil
+}
+
 // tunnel splices attach and exec streams, which the daemon hijacks with or without an HTTP upgrade
-func tunnel(w http.ResponseWriter, r *http.Request, dial func(context.Context, string, string) (net.Conn, error)) {
-	hijacker, ok := w.(http.Hijacker)
-	if !ok {
-		http.Error(w, "connection cannot be hijacked", http.StatusInternalServerError)
-		return
-	}
+func tunnel(w http.ResponseWriter, r *http.Request, dial func(context.Context, string, string) (net.Conn, error), forward *httputil.ReverseProxy) {
 	upstream, err := dial(r.Context(), "", "")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer upstream.Close()
+	stop := context.AfterFunc(r.Context(), func() { _ = upstream.Close() })
+	defer stop()
 	if err := r.Write(upstream); err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	downstream, buffered, err := hijacker.Hijack()
+	reader := bufio.NewReader(upstream)
+	var response *http.Response
+	for {
+		response, err = http.ReadResponse(reader, r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		if response.StatusCode >= 200 || response.StatusCode == http.StatusSwitchingProtocols {
+			break
+		}
+		maps.Copy(w.Header(), response.Header)
+		w.WriteHeader(response.StatusCode)
+		clear(w.Header())
+		_ = response.Body.Close()
+	}
+	defer func() {
+		_ = upstream.Close()
+		_ = response.Body.Close()
+	}()
+	mediaType, _, _ := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	if response.StatusCode != http.StatusSwitchingProtocols && (response.StatusCode != http.StatusOK || mediaType != "application/vnd.docker.raw-stream") {
+		ordinary := *forward
+		ordinary.Transport = dockerProxyResponse{response: response}
+		ordinary.ServeHTTP(w, r)
+		return
+	}
+	downstream, buffered, err := http.NewResponseController(w).Hijack()
 	if err != nil {
 		return
 	}
 	defer downstream.Close()
-	if _, err := io.CopyN(upstream, buffered, int64(buffered.Reader.Buffered())); err != nil {
+	if _, err := fmt.Fprintf(buffered, "%s %s\r\n", response.Proto, response.Status); err != nil {
 		return
 	}
-	done := make(chan struct{}, 2)
+	if err := response.Header.Write(buffered); err != nil {
+		return
+	}
+	if _, err := buffered.WriteString("\r\n"); err != nil {
+		return
+	}
+	if err := buffered.Flush(); err != nil {
+		return
+	}
+	done := make(chan struct{})
 	go func() {
-		_, _ = io.Copy(upstream, downstream)
-		done <- struct{}{}
+		defer close(done)
+		if _, err := io.Copy(upstream, io.MultiReader(io.LimitReader(buffered, int64(buffered.Reader.Buffered())), downstream)); err != nil { // Bypass net/http after the prefix so stdin EOF preserves output.
+			_ = upstream.Close()
+		} else if writer, ok := upstream.(interface{ CloseWrite() error }); ok {
+			_ = writer.CloseWrite()
+		} else {
+			_ = upstream.Close()
+		}
 	}()
-	go func() {
-		_, _ = io.Copy(downstream, upstream)
-		done <- struct{}{}
-	}()
+	_, _ = io.Copy(downstream, reader)
+	_ = downstream.Close()
+	_ = upstream.Close()
 	<-done
 }
 
-func removeJobResources(ctx context.Context, job string) error {
+func RemoveDockerJobResources(ctx context.Context, job string) error {
 	cli, err := GetDockerClient(ctx)
 	if err != nil {
 		return err
@@ -246,27 +372,20 @@ func removeLabelled(ctx context.Context, cli client.APIClient, job string) error
 	logger := common.Logger(ctx)
 	filters := make(client.Filters).Add("label", jobLabel+"="+job)
 	containers, err := cli.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: filters})
-	if err != nil {
-		return err
-	}
-	var errs []error
+	errs := []error{err}
 	for _, c := range containers.Items {
 		logger.Infof("removing container %s the job left behind", strings.TrimPrefix(strings.Join(c.Names, ","), "/"))
 		errs = append(errs, (&containerReference{cli: cli, id: c.ID}).remove()(ctx))
 	}
 	networks, err := cli.NetworkList(ctx, client.NetworkListOptions{Filters: filters})
-	if err != nil {
-		return errors.Join(append(errs, err)...)
-	}
+	errs = append(errs, err)
 	for _, n := range networks.Items {
 		if _, err := cli.NetworkRemove(ctx, n.ID, client.NetworkRemoveOptions{}); err != nil && !cerrdefs.IsNotFound(err) {
 			errs = append(errs, fmt.Errorf("failed to remove network %s: %w", n.Name, err))
 		}
 	}
 	volumes, err := cli.VolumeList(ctx, client.VolumeListOptions{Filters: filters})
-	if err != nil {
-		return errors.Join(append(errs, err)...)
-	}
+	errs = append(errs, err)
 	for _, v := range volumes.Items {
 		if _, err := cli.VolumeRemove(ctx, v.Name, client.VolumeRemoveOptions{}); err != nil && !cerrdefs.IsNotFound(err) {
 			errs = append(errs, fmt.Errorf("failed to remove volume %s: %w", v.Name, err))

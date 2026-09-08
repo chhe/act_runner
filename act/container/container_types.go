@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 
 	"gitea.com/gitea/runner/act/common"
 
@@ -77,13 +78,15 @@ var ErrContainerNotFound = errors.New("does not exist")
 
 // DockerProxy is a job's docker socket, fronting the daemon's for the job's lifetime.
 type DockerProxy struct {
-	Socket string
-	close  func(context.Context) error
+	Socket    string
+	close     func(context.Context) error
+	closeOnce sync.Once
+	closeErr  error
 }
 
-// Close removes what the job created through the socket, then stops serving it.
 func (p *DockerProxy) Close(ctx context.Context) error {
-	return p.close(ctx)
+	p.closeOnce.Do(func() { p.closeErr = p.close(ctx) })
+	return p.closeErr
 }
 
 // Info is a snapshot of a container, as of one inspect.

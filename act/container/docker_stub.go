@@ -29,8 +29,12 @@ func RemoveImage(ctx context.Context, imageName string, force, pruneChildren boo
 	return false, errors.New("Unsupported Operation")
 }
 
-func DockerProxyDir(ctx context.Context) string {
-	return ""
+func RemoveDockerJobResources(_ context.Context, _ string) error {
+	return nil
+}
+
+func NewDockerProxy(_ context.Context, _ string) *DockerProxy {
+	return nil
 }
 
 func StartDockerProxy(daemonSocket, dir, job string) (*DockerProxy, error) {

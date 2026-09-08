@@ -275,7 +275,7 @@ volumes:
   - ${GITEA_DOCKER_WORKSPACE:-.}/data:/app/data
 ```
 
-Containers, networks and volumes a job creates through the socket are removed when the job ends. Both apply to jobs in containers, on the host `.` already works.
+Linux container jobs use a Docker proxy when socket sharing and permissions allow it. Other setups use the daemon socket directly. The proxy removes containers, networks and volumes after post steps and the completed hook. Named volumes created through it are job-scoped. To retain resources, mount the daemon socket explicitly in `container.options`. Host jobs use their existing Docker access, where `.` works.
 
 #### Proxy
 

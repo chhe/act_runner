@@ -488,14 +488,11 @@ func (cr *containerReference) remove() common.Executor {
 			RemoveVolumes: true,
 			Force:         true,
 		})
-		switch {
-		case cerrdefs.IsConflict(err):
-			// the daemon's own AutoRemove teardown is running, and it releases the volume
-			// references and the network endpoint only once it finishes
-			cr.waitForRemoval(ctx, idOrName)
-		case err != nil && !cerrdefs.IsNotFound(err):
-			logger.Error(fmt.Errorf("failed to remove container %s: %w", idOrName, err))
-			return nil // keep the id, the container is still there for a later Remove()
+		if cerrdefs.IsConflict(err) {
+			err = cr.waitForRemoval(ctx, idOrName)
+		}
+		if err != nil && !cerrdefs.IsNotFound(err) {
+			return fmt.Errorf("failed to remove container %s: %w", idOrName, err)
 		}
 
 		logger.Debugf("Removed container: %v", idOrName)
@@ -504,7 +501,7 @@ func (cr *containerReference) remove() common.Executor {
 	}
 }
 
-func (cr *containerReference) waitForRemoval(ctx context.Context, idOrName string) {
+func (cr *containerReference) waitForRemoval(ctx context.Context, idOrName string) error {
 	// per container, against the one minute the post-job executor allows for the whole
 	// cleanup, so a job with several services can spend most of that budget here
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -514,18 +511,13 @@ func (cr *containerReference) waitForRemoval(ctx context.Context, idOrName strin
 		Condition: container.WaitConditionRemoved,
 	})
 	select {
-	case <-waitResult.Result:
-	case <-waitResult.Error:
-	case <-ctx.Done():
-		// the client delivers the result over an unbuffered channel, so leave a receiver
-		// behind or its goroutine parks on the send for the lifetime of the process
-		go func() {
-			select {
-			case <-waitResult.Result:
-			case <-waitResult.Error:
-			}
-		}()
-		common.Logger(ctx).Warnf("Timed out waiting for the daemon to remove container %s, its volumes and network may be left behind", idOrName)
+	case result := <-waitResult.Result:
+		if result.Error != nil {
+			return errors.New(result.Error.Message)
+		}
+		return nil
+	case err := <-waitResult.Error:
+		return err
 	}
 }
 

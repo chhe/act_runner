@@ -9,10 +9,8 @@
 #
 # Usage: scripts/test-dind.sh [target] [-- go-test-args...]
 #   target:        dind (default) or dind-rootless
-#   go-test-args:  passed verbatim to `go test`. The default exercises the daemon-facing tests
-#                  that need no registry access (a fresh daemon, e.g. on fork-PR CI, can't
-#                  authenticate pulls): the env-extraction build (FROM scratch) and the #981
-#                  /var/run symlink copy regression (which reuses a preloaded alpine).
+#   go-test-args:  passed verbatim to `go test`. Defaults cover image env extraction,
+#                  symlink copying and a mounted Docker job using cached images.
 #
 # Env:
 #   DIND_TEST_PORT     host port for the daemon (default 32375)
@@ -25,15 +23,25 @@ case "${1:-}" in
   dind|dind-rootless) target="$1"; shift ;;
 esac
 [ "${1:-}" = "--" ] && shift
-[ $# -eq 0 ] && set -- -race -run '^TestDocker$|^TestDockerCopyToSymlinkPath$' ./act/container/
+default_tests=false
+if [ $# -eq 0 ]; then
+  default_tests=true
+  set -- -count=1 -race -run '^TestDocker$|^TestDockerCopyToSymlinkPath$' ./act/container/
+fi
 
 port="${DIND_TEST_PORT:-32375}"
 name="gitea-runner-dind-test-$$"
 image="${DIND_TEST_IMAGE:-gitea-runner-${target}:dind-test}"
 # The host daemon endpoint, captured before DOCKER_HOST is pointed at the fresh dind daemon.
-host_docker="${DOCKER_HOST:-unix:///var/run/docker.sock}"
+host_docker="${DOCKER_HOST:-$(docker context inspect --format '{{.Endpoints.docker.Host}}')}"
+test_dir=""
 
-cleanup() { docker rm -f "$name" >/dev/null 2>&1 || true; }
+cleanup() {
+  docker -H "$host_docker" rm -fv "$name" >/dev/null 2>&1 || true
+  if [ -n "$test_dir" ]; then
+    rm -rf "$test_dir"
+  fi
+}
 trap cleanup EXIT
 
 if [ -z "${DIND_TEST_IMAGE:-}" ]; then
@@ -71,7 +79,7 @@ else
 fi
 # Create the dind container on the host daemon first, then repoint DOCKER_HOST at it: exporting
 # DOCKER_HOST before `docker run` would make this `docker run` target the not-yet-existent dind.
-docker run -d --privileged --name "$name" "${run_args[@]}" \
+docker -H "$host_docker" run -d --privileged --name "$name" "${run_args[@]}" \
   -e DOCKER_TLS_CERTDIR= \
   --entrypoint dockerd-entrypoint.sh \
   "$image" --host=tcp://0.0.0.0:2375 >/dev/null
@@ -82,11 +90,20 @@ for _ in $(seq 1 60); do
   docker version --format 'server docker {{.Server.Version}}' 2>/dev/null && break
   sleep 1
 done
+if ! docker version --format 'server docker {{.Server.Version}}'; then
+  docker -H "$host_docker" logs "$name" >&2
+  exit 1
+fi
 
 # Seed the fresh daemon with images the host already has (the CI job pulls them in the
 # preceding `make test`), so the daemon-facing tests run without registry access.
 echo "==> Seeding daemon with cached host images"
-for img in ${DIND_TEST_PRELOAD:-alpine:latest}; do
+preload="${DIND_TEST_PRELOAD:-alpine:latest}"
+job_image="${ACT_TEST_IMAGE:-node:24-bookworm-slim}"
+if [ "$default_tests" = true ]; then
+  preload="$preload $job_image"
+fi
+for img in $preload; do
   if docker -H "$host_docker" image inspect "$img" >/dev/null 2>&1; then
     docker -H "$host_docker" save "$img" | docker load >/dev/null 2>&1 && echo "  loaded $img" || true
   fi
@@ -94,3 +111,33 @@ done
 
 echo "==> Running tests against dind daemon"
 go test "$@"
+
+if [ "$default_tests" = true ]; then
+  if ! docker image inspect "$job_image" >/dev/null 2>&1; then
+    echo "mounted Docker test requires ${job_image}, pull it on the host before running this harness" >&2
+    exit 1
+  fi
+  test_dir="$(mktemp -d)"
+  echo "==> Building mounted Docker test for the dind container"
+  CGO_ENABLED=0 GOOS=linux GOARCH="$(docker -H "$host_docker" image inspect "$image" --format '{{.Architecture}}')" \
+    go test -c -o "$test_dir/runner.test" ./act/runner/
+  docker -H "$host_docker" exec "$name" mkdir -p /tmp/gitea-runner-proxy-test/testdata
+  tar -C "$test_dir" -cf - runner.test -C "$PWD/act/runner" testdata/docker-proxy | \
+    docker -H "$host_docker" exec -i "$name" tar -x -C /tmp/gitea-runner-proxy-test
+  socket="unix:///var/run/docker.sock"
+  users=(0)
+  if [ "$target" = dind-rootless ]; then
+    socket="unix:///run/user/1000/docker.sock"
+    users=(1000 0)
+  fi
+  for user in "${users[@]}"; do
+    proxy_mode="proxy"
+    if [ "$user" != 0 ]; then
+      proxy_mode="direct"
+    fi
+    echo "==> Running mounted Docker job inside ${target} as UID ${user}, expecting ${proxy_mode} access"
+    docker -H "$host_docker" exec --user "$user" -w /tmp/gitea-runner-proxy-test \
+      -e DOCKER_HOST="$socket" -e ACT_TEST_DOCKER_PROXY="$proxy_mode" -e ACT_TEST_IMAGE="$job_image" \
+      "$name" ./runner.test -test.v -test.run '^TestDockerProxyMountedJob$' -test.timeout 3m
+  done
+fi
