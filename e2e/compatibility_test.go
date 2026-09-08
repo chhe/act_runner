@@ -27,6 +27,7 @@ func TestCompatibility(t *testing.T) {
 
 	t.Run("payloads", testPayloads)
 	t.Run("cache", testActionsCacheRoundTrip)
+	t.Run("artifact", testArtifactRoundTrip)
 	t.Run("cancellation_and_log_streaming", testRunCancellation)
 	t.Run("dispatch", testWorkflowDispatch)
 	t.Run("ephemeral", testEphemeralRunner)

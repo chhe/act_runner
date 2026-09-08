@@ -603,18 +603,26 @@ func (h *Handler) bearerAuth(handler httprouter.Handle) httprouter.Handle {
 		h.logger.Debugf("%s %s", r.Method, r.URL.Path)
 		token := bearerToken(r)
 		if token == "" {
-			h.responseJSON(w, r, http.StatusUnauthorized, errors.New("missing bearer token"))
+			h.unauthorized(w, r, errors.New("missing bearer token"))
 			return
 		}
 		cred, ok := h.lookupCredential(token)
 		if !ok {
-			h.responseJSON(w, r, http.StatusUnauthorized, errors.New("unknown bearer token"))
+			h.unauthorized(w, r, errors.New("unknown bearer token"))
 			return
 		}
 		ctx := context.WithValue(r.Context(), credKey{}, cred)
 		handler(w, r.WithContext(ctx), params)
 		go h.gcCache()
 	}
+}
+
+func (h *Handler) unauthorized(w http.ResponseWriter, r *http.Request, err error) {
+	if strings.HasPrefix(r.URL.Path, cacheServiceV2Path) {
+		h.twirpError(w, r, twirpUnauthenticated, err)
+		return
+	}
+	h.responseJSON(w, r, http.StatusUnauthorized, err)
 }
 
 // signedAuth authenticates a signed URL. purpose separates the flavours of URL the
@@ -720,6 +728,12 @@ func (h *Handler) internalRevoke(w http.ResponseWriter, r *http.Request, _ httpr
 	h.responseJSON(w, r, http.StatusOK)
 }
 
+// hashedToken fingerprints a job's bearer, so a reservation can tell its own retry from another job.
+func hashedToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
 func bearerToken(r *http.Request) string {
 	auth := r.Header.Get("Authorization")
 	const prefix = "Bearer "
@@ -805,8 +819,8 @@ func findExactCache(db *bolthold.Store, repo, key, version string, complete bool
 	}
 	cache := &Cache{}
 	err := db.FindOne(cache,
-		bolthold.Where("Repo").Eq(repo).
-			And("Key").Eq(key).
+		bolthold.Where("Key").Eq(key).Index("Key").
+			And("Repo").Eq(repo).
 			And("Version").Eq(version).
 			And("Complete").Eq(complete).
 			SortBy(sortBy).Reverse())

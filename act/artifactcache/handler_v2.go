@@ -39,8 +39,8 @@ const (
 
 	blobUploadURLTTL = time.Hour
 
-	// twirpInternal is the only error code that is not the client's fault.
-	twirpInternal = "internal"
+	twirpInternal        = "internal"
+	twirpUnauthenticated = "unauthenticated"
 )
 
 func (h *Handler) registerV2Routes(router *httprouter.Router) {
@@ -56,7 +56,7 @@ func (h *Handler) v2CreateCacheEntry(w http.ResponseWriter, r *http.Request, _ h
 	cred := credFromContext(r.Context())
 	req, err := decodeTwirpRequest[v2CreateRequest](r)
 	if err != nil {
-		h.twirpError(w, r, "malformed_request", err)
+		h.twirpError(w, r, "malformed", err)
 		return
 	}
 	if req.Key == "" || req.Version == "" {
@@ -83,11 +83,30 @@ func (h *Handler) v2CreateCacheEntry(w http.ResponseWriter, r *http.Request, _ h
 		return
 	}
 
+	// A second live reservation is finalized by whichever job calls last, against the other's upload.
+	owner := hashedToken(bearerToken(r))
+	if pending, err := findExactCache(db, cred.Repo, req.Key, req.Version, false); err != nil {
+		h.twirpError(w, r, twirpInternal, err)
+		return
+	} else if pending != nil && pending.UsedAt > time.Now().Add(-uploadStallTimeout).Unix() {
+		if pending.Owner != owner {
+			h.twirpNotOK(w, r)
+			return
+		}
+		h.touch(db, pending)                                // still uploading, so it must not go stale under the sweep
+		h.responseJSON(w, r, http.StatusOK, map[string]any{ // this job retrying its own reservation
+			"ok":                true,
+			"signed_upload_url": h.signedURL(cred, blobPath, blobUploadPurpose, pending.ID, time.Now().Add(blobUploadURLTTL)),
+		})
+		return
+	}
+
 	now := time.Now().Unix()
 	cache := &Cache{
 		Repo:      cred.Repo,
 		Key:       req.Key,
 		Version:   req.Version,
+		Owner:     owner,
 		Size:      -1, // the size is only known at finalize time
 		CreatedAt: now,
 		UsedAt:    now,
@@ -107,7 +126,7 @@ func (h *Handler) v2FinalizeCacheEntryUpload(w http.ResponseWriter, r *http.Requ
 	cred := credFromContext(r.Context())
 	req, err := decodeTwirpRequest[v2FinalizeRequest](r)
 	if err != nil {
-		h.twirpError(w, r, "malformed_request", err)
+		h.twirpError(w, r, "malformed", err)
 		return
 	}
 
@@ -119,6 +138,13 @@ func (h *Handler) v2FinalizeCacheEntryUpload(w http.ResponseWriter, r *http.Requ
 	defer db.Close()
 
 	cache, err := findExactCache(db, cred.Repo, req.Key, req.Version, false)
+	if err == nil && cache != nil && cache.Owner != hashedToken(bearerToken(r)) {
+		cache = nil // not the reservation this job made, so not this job's to commit
+	}
+	if err == nil && cache == nil {
+		// A retry whose first response was lost finds the entry already committed.
+		cache, err = findExactCache(db, cred.Repo, req.Key, req.Version, true)
+	}
 	if err != nil {
 		h.twirpError(w, r, twirpInternal, err)
 		return
@@ -127,13 +153,15 @@ func (h *Handler) v2FinalizeCacheEntryUpload(w http.ResponseWriter, r *http.Requ
 		h.twirpNotOK(w, r)
 		return
 	}
-	db.Close() // commitCache needs the store closed
 
-	cache.Size = int64(cmp.Or(req.SizeBytes, req.SizeBytesCamel))
-	if err := h.commitCache(cache); err != nil {
-		h.logger.Errorf("finalize cache %d (%s): %v", cache.ID, cache.Key, err)
-		h.twirpNotOK(w, r)
-		return
+	if !cache.Complete {
+		db.Close() // commitCache needs the store closed
+		cache.Size = int64(cmp.Or(req.SizeBytes, req.SizeBytesCamel))
+		if err := h.commitCache(cache); err != nil {
+			h.logger.Errorf("finalize cache %d (%s): %v", cache.ID, cache.Key, err)
+			h.twirpNotOK(w, r)
+			return
+		}
 	}
 
 	h.responseJSON(w, r, http.StatusOK, map[string]any{
@@ -147,7 +175,7 @@ func (h *Handler) v2GetCacheEntryDownloadURL(w http.ResponseWriter, r *http.Requ
 	cred := credFromContext(r.Context())
 	req, err := decodeTwirpRequest[v2DownloadRequest](r)
 	if err != nil {
-		h.twirpError(w, r, "malformed_request", err)
+		h.twirpError(w, r, "malformed", err)
 		return
 	}
 
@@ -230,8 +258,11 @@ func (h *Handler) twirpNotOK(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) twirpError(w http.ResponseWriter, r *http.Request, code string, err error) {
 	h.logger.Debugf("%s %s: %v", r.Method, r.URL.Path, err)
 	status := http.StatusBadRequest
-	if code == twirpInternal {
+	switch code {
+	case twirpInternal:
 		status = http.StatusInternalServerError
+	case twirpUnauthenticated:
+		status = http.StatusUnauthorized
 	}
 	h.responseJSON(w, r, status, map[string]any{"code": code, "msg": err.Error()})
 }

@@ -16,6 +16,7 @@ type Cache struct {
 	Key       string `json:"key" boltholdIndex:"Key"`
 	Version   string `json:"version" boltholdIndex:"Version"`
 	Size      int64  `json:"cacheSize"`
+	Owner     string `json:"owner"` // hashed bearer, so a job's own retry is not another job's reservation
 	Complete  bool   `json:"complete" boltholdIndex:"Complete"`
 	UsedAt    int64  `json:"usedAt" boltholdIndex:"UsedAt"`
 	CreatedAt int64  `json:"createdAt" boltholdIndex:"CreatedAt"`

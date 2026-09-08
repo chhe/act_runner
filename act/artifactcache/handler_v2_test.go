@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -141,6 +142,17 @@ func TestCacheServiceV2BlockUpload(t *testing.T) {
 	}
 	list.WriteString(`</BlockList>`)
 	require.Equal(t, http.StatusCreated, putBlob(t, uploadURL+"&comp=blocklist", list.Bytes()))
+	require.Equal(t, http.StatusCreated, putBlob(t, uploadURL+"&comp=blocklist", list.Bytes()),
+		"a client that lost the first answer retries the list it already sent")
+
+	var reordered bytes.Buffer
+	reordered.WriteString(`<?xml version="1.0" encoding="utf-8"?><BlockList>`)
+	for _, blockID := range []string{order[1], order[0], order[2]} {
+		fmt.Fprintf(&reordered, "<Latest>%s</Latest>", blockID)
+	}
+	reordered.WriteString(`</BlockList>`)
+	assert.Equal(t, http.StatusInternalServerError, putBlob(t, uploadURL+"&comp=blocklist", reordered.Bytes()),
+		"the blocks are already assembled, so a different order would silently disagree with them")
 
 	finalized := v2Call(t, handler, testClient, "FinalizeCacheEntryUpload", map[string]any{
 		"key": "blocks", "version": "v1", "size_bytes": len("hello world!"),
@@ -240,4 +252,102 @@ func TestCacheServiceV2Lookups(t *testing.T) {
 		got := v2Call(t, handler, otherClient, "GetCacheEntryDownloadURL", map[string]any{"key": "deps-abc", "version": "v1"})
 		assert.Equal(t, false, got["ok"])
 	})
+}
+
+func TestCacheServiceV2RefusalsAreTwirp(t *testing.T) {
+	handler := newTestHandler(t, Policy{})
+
+	tests := []struct {
+		name   string
+		token  string
+		body   string
+		status int
+		code   string
+	}{
+		{"no bearer at all", "", `{"key":"k","version":"v"}`, http.StatusUnauthorized, twirpUnauthenticated},
+		{"a bearer nobody registered", "not-a-job", `{"key":"k","version":"v"}`, http.StatusUnauthorized, twirpUnauthenticated},
+		{"a body that is not the request", testToken, `{`, http.StatusBadRequest, "malformed"},
+		{"a request missing its key", testToken, `{"version":"v"}`, http.StatusBadRequest, "invalid_argument"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+				handler.ExternalURL()+cacheServiceV2Path+"/CreateCacheEntry", strings.NewReader(tt.body))
+			require.NoError(t, err)
+			if tt.token != "" {
+				req.Header.Set("Authorization", "Bearer "+tt.token)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+
+			require.Equal(t, tt.status, resp.StatusCode)
+			got := map[string]string{}
+			require.NoError(t, json.UnmarshalRead(resp.Body, &got))
+			assert.Equal(t, tt.code, got["code"])
+			assert.NotEmpty(t, got["msg"])
+		})
+	}
+}
+
+func TestCacheServiceV2ConcurrentSaveAndRetries(t *testing.T) {
+	handler := newTestHandler(t, Policy{})
+	content := []byte("the cached archive")
+
+	const otherJob = "another-jobs-token"
+	defer handler.RegisterJob(otherJob, JobCredential{Repo: testRepo})()
+	reserve := func(client *http.Client) map[string]any {
+		return v2Call(t, handler, client, "CreateCacheEntry", map[string]any{"key": "shared", "version": "v1"})
+	}
+	first := reserve(testClient)
+	require.Equal(t, true, first["ok"])
+	retry := reserve(testClient)
+	assert.Equal(t, true, retry["ok"], "a job retrying its own reservation is not a conflict")
+	entryOf := func(reserved map[string]any) string {
+		parsed, err := url.Parse(reserved["signed_upload_url"].(string))
+		require.NoError(t, err)
+		return parsed.Path
+	}
+	assert.Equal(t, entryOf(first), entryOf(retry), "the same reservation, however freshly its URL is signed")
+	assert.Equal(t, false, reserve(&http.Client{Transport: &bearerTransport{token: otherJob}})["ok"],
+		"another job's reservation would be finalized against the first upload")
+
+	otherClient := &http.Client{Transport: &bearerTransport{token: otherJob}}
+	reserved := v2Call(t, handler, otherClient, "CreateCacheEntry", map[string]any{"key": "owned", "version": "v1"})
+	require.Equal(t, true, reserved["ok"])
+	require.Equal(t, http.StatusCreated, putBlob(t, reserved["signed_upload_url"].(string), content))
+	assert.Equal(t, false, v2Call(t, handler, testClient, "FinalizeCacheEntryUpload",
+		map[string]any{"key": "owned", "version": "v1", "size_bytes": strconv.Itoa(len(content))})["ok"],
+		"another job's upload is not this job's to finalize")
+
+	base := handler.ExternalURL() + apiPath
+	reserveV1, err := json.Marshal(&Request{Key: "v1-made", Version: "v1", Size: int64(len(content))})
+	require.NoError(t, err)
+	resp, err := testClient.Post(base+"/caches", "application/json", bytes.NewReader(reserveV1))
+	require.NoError(t, err)
+	var madeByV1 struct {
+		CacheID uint64 `json:"cacheId"`
+	}
+	require.NoError(t, json.UnmarshalRead(resp.Body, &madeByV1))
+	resp.Body.Close()
+	upload, err := http.NewRequestWithContext(t.Context(), http.MethodPatch,
+		fmt.Sprintf("%s/caches/%d", base, madeByV1.CacheID), bytes.NewReader(content))
+	require.NoError(t, err)
+	upload.Header.Set("Content-Range", fmt.Sprintf("bytes 0-%d/*", len(content)-1))
+	resp, err = testClient.Do(upload)
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	assert.Equal(t, false, v2Call(t, handler, testClient, "FinalizeCacheEntryUpload",
+		map[string]any{"key": "v1-made", "version": "v1", "size_bytes": strconv.Itoa(len(content))})["ok"],
+		"a reservation this job did not make through v2 is not its to commit")
+
+	finalized, _ := saveV2(t, handler, "deps", "v1", content)
+	require.Equal(t, true, finalized["ok"])
+	again := v2Call(t, handler, testClient, "FinalizeCacheEntryUpload", map[string]any{
+		"key": "deps", "version": "v1", "size_bytes": strconv.Itoa(len(content)),
+	})
+	assert.Equal(t, true, again["ok"], "a retry whose first answer was lost must not report a failed save")
+	assert.Equal(t, finalized["entry_id"], again["entry_id"])
 }

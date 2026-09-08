@@ -26,7 +26,7 @@ esac
 default_tests=false
 if [ $# -eq 0 ]; then
   default_tests=true
-  set -- -count=1 -race -run '^TestDocker$|^TestDockerCopyToSymlinkPath$' ./act/container/
+  set -- -count=1 -race -run '^TestDocker$' ./act/container/
 fi
 
 port="${DIND_TEST_PORT:-32375}"

@@ -194,6 +194,13 @@ func TestRunner_ExternalCacheServer_RegisterRevoke(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, probe(),
 		"token must be unknown to the remote server before registration")
 
+	disabled := &Runner{cfg: &config.Config{Cache: config.Cache{
+		Enabled: new(bool), ExternalServer: external, ExternalSecret: secret,
+	}}}
+	disabled.registerCacheForTask(token, repo, nil)
+	require.Equal(t, http.StatusUnauthorized, probe(),
+		"a disabled cache registers nothing, whatever external server is left configured")
+
 	unregister, resultsURL := r.registerCacheForTask(token, repo, nil)
 	require.NotEqual(t, http.StatusUnauthorized, probe(),
 		"token must be accepted after registerCacheForTask")

@@ -27,6 +27,7 @@ type runnerOptions struct {
 	capacity  int
 	ephemeral bool
 	cacheV2   *bool
+	cacheHost string
 }
 
 func startRunner(t *testing.T, repo, labelName string, options runnerOptions) *poll.Poller {
@@ -49,6 +50,7 @@ func startRunner(t *testing.T, repo, labelName string, options runnerOptions) *p
 		cfg.Container.DockerHost = "unix:///var/run/docker.sock"
 	}
 	cfg.Cache.Dir = t.TempDir() + "/cache"
+	cfg.Cache.Host = options.cacheHost
 	cfg.Runner.Insecure = true
 	cfg.Runner.FetchInterval = 250 * time.Millisecond // faster than prod defaults for local fixture
 	cfg.Runner.FetchIntervalMax = 250 * time.Millisecond

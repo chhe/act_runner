@@ -176,16 +176,16 @@ func TestPatchedBundleSurvivesInsideAStringLiteral(t *testing.T) {
 func TestPatchBundleIsIdempotent(t *testing.T) {
 	script := bundleFile(t, gateTSC)
 
-	done, err := patchBundle(script)
+	original, err := patchBundle(script)
 	require.NoError(t, err)
-	require.True(t, done)
+	require.NotNil(t, original)
 	patched, err := os.ReadFile(script)
 	require.NoError(t, err)
 	require.True(t, gateOpened(string(patched)))
 
-	done, err = patchBundle(script)
+	original, err = patchBundle(script)
 	require.NoError(t, err)
-	assert.False(t, done, "a patched bundle is not patched again")
+	assert.Nil(t, original, "a patched bundle is not patched again")
 	again, err := os.ReadFile(script)
 	require.NoError(t, err)
 	assert.Equal(t, string(patched), string(again))
@@ -194,9 +194,9 @@ func TestPatchBundleIsIdempotent(t *testing.T) {
 func TestPatchBundleLeavesOtherActionsAlone(t *testing.T) {
 	script := bundleFile(t, `console.log("checkout")`)
 
-	done, err := patchBundle(script)
+	original, err := patchBundle(script)
 	require.NoError(t, err)
-	assert.False(t, done)
+	assert.Nil(t, original)
 	body, err := os.ReadFile(script)
 	require.NoError(t, err)
 	assert.Equal(t, `console.log("checkout")`, string(body))
@@ -251,6 +251,9 @@ func TestPatchActionsAtTheContainerCopy(t *testing.T) {
 			return nil
 		})
 		require.NoError(t, maybeCopyToActionDir(t.Context(), sar, sar.actionDir(), "sub", "/var/run/act/actions/repo/sub"))
+		source, err := os.ReadFile(script)
+		require.NoError(t, err)
+		assert.Equal(t, gateTSC, string(source), "the shared copy is left as it was found")
 		return copied
 	}
 

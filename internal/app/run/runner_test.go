@@ -143,6 +143,7 @@ func TestNewRunnerLeavesProxyToTheTask(t *testing.T) {
 
 	require.NotContains(t, r.envs, "http_proxy")
 	require.NotContains(t, r.envs, "no_proxy")
+	assert.Empty(t, r.builtInCacheURL(), "an external cache server is the operator's to exempt, not ours")
 }
 
 func taskWithDefaultActionsURL(url string) *runnerv1.Task {
@@ -189,11 +190,38 @@ func TestNewRunnerCacheServiceV2(t *testing.T) {
 	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode, "the advertised results service serves no cache service")
+	assert.Equal(t, r.envs["ACTIONS_CACHE_URL"], r.builtInCacheURL(), "the address only the runner knows is bypassed for the operator")
 
-	// Turning v2 off withdraws the advertisement and nothing else.
-	assert.True(t, r.cacheServiceV2())
+	envs := r.cloneEnvs()
+	r.setResultsService(envs, resultsURL)
+	assert.Equal(t, resultsURL, envs["ACTIONS_RESULTS_URL"])
+	assert.Equal(t, "true", envs[runner.CacheServiceV2Env])
+
 	cfg.Cache.V2 = new(bool)
-	assert.False(t, r.cacheServiceV2())
+	envs = r.cloneEnvs()
+	envs[runner.CacheServiceV2Env] = "true"
+	r.setResultsService(envs, resultsURL)
+	assert.Equal(t, "https://gitea.example", envs["ACTIONS_RESULTS_URL"])
+	assert.Empty(t, envs[runner.CacheServiceV2Env], "a runner.envs entry would promise v2 at an origin not serving it")
+
+	envs = r.cloneEnvs()
+	envs[runner.CacheServiceV2Env] = "true"
+	envs["ACTIONS_RESULTS_URL"] = "https://gitea.example/sub"
+	r.setResultsService(envs, "")
+	assert.Equal(t, "https://gitea.example/sub", envs["ACTIONS_RESULTS_URL"], "with no cache server there is nothing to front with")
+	assert.Empty(t, envs[runner.CacheServiceV2Env])
+
+	for instance, insecure := range map[string]bool{
+		"https://gitea.example/sub":   false,
+		"https://self-signed.example": true,
+	} {
+		cfg.Runner.Insecure = insecure
+		envs = r.cloneEnvs()
+		envs["ACTIONS_RESULTS_URL"] = instance
+		r.setResultsService(envs, resultsURL)
+		assert.Equal(t, resultsURL, envs["ACTIONS_RESULTS_URL"], instance)
+		assert.Empty(t, envs[runner.CacheServiceV2Env])
+	}
 }
 
 // The v1 cache client appends its path to ACTIONS_CACHE_URL without a separator, so a configured

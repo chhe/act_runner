@@ -291,7 +291,7 @@ The runner uses them for its own requests and gives them to every job, in lower 
 
 These hosts are added to `no_proxy` for jobs, so they are always reached directly:
 
-- the cache server
+- the built-in cache server, whose address is assigned at startup
 - `localhost`, `127.0.0.1` and `::1`
 - the job's service containers
 - the Docker daemon, when it is reached over `tcp://`
@@ -325,7 +325,9 @@ cache:
   v2: false
 ```
 
-Those actions refuse any host they do not take for GitHub. Rather than misreport the server URL, the runner edits that check out of the action's own bundle on its way into the job, undone whenever the action is downloaded again. A bundle it does not recognise is left alone and keeps to v1. The same edit lets the stock `actions/upload-artifact` and `actions/download-artifact` work from `v4.4.0` on, without the `gitea-upload-artifact` fork, so it is made whatever `v2` says: that setting only governs the API the runner advertises. Set `runner.patch_actions: false` to leave every bundle exactly as shipped, an escape hatch for an action the edit breaks. The artifact actions then refuse again and the cache client keeps to v1.
+Those actions refuse any host they do not take for GitHub, so the runner edits that check out of the bundle on its way into the job and puts the shared copy back afterwards. A bundle it does not recognise is left alone. The same edit lets the stock `actions/upload-artifact` and `actions/download-artifact` work from `v4.4.0` on, without the `gitea-upload-artifact` fork, so it is made whatever `v2` says. Set `runner.patch_actions: false` to leave bundles as shipped; the artifact actions then refuse and the cache client keeps to v1.
+
+With v2 the job's artifact calls go via the cache server, so jobs need to reach it to upload artifacts, not just to cache. `v2: false` sends them to Gitea directly.
 
 **Shared cache across multiple runners**
 

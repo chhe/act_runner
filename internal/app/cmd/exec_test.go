@@ -12,9 +12,12 @@ import (
 	"strings"
 	"testing"
 
+	"gitea.com/gitea/runner/act/artifactcache"
+	"gitea.com/gitea/runner/act/runner"
 	"gitea.com/gitea/runner/internal/pkg/config"
 
 	"gitea.dev/actionslib/pkg/model"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.yaml.in/yaml/v4"
 )
@@ -306,4 +309,20 @@ func captureStdout(t *testing.T, fn func()) string {
 	require.NoError(t, err)
 	require.NoError(t, r.Close())
 	return buf.String()
+}
+
+func TestExecuteArgsLoadEnvsResultsOrigin(t *testing.T) {
+	t.Setenv("ACTIONS_RESULTS_URL", "") // the default is only supplied when nothing else does
+	handler, err := artifactcache.StartHandler(artifactcache.Options{Dir: t.TempDir(), OutboundIP: "127.0.0.1"})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = handler.Close() })
+	args := &executeArgs{cacheHandler: handler}
+
+	envs := args.LoadEnvs()
+	assert.Equal(t, handler.ExternalURL(), envs["ACTIONS_RESULTS_URL"],
+		"the v2 flag is advertised, so something has to serve that origin")
+	assert.Equal(t, "true", envs[runner.CacheServiceV2Env])
+
+	args.envs = []string{"ACTIONS_RESULTS_URL=https://gitea.example"}
+	assert.Equal(t, "https://gitea.example", args.LoadEnvs()["ACTIONS_RESULTS_URL"], "a supplied origin wins")
 }

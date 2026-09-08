@@ -28,3 +28,24 @@ func testActionsCacheRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+func testArtifactRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	v2 := true
+	for _, tc := range []struct {
+		name    string
+		options runnerOptions
+	}{
+		{"through_the_cache_server", runnerOptions{cacheV2: &v2}},
+		{"direct_with_no_reachable_cache", runnerOptions{cacheHost: "cache.invalid", cacheV2: new(bool)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			api, repo, _ := startIsolatedScenario(t, "artifact.yml", "e2e-artifact", tc.options)
+
+			wfRun := waitForRun(t, api, repo)
+			requireSuccess(t, api, repo, wfRun.ID)
+		})
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -89,7 +90,7 @@ func NewRunner(cfg *config.Config, reg *config.Registration, cli client.Client) 
 	envs := make(map[string]string, len(cfg.Runner.Envs))
 	maps.Copy(envs, cfg.Runner.Envs)
 	var cacheHandler *artifactcache.Handler
-	if cfg.Cache.Enabled == nil || *cfg.Cache.Enabled {
+	if cacheEnabled(cfg) {
 		if cfg.Cache.ExternalServer != "" {
 			warnIgnoredCachePolicy(cfg)
 			// The v1 client appends its path to this without a separator, so the slash is required.
@@ -109,6 +110,7 @@ func NewRunner(cfg *config.Config, reg *config.Registration, cli client.Client) 
 			} else {
 				cacheHandler = handler
 				envs["ACTIONS_CACHE_URL"] = handler.ExternalURL() + "/"
+				warnIfCacheUnreachable(cfg, handler.ExternalURL())
 			}
 		}
 	}
@@ -388,7 +390,7 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 
 	// Added per task because this job's service containers must be reached directly, and
 	// act reaches them by their workflow key.
-	proxyEnv := JobProxyEnv(envs, envs["ACTIONS_CACHE_URL"], slices.Sorted(maps.Keys(job.Services)))
+	proxyEnv := JobProxyEnv(envs, r.builtInCacheURL(), slices.Sorted(maps.Keys(job.Services)))
 	maps.Copy(envs, proxyEnv)
 
 	if r.capabilities != "" {
@@ -454,14 +456,7 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 	// is that server's responsibility to authenticate requests.
 	revokeCache, resultsURL := r.registerCacheForTask(giteaRuntimeToken, preset.Repository, reporter)
 	defer revokeCache()
-	// A cache server that agreed to forward the artifact half is the whole results service, so the
-	// job is pointed at it.
-	if resultsURL != "" {
-		envs["ACTIONS_RESULTS_URL"] = resultsURL
-		if r.cacheServiceV2() {
-			envs[runner.CacheServiceV2Env] = "true"
-		}
-	}
+	r.setResultsService(envs, resultsURL)
 
 	eventJSON, err := json.Marshal(preset.Event)
 	if err != nil {
@@ -584,10 +579,41 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 	return execErr
 }
 
+func (r *Runner) builtInCacheURL() string {
+	if r.cacheHandler == nil {
+		return ""
+	}
+	return r.envs["ACTIONS_CACHE_URL"]
+}
+
+func cacheEnabled(cfg *config.Config) bool {
+	return cfg.Cache.Enabled == nil || *cfg.Cache.Enabled
+}
+
 // cacheServiceV2 reports whether jobs are told the cache service speaks v2. It is all cache.v2
 // turns off: the bundle edit that reaches it is what the artifact actions need too.
 func (r *Runner) cacheServiceV2() bool {
 	return r.cfg.Cache.V2 == nil || *r.cfg.Cache.V2
+}
+
+func (r *Runner) setResultsService(envs map[string]string, resultsURL string) {
+	v2 := resultsURL != "" && r.cacheServiceV2()
+	if v2 {
+		envs[runner.CacheServiceV2Env] = "true"
+	} else {
+		delete(envs, runner.CacheServiceV2Env)
+	}
+	// Cache v2 clients read no other variable for it, and some cannot use the instance address.
+	if v2 || (resultsURL != "" && r.instanceOutOfReach(envs["ACTIONS_RESULTS_URL"])) {
+		envs["ACTIONS_RESULTS_URL"] = resultsURL
+	}
+}
+
+// These clients keep only the origin they are handed, and reach it on the job's own trust.
+func (r *Runner) instanceOutOfReach(instance string) bool {
+	parsed, err := url.Parse(instance)
+	return err != nil || strings.Trim(parsed.Path, "/") != "" ||
+		(r.cfg.Runner.Insecure && parsed.Scheme == "https")
 }
 
 // registerCacheForTask tells the cache server to accept requests authenticated
@@ -616,7 +642,7 @@ func (r *Runner) registerCacheForTask(token, repo string, reporter *report.Repor
 	if r.cacheHandler != nil {
 		return r.cacheHandler.RegisterJob(token, cred), r.cacheHandler.ResultsURL(cred)
 	}
-	if r.cfg.Cache.ExternalServer != "" && r.cfg.Cache.ExternalSecret != "" {
+	if cacheEnabled(r.cfg) && r.cfg.Cache.ExternalServer != "" && r.cfg.Cache.ExternalSecret != "" {
 		return r.registerExternalCacheJob(token, cred, reporter)
 	}
 	// No cache server to register against: caching is disabled, or the built-in server failed to start.
@@ -798,4 +824,14 @@ func warnIgnoredCacheSecret(cfg *config.Config) {
 		key = "cache.external_secret_file"
 	}
 	log.Warnf("%s is set but cache.external_server is not; the built-in cache server does not use a shared secret, so the value is ignored", key)
+}
+
+func warnIfCacheUnreachable(cfg *config.Config, cacheURL string) {
+	if cfg.Cache.Host != "" || cfg.Container.Network != "" {
+		return
+	}
+	if _, err := os.Stat("/.dockerenv"); err != nil {
+		return
+	}
+	log.Warnf("jobs are given %s for the cache server; if they cannot reach it, set container.network to a network this runner is on, or cache.host", cacheURL)
 }

@@ -28,8 +28,8 @@ import (
 // of upload-artifact.
 //
 // getCacheServiceURL() then resolves the cache service from ACTIONS_RESULTS_URL alone, where v1
-// reads ACTIONS_CACHE_URL first. Both reads there are given the same preference, which is what
-// keeps the runner out of the artifact path: the results URL still points at Gitea.
+// reads ACTIONS_CACHE_URL first. Both reads there are given the same preference, so a patched cache
+// client reaches the cache server by its own address rather than through the results origin.
 //
 // Either of these landing upstream makes this file deletable:
 //
@@ -105,37 +105,45 @@ func actionScriptPaths(dir string, action *model.Action) []string {
 	return paths
 }
 
-// patchActions edits the toolkit in an action's bundles. The caller holds the action directory's
-// clone lock, which is what keeps another job's checkout from resetting them before the copy.
-func patchActions(ctx context.Context, scripts []string) {
+// patchActions returns a restore: the tree is shared, so a job with patching off gets no edits.
+func patchActions(ctx context.Context, scripts []string) func() {
+	restore := map[string][]byte{}
 	for _, script := range scripts {
-		switch patched, err := patchBundle(script); {
-		case err != nil:
+		original, err := patchBundle(script)
+		if original != nil {
+			restore[script] = original // also when the write failed part way through
+		}
+		if err != nil {
 			common.Logger(ctx).Warnf("actions toolkit: %s left unpatched: %v", script, err)
-		case patched:
-			common.Logger(ctx).Debugf("actions toolkit: patched %s", script)
+		}
+	}
+	return func() {
+		for script, original := range restore {
+			if err := os.WriteFile(script, original, 0o644); err != nil { //nolint:gosec // as the checkout wrote it
+				common.Logger(ctx).Warnf("actions toolkit: %s left patched in the shared copy: %v", script, err)
+			}
 		}
 	}
 }
 
-func patchBundle(script string) (bool, error) {
+// patchBundle returns the bytes it replaced, or nil when it left the bundle alone.
+func patchBundle(script string) ([]byte, error) {
 	info, err := os.Stat(script)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	if info.Size() > maxBundleSize {
-		return false, nil
+		return nil, nil
 	}
 	data, err := os.ReadFile(script)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	patched, ok := patchedBundle(data)
 	if !ok {
-		return false, nil
+		return nil, nil
 	}
-	// No atomic write needed: every prepare checks the action out and hard resets it.
-	return true, os.WriteFile(script, patched, info.Mode().Perm())
+	return data, os.WriteFile(script, patched, info.Mode().Perm())
 }
 
 // patchedBundle opens the GHES gate, and where the cache toolkit is present, points the cache

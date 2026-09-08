@@ -5,8 +5,10 @@
 package artifactcache
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -66,6 +68,18 @@ func (s *Storage) WriteBlock(id uint64, blockID string, reader io.Reader) error 
 // rename pass is safe because a staged name always carries blockFilePrefix and a target name
 // never does, so no rename can collide with a block not yet moved.
 func (s *Storage) OrderBlocks(id uint64, blockIDs []string) error {
+	wanted, err := json.Marshal(blockIDs) // a block id is client-chosen, so it cannot be a separator
+	if err != nil {
+		return err
+	}
+	list := filepath.Join(s.tempDir(id), blockFilePrefix+"list")
+	if recorded, err := os.ReadFile(list); err == nil {
+		// A retry repeats the list it already sent; another one would reorder what is now staged.
+		if !bytes.Equal(recorded, wanted) {
+			return fmt.Errorf("cache %d was already assembled from a different block list", id)
+		}
+		return nil
+	}
 	for i, blockID := range blockIDs {
 		if err := os.Rename(s.blockName(id, blockID), s.tempName(id, int64(i))); err != nil {
 			if os.IsNotExist(err) {
@@ -74,7 +88,7 @@ func (s *Storage) OrderBlocks(id uint64, blockIDs []string) error {
 			return err
 		}
 	}
-	return nil
+	return os.WriteFile(list, wanted, 0o600)
 }
 
 func (s *Storage) Commit(id uint64, size int64) (int64, error) {

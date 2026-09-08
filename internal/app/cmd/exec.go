@@ -5,6 +5,7 @@
 package cmd
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -187,7 +188,10 @@ func (i *executeArgs) LoadEnvs() map[string]string {
 	envs := parseKVAndFile(i.envs, i.Envfile())
 
 	envs["ACTIONS_CACHE_URL"] = i.cacheHandler.ExternalURL() + "/"
-	// The same server answers the cache service v2 API, so let the actions reach it.
+	// The same server answers cache v2, which docker buildx reads from the results origin alone.
+	if envs["ACTIONS_RESULTS_URL"] == "" {
+		envs["ACTIONS_RESULTS_URL"] = cmp.Or(os.Getenv("ACTIONS_RESULTS_URL"), i.cacheHandler.ExternalURL())
+	}
 	envs[runner.CacheServiceV2Env] = "true"
 
 	return envs
@@ -540,6 +544,7 @@ func runExec(ctx context.Context, execArgs *executeArgs) func(cmd *cobra.Command
 		}
 
 		config.Env["ACT_EXEC"] = "true"
+		config.Secrets[actionsRuntimeTokenEnvName] = actionsRuntimeToken
 
 		if t := config.Secrets["GITEA_TOKEN"]; t != "" {
 			config.Token = t
