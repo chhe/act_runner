@@ -6,8 +6,6 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"os"
-	"os/signal"
 
 	"gitea.com/gitea/runner/act/artifactcache"
 	"gitea.com/gitea/runner/internal/app/run"
@@ -67,10 +65,8 @@ func runCacheServer(configFile *string, cacheArgs *cacheServerArgs) func(cmd *co
 
 		log.Infof("cache server is listening on %v", cacheHandler.ExternalURL())
 
-		c := make(chan os.Signal, 1)
-		signal.Notify(c, os.Interrupt)
-		<-c
+		<-cmd.Context().Done()
 
-		return nil
+		return cacheHandler.Close()
 	}
 }

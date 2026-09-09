@@ -160,7 +160,7 @@ func StartGitea(ctx context.Context, cli mobyclient.APIClient) (*GiteaFixture, e
 		sharedNet, _ = selfNetwork(ctx, cli)
 	)
 	if sharedNet != "" {
-		baseURL = fmt.Sprintf("http://%s:3000", name)
+		baseURL = "http://" + net.JoinHostPort(name, "3000")
 		netConfig = &network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{sharedNet: {}},
 		}
@@ -170,7 +170,7 @@ func StartGitea(ctx context.Context, cli mobyclient.APIClient) (*GiteaFixture, e
 		if err != nil {
 			return nil, fmt.Errorf("find a free host port: %w", err)
 		}
-		baseURL = fmt.Sprintf("http://%s:%d", host, port)
+		baseURL = "http://" + net.JoinHostPort(host.String(), strconv.Itoa(port))
 		hostConfig.PortBindings = network.PortMap{
 			containerPort: []network.PortBinding{{HostIP: host, HostPort: strconv.Itoa(port)}},
 		}

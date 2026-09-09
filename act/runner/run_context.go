@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	maps0 "maps"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1646,7 +1647,7 @@ func imageOSFromImage(image string) string {
 func setActionRuntimeVars(rc *RunContext, env map[string]string) {
 	actionsRuntimeURL := os.Getenv("ACTIONS_RUNTIME_URL")
 	if actionsRuntimeURL == "" {
-		actionsRuntimeURL = fmt.Sprintf("http://%s:%s/", rc.Config.ArtifactServerAddr, rc.Config.ArtifactServerPort)
+		actionsRuntimeURL = "http://" + net.JoinHostPort(rc.Config.ArtifactServerAddr, rc.Config.ArtifactServerPort) + "/"
 	}
 	env["ACTIONS_RUNTIME_URL"] = actionsRuntimeURL
 

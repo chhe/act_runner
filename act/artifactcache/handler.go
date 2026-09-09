@@ -234,7 +234,7 @@ func StartHandler(opts Options) (*Handler, error) {
 
 func (h *Handler) ExternalURL() string {
 	// TODO: make the external url configurable if necessary
-	return fmt.Sprintf("http://%s:%d", h.outboundIP, h.port)
+	return "http://" + net.JoinHostPort(h.outboundIP, strconv.Itoa(h.port))
 }
 
 func (h *Handler) baseURL(cred JobCredential) string {

@@ -82,7 +82,7 @@ func Execute(ctx context.Context) {
 	// hide completion command
 	rootCmd.CompletionOptions.HiddenDefaultCmd = true
 
-	if err := rootCmd.Execute(); err != nil {
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		os.Exit(1)
 	}
 }

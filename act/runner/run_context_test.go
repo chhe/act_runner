@@ -1505,6 +1505,10 @@ func TestRunContextWithGithubEnvRunnerValues(t *testing.T) {
 	rc := createRunsOnRunContext(t, "ubuntu-latest")
 	rc.Config.RunnerName = "runner-1"
 	rc.Config.Secrets = map[string]string{"ACTIONS_STEP_DEBUG": "true"}
+	t.Setenv("ACTIONS_RUNTIME_URL", "")
+	rc.Config.ArtifactServerPath = "artifacts"
+	rc.Config.ArtifactServerAddr = "2001:db8::1"
+	rc.Config.ArtifactServerPort = "8080"
 
 	env := map[string]string{}
 	rc.withGithubEnv(ctx, &model.GithubContext{Workspace: "/workspace/owner/repo"}, env)
@@ -1513,4 +1517,5 @@ func TestRunContextWithGithubEnvRunnerValues(t *testing.T) {
 	assert.Equal(t, "self-hosted", env["RUNNER_ENVIRONMENT"])
 	assert.Equal(t, "/workspace/owner", env["RUNNER_WORKSPACE"])
 	assert.Equal(t, "1", env["RUNNER_DEBUG"])
+	assert.Equal(t, "http://[2001:db8::1]:8080/", env["ACTIONS_RUNTIME_URL"])
 }

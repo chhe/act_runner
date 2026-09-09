@@ -52,6 +52,10 @@ func signArtifactURL(h *Handler, id int64) string {
 	return h.signedArtifactURL(JobCredential{}, uint64(id), time.Now().Add(artifactURLTTL))
 }
 
+func TestHandler_ExternalURL(t *testing.T) {
+	assert.Equal(t, "http://[2001:db8::1]:8080", (&Handler{outboundIP: "2001:db8::1", port: 8080}).ExternalURL())
+}
+
 func TestHandler(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "artifactcache")
 	handler, err := StartHandler(Options{Dir: dir})

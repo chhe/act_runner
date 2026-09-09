@@ -281,10 +281,9 @@ func (r *Runner) SetCapabilitiesFromDeclare(resp *connect.Response[runnerv1.Decl
 }
 
 func (r *Runner) Run(ctx context.Context, task *runnerv1.Task) error {
-	if _, ok := r.runningTasks.Load(task.Id); ok {
+	if _, ok := r.runningTasks.LoadOrStore(task.Id, struct{}{}); ok {
 		return fmt.Errorf("task %d is already running", task.Id)
 	}
-	r.runningTasks.Store(task.Id, struct{}{})
 	defer r.runningTasks.Delete(task.Id)
 
 	r.runningCount.Add(1)
