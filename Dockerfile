@@ -39,7 +39,7 @@ ENTRYPOINT ["s6-svscan","/etc/s6"]
 ### DIND-ROOTLESS VARIANT
 #
 #
-FROM docker:29.8.0-dind-rootless AS dind-rootless
+FROM docker:29.8.1-dind-rootless AS dind-rootless
 
 ARG VERSION=dev
 
