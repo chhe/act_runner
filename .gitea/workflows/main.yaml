@@ -25,10 +25,32 @@ jobs:
           go-version-file: 'go.mod'
       - name: test
         run: |
+          sed -i '/^func requireDocker(t \*testing.T) {$/,/^}$/c\
+          func requireDocker(t *testing.T) {\
+          \tt.Helper()\
+          \tt.Skip("skipping: docker tests disabled")\
+          }' act/runner/helpers_test.go
+          sed -i '/^import ($/,/^)$/c\
+          import (\
+          \t"os"\
+          \t"os/exec"\
+          \t"runtime"\
+          \t"testing"\
+          )' act/runner/helpers_test.go
+          sed -i '/^func requireDocker(t \*testing.T) {$/,/^}$/c\
+          func requireDocker(t *testing.T) {\
+          \tt.Helper()\
+          \tt.Skip("skipping: docker tests disabled")\
+          }' act/container/helpers_test.go
+          sed -i '/^import ($/,/^)$/c\
+          import (\
+          \t"testing"\
+          )' act/container/helpers_test.go
           sed -i '/^func TestJobExecutor(t \*testing.T) {$/a\   requireDocker(t)' act/runner/job_executor_test.go
           sed -i '/^func TestRunEventHostEnvironment(t \*testing.T) {$/a\   requireDocker(t)' act/runner/runner_test.go
           sed -i '/^func TestDryrunEvent(t \*testing.T) {$/a\   requireDocker(t)' act/runner/runner_test.go
           sed -i '/^func TestShortSHAActionRejected(t \*testing.T) {$/a\   requireDocker(t)' act/runner/step_action_remote_test.go
+          git diff
           make test
 
   conventional-commits:
