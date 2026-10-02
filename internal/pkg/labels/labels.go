@@ -12,6 +12,7 @@ const (
 	SchemeHost       = "host"
 	SchemeDocker     = "docker"
 	SchemeKubernetes = "kubernetes"
+	SchemeIncus      = "incus"
 
 	// SelfHostedPlatform is the platform marker act treats as "run on the host".
 	SelfHostedPlatform = "-self-hosted"
@@ -44,7 +45,8 @@ func Parse(str string) (*Label, error) {
 		label.Arg = splits[2]
 	}
 	kubernetes := label.Schema == SchemeKubernetes && strings.HasPrefix(label.Arg, "//") && len(label.Arg) > 2
-	if label.Schema != SchemeHost && label.Schema != SchemeDocker && !kubernetes {
+	incus := label.Schema == SchemeIncus && (label.Arg == "" || strings.HasPrefix(label.Arg, "//")) // an empty arg uses the pool's source image
+	if label.Schema != SchemeHost && label.Schema != SchemeDocker && !kubernetes && !incus {
 		// Not a schema we know, or kubernetes without an image: the colon belongs to the label name itself.
 		return &Label{
 			Name:   str,
@@ -66,6 +68,23 @@ func (l Labels) RequireDocker() bool {
 	return false
 }
 
+// PickIncusLabels returns the labels of the runs-on entries that run a job on the incus pool, in runs-on order.
+func (l Labels) PickIncusLabels(runsOn []string) []*Label {
+	byName := make(map[string]*Label, len(l))
+	for _, label := range l {
+		if label.Schema == SchemeIncus {
+			byName[label.Name] = label
+		}
+	}
+	var picked []*Label
+	for _, name := range runsOn {
+		if label, ok := byName[name]; ok {
+			picked = append(picked, label)
+		}
+	}
+	return picked
+}
+
 // PickPlatform returns the platform of the first runs-on entry this runner has a label for, or "".
 func (l Labels) PickPlatform(runsOn []string) string {
 	platforms := make(map[string]string, len(l))
@@ -76,6 +95,8 @@ func (l Labels) PickPlatform(runsOn []string) string {
 			platforms[label.Name] = strings.TrimPrefix(label.Arg, "//")
 		case SchemeKubernetes:
 			platforms[label.Name] = SchemeKubernetes + ":" + label.Arg
+		case SchemeIncus:
+			platforms[label.Name] = SchemeIncus + ":" + label.Arg
 		case SchemeHost:
 			platforms[label.Name] = SelfHostedPlatform
 		default:

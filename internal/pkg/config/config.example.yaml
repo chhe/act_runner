@@ -288,6 +288,26 @@ kubernetes:
   # Pod templates merged over pod_template, in runs-on order, for jobs whose runs-on has the label they are keyed by.
   #pod_templates: {}
 
+# Jobs that run in Incus VMs from a warm pool, see docs/incus.md.
+incus:
+  # The incus API endpoint: a unix socket path or a URL. Empty uses the local daemon.
+  #remote:
+  # The incus project job and pool VMs live in. Empty uses the remote's default project.
+  #project:
+  # The image pool VMs are created from. A label "incus://<image>" overrides it per job.
+  #image: "images:debian/12"
+  # Warm VMs kept ready. Default 1. 0 disables the pool: each job starts its own VM.
+  #pool_size: 1
+  # The snapshot a VM is restored to after its job. Empty restores the pool fill snapshot.
+  # "none" deletes the VM and recreates it from the image instead.
+  #snapshot:
+  # How long a job waits for a warm VM before failing. 5m by default.
+  #warmup_timeout: 5m
+  # How long a claimed VM waits for its incus agent to answer. 2m by default.
+  #agent_start_timeout: 2m
+  # Instance config merged onto what the runner sets on pool and job VMs.
+  #instance_template: {}
+
 # Optional local task-admission checks. Disabled by default. When enabled, low
 # disk space or a failing script pauses new task fetching; existing jobs continue.
 # No health checks run while any job is active; the last result is reused until idle.

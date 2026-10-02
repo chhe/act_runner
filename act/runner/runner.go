@@ -76,6 +76,7 @@ type Config struct {
 	DefaultActionInstanceIsSelfHosted bool
 	PlatformPicker                    func(labels []string) string
 	KubernetesPicker                  func(labels []string) container.KubernetesOptions
+	IncusPicker                       func(labels []string) container.IncusOptions
 	JobLoggerLevel                    *log.Level    // the level of job logger
 	ValidVolumes                      []string      // only volumes (and bind mounts) in this slice can be mounted on the job container or service containers
 	SharedToolCache                   bool          // one tool cache for all jobs instead of one per job

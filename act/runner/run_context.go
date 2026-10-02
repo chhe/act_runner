@@ -67,6 +67,8 @@ type RunContext struct {
 	JobContainer        container.ExecutionsEnvironment
 	serviceContainers   []*serviceContainer
 	kubernetes          bool
+	incusPlatform       bool
+	incus               *container.IncusPool
 	containerSpec       model.ContainerSpec // container:, resolved once with platformImage
 	containerEnv        yaml.Node           // container.env of the kept containerSpec, decoded once the job env resolves
 	JobName             string
@@ -523,6 +525,88 @@ func printStartJobContainerGroup(ctx context.Context, image, name, network strin
 
 // newContainer is a variable so tests can substitute a container that needs no Docker daemon.
 var newContainer = container.NewContainer
+
+// startIncusVM starts the VM the job's steps run in and its service VMs, like startKubernetesPod.
+func (rc *RunContext) startIncusVM() common.Executor {
+	return func(ctx context.Context) error {
+		if rc.containerSpec.Options != "" || len(rc.containerSpec.Volumes) > 0 || rc.containerSpec.Credentials != nil {
+			return errors.New("container options, volumes and credentials are not supported on incus")
+		}
+		var options container.IncusOptions
+		if rc.Config.IncusPicker != nil {
+			options = rc.Config.IncusPicker(rc.runsOnPlatformNames(ctx))
+		}
+		options.MaxLifetime, options.RunnerUUID = rc.Config.ContainerMaxLifetime, rc.Config.ContainerNetworkCreateOptions.RunnerUUID
+		if arg := strings.TrimPrefix(rc.platformImage, "incus://"); arg != "" {
+			options.Image = arg // the runs-on label or fallback set one, per-job VMs use it directly
+		}
+		vm, err := container.NewIncusPool(ctx, options)
+		if err != nil {
+			return err
+		}
+		rc.incus = vm
+		services, err := rc.jobServices(ctx, "")
+		if err != nil {
+			return err
+		}
+		for _, serviceID := range slices.Sorted(maps0.Keys(services)) {
+			input := services[serviceID]
+			if input.Username != "" || len(input.Binds) > 0 || len(input.Mounts) > 0 {
+				return fmt.Errorf("service %s: volumes and credentials are not supported on incus", serviceID)
+			}
+			rc.serviceContainers = append(rc.serviceContainers, &serviceContainer{name: serviceID, image: input.Image, container: vm.IncusServiceContainer(serviceID, input)})
+		}
+
+		logWriter := rc.commandLogWriter(ctx)
+		rc.JobContainer, err = vm.JobContainer(ctx, &container.NewContainerInput{
+			WorkingDir: (&container.LinuxContainerEnvironmentExtensions{}).ToContainerPath(rc.Config.Workdir),
+			Image:      rc.platformImage,
+			Name:       rc.jobContainerName(),
+			Env:        []string{"LANG=C.UTF-8", "DOCKER_HOST=unix:///var/run/docker.sock"}, // the VM's own dockerd, no proxy needed
+			Stdout:     logWriter,
+			Stderr:     logWriter,
+		})
+		if err != nil {
+			return err
+		}
+		rc.cleanUpJobContainer = func(ctx context.Context) error {
+			rc.printServiceLogs(ctx)
+			return rc.JobContainer.Remove()(ctx)
+		}
+		defer printStartJobContainerGroup(ctx, rc.platformImage, rc.jobContainerName(), "")()
+		return common.NewPipelineExecutor(
+			rc.JobContainer.Create(nil, nil),
+			rc.JobContainer.Start(false),
+			rc.startServiceContainers(),
+			rc.linkIncusServices(vm),
+			func(ctx context.Context) error { rc.setRunnerContextEnv(ctx); return nil },
+			rc.captureJobContainerInfo(),
+			rc.copyWorkflowFiles(),
+			rc.reportUnstartedServices(),
+			rc.waitForServiceContainers(),
+		)(ctx)
+	}
+}
+
+// linkIncusServices points the job VM's hostnames at the service VMs, as incus only resolves an
+// instance's own name.
+func (rc *RunContext) linkIncusServices(vm *container.IncusPool) common.Executor {
+	return func(ctx context.Context) error {
+		if len(rc.serviceContainers) == 0 {
+			return nil
+		}
+		addresses, err := vm.ServiceAddresses(ctx)
+		if err != nil {
+			return err
+		}
+		var entries strings.Builder
+		for _, name := range slices.Sorted(maps0.Keys(addresses)) {
+			fmt.Fprintf(&entries, "%s\t%s\n", addresses[name], name)
+		}
+		script := `printf '%s' "$1" | cat - /etc/hosts > /etc/hosts.new && mv /etc/hosts.new /etc/hosts`
+		return rc.JobContainer.Exec([]string{"sh", "-c", script, "sh"}, map[string]string{"1": entries.String()}, "", "")(ctx)
+	}
+}
 
 type jobVolumeCleanupKey struct{}
 
@@ -1125,6 +1209,8 @@ func (rc *RunContext) startContainer() common.Executor {
 		switch {
 		case rc.kubernetes:
 			err = rc.startKubernetesPod()(ctx)
+		case rc.incusPlatform:
+			err = rc.startIncusVM()(ctx)
 		case rc.IsHostEnv():
 			err = rc.startHostEnvironment()(ctx)
 		default:
@@ -1289,6 +1375,9 @@ func (rc *RunContext) resolvePlatformImage(ctx context.Context) error {
 		return err
 	}
 	image, rc.kubernetes = strings.CutPrefix(image, "kubernetes://")
+	if !rc.kubernetes {
+		_, rc.incusPlatform = strings.CutPrefix(image, "incus://")
+	}
 	rc.platformImage = cmp.Or(rc.containerSpec.Image, image)
 	return nil
 }

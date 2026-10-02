@@ -189,6 +189,12 @@ Three schemas are supported:
   ubuntu-latest:kubernetes://docker.gitea.com/runner-images:ubuntu-latest
   ```
 
+- **`incus://<image>`** — the job runs in its own incus virtual machine created from `<image>`, see **[docs/incus.md](docs/incus.md)**:
+
+  ```text
+  ubuntu-latest:incus://images:ubuntu/24.04
+  ```
+
 - **`host`** — the job's steps run directly on the machine the runner is on, using the tools installed there:
 
   ```text

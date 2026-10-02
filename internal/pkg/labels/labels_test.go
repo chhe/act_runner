@@ -111,11 +111,39 @@ func TestRequireDocker(t *testing.T) {
 	}
 }
 
+func TestPickIncusLabels(t *testing.T) {
+	ls := mustParse(t,
+		"ubuntu:docker://node:18",
+		"vm:incus://debian-12",
+		"pool:incus",
+	)
+	tests := []struct {
+		name   string
+		runsOn []string
+		want   []string
+	}{
+		{"picks the label of the runs-on entry", []string{"vm"}, []string{"//debian-12"}},
+		{"keeps runs-on order", []string{"pool", "vm"}, []string{"", "//debian-12"}},
+		{"ignores other labels", []string{"ubuntu"}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var args []string
+			for _, label := range ls.PickIncusLabels(tt.runsOn) {
+				args = append(args, label.Arg)
+			}
+			require.Equal(t, tt.want, args)
+		})
+	}
+}
+
 func TestPickPlatform(t *testing.T) {
 	ls := mustParse(t,
 		"ubuntu:docker://node:18",
 		"self-hosted:host",
 		"k8s:kubernetes://node:24",
+		"vm:incus://debian-12",
+		"pool:incus",
 	)
 
 	tests := []struct {
@@ -125,6 +153,8 @@ func TestPickPlatform(t *testing.T) {
 	}{
 		{"docker strips leading slashes", []string{"ubuntu"}, "node:18"},
 		{"kubernetes keeps its scheme", []string{"k8s"}, "kubernetes://node:24"},
+		{"incus keeps its scheme", []string{"vm"}, "incus://debian-12"},
+		{"incus with no arg keeps it", []string{"pool"}, "incus:"},
 		{"host maps to self-hosted marker", []string{"self-hosted"}, SelfHostedPlatform},
 		{"first match wins", []string{"self-hosted", "ubuntu"}, SelfHostedPlatform},
 		{"unknown label picks nothing", []string{"windows"}, ""},

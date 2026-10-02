@@ -155,6 +155,8 @@ var removeOrphanJobVolumes = container.RemoveOrphanJobVolumes
 
 var removeOrphanKubernetesResources = container.RemoveOrphanKubernetesResources
 
+var removeOrphanIncusVMs = container.RemoveOrphanIncusVMs
+
 // OnIdle performs lightweight maintenance during polling idle windows.
 // It runs synchronously on the poller goroutine; shouldRunIdleCleanup
 // throttles invocations to runner.idle_cleanup_interval so the impact on
@@ -182,6 +184,13 @@ func (r *Runner) OnIdle(ctx context.Context) {
 		defer cancel()
 		if err := removeOrphanKubernetesResources(ctx, r.kubernetesOptions(nil), r.now().Add(-r.cfg.Runner.WorkdirCleanupAge)); err != nil {
 			log.Warnf("failed to clean up job pods left behind by earlier jobs: %v", err)
+		}
+	}
+	if r.uuid != "" && r.usesIncus() {
+		ctx, cancel := context.WithTimeout(ctx, time.Minute)
+		defer cancel()
+		if err := removeOrphanIncusVMs(ctx, r.incusOptions(nil), r.now().Add(-r.cfg.Runner.WorkdirCleanupAge)); err != nil {
+			log.Warnf("failed to clean up job VMs left behind by earlier jobs: %v", err)
 		}
 	}
 }
@@ -415,6 +424,30 @@ func (r *Runner) usesKubernetes() bool {
 	return slices.ContainsFunc(r.labels, func(label *labels.Label) bool { return label.Schema == labels.SchemeKubernetes })
 }
 
+func (r *Runner) usesIncus() bool {
+	return slices.ContainsFunc(r.labels, func(label *labels.Label) bool { return label.Schema == labels.SchemeIncus })
+}
+
+// incusOptions is the incus pool of a job, shared by the job and its service VMs.
+func (r *Runner) incusOptions(runsOn []string) container.IncusOptions {
+	options := container.IncusOptions{
+		Remote:     r.cfg.Incus.Remote,
+		Project:    r.cfg.Incus.Project,
+		PoolSize:   r.cfg.Incus.PoolSize,
+		Snapshot:   r.cfg.Incus.Snapshot,
+		Template:   r.cfg.Incus.InstanceTemplate,
+		RunnerUUID: r.uuid,
+	}
+	options.Image = r.cfg.Incus.Image
+	for _, label := range r.labels.PickIncusLabels(runsOn) {
+		if arg := strings.TrimPrefix(label.Arg, "//"); arg != "" {
+			options.Image = arg // the first runs-on label with an image wins
+			break
+		}
+	}
+	return options
+}
+
 // kubernetesOptions layers the pod templates of the runner labels a job runs on, in runs-on order, over the shared one.
 func (r *Runner) kubernetesOptions(runsOn []string) container.KubernetesOptions {
 	options := container.KubernetesOptions{
@@ -440,6 +473,8 @@ func (r *Runner) fallbackPlatform(ctx context.Context) string {
 		return r.cfg.Runner.DefaultImage
 	case r.usesKubernetes():
 		return labels.SchemeKubernetes + "://" + r.cfg.Runner.DefaultImage
+	case r.usesIncus():
+		return labels.SchemeIncus + "://" + r.cfg.Incus.Image
 	case dockerReachable(ctx):
 		return r.cfg.Runner.DefaultImage
 	}
@@ -628,6 +663,7 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
 		InsecureSkipTLS:                   r.cfg.Runner.Insecure,
 		RunnerName:                        r.name,
 		KubernetesPicker:                  r.kubernetesOptions,
+		IncusPicker:                       r.incusOptions,
 	}
 
 	rr, err := runner.New(runnerConfig)

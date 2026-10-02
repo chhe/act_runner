@@ -202,6 +202,21 @@ type Kubernetes struct {
 	PodTemplates map[string]map[string]any `yaml:"pod_templates"` // PodTemplates are merged over PodTemplate, in runs-on order, for jobs whose runs-on has the label they are keyed by.
 }
 
+// DefaultIncusPoolSize is the number of warm VMs the pool keeps when incus.pool_size is unset.
+const DefaultIncusPoolSize = 1
+
+// Incus configures the pool of VMs jobs run in.
+type Incus struct {
+	Remote            string         `yaml:"remote"`              // Remote is the incus API endpoint; a unix socket path or a URL. Empty uses the local daemon.
+	Project           string         `yaml:"project"`             // Project of job and pool VMs, empty uses the remote's default project.
+	Image             string         `yaml:"image"`               // Image pool VMs are created from, overridden per job by the label's argument.
+	PoolSize          int            `yaml:"pool_size"`           // PoolSize is the number of warm VMs kept ready. Default 1, 0 disables the pool: a VM is created per job.
+	Snapshot          string         `yaml:"snapshot"`            // Snapshot a VM is restored to after its job. Empty restores the pool fill snapshot by default, "none" deletes and recreates the VM instead.
+	WarmupTimeout     time.Duration  `yaml:"warmup_timeout"`      // WarmupTimeout bounds how long a job waits for an idle pool VM. Default 5m.
+	InstanceTemplate  map[string]any `yaml:"instance_template"`   // InstanceTemplate is merged onto the VM config the runner sets, like kubernetes.pod_template.
+	AgentStartTimeout time.Duration  `yaml:"agent_start_timeout"` // AgentStartTimeout bounds how long a claimed VM waits for its incus agent to answer. Default 2m.
+}
+
 // Metrics represents the configuration for the Prometheus metrics endpoint.
 type Metrics struct {
 	Enabled        bool          `yaml:"enabled"`         // Enabled indicates whether the metrics endpoint is exposed.
@@ -229,6 +244,7 @@ type Config struct {
 	Metrics     Metrics     `yaml:"metrics"`      // Metrics represents the configuration for the Prometheus metrics endpoint.
 	HealthCheck HealthCheck `yaml:"health_check"` // HealthCheck controls opt-in local task-admission checks.
 	Kubernetes  Kubernetes  `yaml:"kubernetes"`
+	Incus       Incus       `yaml:"incus"` // Incus configures the VM pool jobs run in.
 }
 
 // LoadDefault returns the default configuration.
@@ -374,6 +390,15 @@ func LoadDefault(file string) (*Config, error) {
 	}
 	if cfg.Metrics.ReadinessGrace <= 0 {
 		cfg.Metrics.ReadinessGrace = 30 * time.Second
+	}
+	if cfg.Incus.WarmupTimeout <= 0 {
+		cfg.Incus.WarmupTimeout = 5 * time.Minute
+	}
+	if cfg.Incus.AgentStartTimeout <= 0 {
+		cfg.Incus.AgentStartTimeout = 2 * time.Minute
+	}
+	if cfg.Incus.PoolSize < 0 {
+		return nil, fmt.Errorf("incus.pool_size %d is negative", cfg.Incus.PoolSize)
 	}
 
 	// Validate and fix invalid config combinations to prevent confusing behavior.
